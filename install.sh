@@ -79,22 +79,35 @@ install_deps() {
     fi
 }
 
+# Обязательные модули — без них установка невозможна
+MODULES_REQUIRED="lang core xray nginx warp reality relay psiphon tor security logs menu"
+# Опциональные модули — пропускаются если не найдены на GitHub
+MODULES_OPTIONAL="backup users diag"
+
 download_modules() {
     echo -e "${cyan}$(msg install_modules)${reset}"
     mkdir -p "$VWN_LIB"
 
     for module in $MODULES; do
+        local optional=false
+        for opt in $MODULES_OPTIONAL; do
+            [ "$module" = "$opt" ] && optional=true && break
+        done
+
         echo -n "  $(msg loading) ${module}.sh... "
         if curl -fsSL --connect-timeout 15 \
             "${GITHUB_RAW}/modules/${module}.sh" \
             -o "${VWN_LIB}/${module}.sh" 2>/dev/null; then
             echo "${green}OK${reset}"
+            chmod 644 "${VWN_LIB}/${module}.sh"
+        elif $optional; then
+            rm -f "${VWN_LIB}/${module}.sh"
+            echo "${yellow}SKIP (not published yet)${reset}"
         else
             echo "${red}$(msg error)${reset}"
             echo "$(msg module_fail) ${module}.sh"
             return 1
         fi
-        chmod 644 "${VWN_LIB}/${module}.sh"
     done
 }
 
