@@ -35,11 +35,7 @@ writeXrayConfig() {
             "network": "xhttp",
             "xhttpSettings": {
                 "path": "$xhttpPath",
-                "host": "$domain",
-                "mode": "stream-one",
-                "noSSEHeader": false,
-                "scMaxEachPostBytes": "1000000",
-                "scMinPostsIntervalMs": "30"
+                "host": "$domain"
             }
         },
         "sniffing": {"enabled": false}
@@ -123,6 +119,54 @@ getShareUrl() {
     echo "vless://${xray_uuid}@${xray_userDomain}:443?encryption=none&security=tls&sni=${xray_userDomain}&fp=chrome&type=xhttp&host=${xray_userDomain}&path=${encoded_path}#${xray_userDomain}"
 }
 
+# JSON конфиг для ручного импорта (v2rayNG Custom config и др.)
+_getXhttpJsonConfig() {
+    local uuid="$1" domain="$2" path="$3"
+    cat << JSONEOF
+{
+  "log": {"loglevel": "warning"},
+  "inbounds": [{
+    "port": 10808,
+    "listen": "127.0.0.1",
+    "protocol": "socks",
+    "settings": {"auth": "noauth", "udp": true}
+  }],
+  "outbounds": [
+    {
+      "tag": "proxy",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [{
+          "address": "${domain}",
+          "port": 443,
+          "users": [{"id": "${uuid}", "encryption": "none"}]
+        }]
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "${domain}",
+          "fingerprint": "chrome",
+          "alpn": ["http/1.1"]
+        },
+        "xhttpSettings": {
+          "path": "${path}",
+          "host": "${domain}",
+          "mode": "stream-one"
+        }
+      }
+    },
+    {"tag": "direct", "protocol": "freedom"},
+    {"tag": "block",  "protocol": "blackhole"}
+  ],
+  "routing": {
+    "rules": [{"type": "field", "ip": ["geoip:private"], "outboundTag": "direct"}]
+  }
+}
+JSONEOF
+}
+
 getQrCode() {
     command -v qrencode &>/dev/null || installPackage "qrencode"
     local has_xhttp=false has_reality=false
@@ -136,15 +180,45 @@ getQrCode() {
     fi
 
     if $has_xhttp; then
-        echo -e "${cyan}=== Vless XHTTP+TLS ===${reset}"
+        getConfigInfo || return 1
         local url
         url=$(getShareUrl)
-        if [ -n "$url" ]; then
-            qrencode -t ANSI "$url" 2>/dev/null || true
-            echo -e "\n${green}$url${reset}\n"
-        else
-            echo "${red}$(msg error): getShareUrl${reset}"
-        fi
+
+        echo -e "${cyan}================================================================${reset}"
+        echo -e "   XHTTP+TLS — форматы подключения"
+        echo -e "${cyan}================================================================${reset}\n"
+
+        # 1. URI + QR
+        echo -e "${cyan}[ 1. URI ссылка (v2rayNG / Hiddify / Nekoray) ]${reset}"
+        qrencode -t ANSI "$url" 2>/dev/null || true
+        echo -e "${green}${url}${reset}\n"
+
+        # 2. JSON конфиг
+        local json outfile="/root/vwn-client-xhttp.json"
+        json=$(_getXhttpJsonConfig "$xray_uuid" "$xray_userDomain" "$xray_path")
+        echo -e "${cyan}[ 2. JSON конфиг — v2rayNG: + → Custom config ]${reset}"
+        echo -e "${yellow}${json}${reset}"
+        echo "$json" > "$outfile"
+        echo -e "\n  ${green}Сохранён: $outfile${reset}"
+        echo -e "  Импорт файла: v2rayNG → ☰ → Import config from file\n"
+
+        # 3. Clash Meta / Mihomo
+        echo -e "${cyan}[ 3. Clash Meta / Mihomo ]${reset}"
+        echo -e "${yellow}- name: VWN-XHTTP
+  type: vless
+  server: ${xray_userDomain}
+  port: 443
+  uuid: ${xray_uuid}
+  tls: true
+  servername: ${xray_userDomain}
+  client-fingerprint: chrome
+  network: xhttp
+  xhttp-opts:
+    path: ${xray_path}
+    host: ${xray_userDomain}
+    mode: stream-one${reset}\n"
+
+        echo -e "${cyan}================================================================${reset}"
     fi
 
     if $has_reality; then
