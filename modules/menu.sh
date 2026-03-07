@@ -260,22 +260,33 @@ menu() {
             clean=$(_strip "$val")
             printf "%s%*s" "$val" $((w - ${#clean})) ""
         }
-        s_ws_c=$(_pval "$s_ws" 12)
-        s_reality_c=$(_pval "$s_reality" 12)
-        s_nginx_c=$(_pval "$s_nginx" 12)
+        s_ws_c=$(_pval "$s_ws" 7)
+        s_reality_c=$(_pval "$s_reality" 7)
+        s_nginx_c=$(_pval "$s_nginx" 7)
+        # Чистые значения для правой колонки и туннелей (без ANSI — printf %-Ns не считает escape)
+        _plain() { printf '%s' "$1" | sed 's/\[[0-9;]*[mABCDJKHf]//g; s/(B//g'; }
+        s_warp_plain=$(_plain "$s_warp")
+        s_ssl_plain=$(_plain "$s_ssl")
+        s_cfguard_plain=$(_plain "$s_cfguard")
+        s_relay_plain=$(_plain "$s_relay")
+        s_psiphon_plain=$(_plain "$s_psiphon")
+        s_tor_plain=$(_plain "$s_tor")
+        s_bbr_plain=$(_plain "$s_bbr")
+        s_f2b_plain=$(_plain "$s_f2b")
+        s_jail_plain=$(_plain "$s_jail")
 
         echo -e "${cyan}================================================================${reset}"
         printf "   ${red}VWN — VLESS + WARP + REALITY${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
         echo -e "${cyan}================================================================${reset}"
         echo -e "  ${cyan}── $(msg menu_sep_proto_short) ──────────────────────────────────────────${reset}"
-        printf "  %-9s %-14s  %-10s %s\n"  "WS:" "$s_ws_c"  "WARP:" "$s_warp"
-        printf "  %-9s %-14s  %-10s %s\n"  "Reality:" "$s_reality_c"  "SSL:" "$s_ssl"
-        printf "  %-9s %-14s  %-10s %s\n"  "Nginx:" "$s_nginx_c"  "CF Guard:" "$s_cfguard"
+        printf "  %-9s %s,  %s\n"  "WS:"      "$s_ws_c"      "WARP: $s_warp_plain"
+        printf "  %-9s %s,  %s\n"  "Reality:" "$s_reality_c"  "SSL: $s_ssl_plain"
+        printf "  %-9s %s,  %s\n"  "Nginx:"   "$s_nginx_c"    "CF Guard: $s_cfguard_plain"
         [ -n "$s_connect" ] && printf "  %-9s %s\n" "CDN:" "${green}${s_connect}${reset}"
         echo -e "  ${cyan}── $(msg menu_sep_tun_short) ───────────────────────────────────────────${reset}"
-        printf "  %-9s %-14s  %-9s %-14s  %-5s %s\n"  "Relay:" "$s_relay"  "Psiphon:" "$s_psiphon"  "Tor:" "$s_tor"
+        printf "  %-9s %s,  %-9s %s,  %s\n"  "Relay:"   "$s_relay_plain"   "Psiphon:" "$s_psiphon_plain"  "Tor: $s_tor_plain"
         echo -e "  ${cyan}── $(msg menu_sep_sec_short) ────────────────────────────────────────────${reset}"
-        printf "  %-9s %-14s  %-9s %-14s  %-5s %s\n"  "BBR:" "$s_bbr"  "F2B:" "$s_f2b"  "Jail:" "$s_jail"
+        printf "  %-6s %s,  %-6s %s,  %s\n"  "BBR:"  "$s_bbr_plain"  "F2B:"  "$s_f2b_plain"  "Jail: $s_jail_plain"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
 
         echo -e "  ${green}1.${reset}  $(msg menu_install)"
