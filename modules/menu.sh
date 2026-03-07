@@ -185,13 +185,13 @@ manageWs() {
         [ ${#s_domain} -gt 30 ]  && s_domain="${s_domain:0:27}..."
 
         echo -e "${cyan}================================================================${reset}"
+        echo -e "${cyan}================================================================${reset}"
         printf "   ${red}WebSocket + TLS + Nginx${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
-        echo -e "  Nginx:  $(_pad "$s_nginx" 16) │  SSL:      $(_pad "$s_ssl" 14) │  CF Guard: $s_cfguard"
-        echo -e "  Xray:   $(_pad "$s_ws" 16) │  Порт:     $(_pad "$s_port" 14) │  Путь: $s_path"
-        echo -e "  WARP:   $(_pad "$s_warp" 16) │  Домен:    $s_domain"
-        [ -n "$s_connect" ] &&         echo -e "  $(printf '%*s' 20 '') │  CDN:      ${green}${s_connect}${reset}"
-        echo -e "${cyan}----------------------------------------------------------------${reset}"
+        echo -e "  $(printf "%-7s" "Nginx:")$(_pval "$s_nginx" 9),  SSL: $s_ssl,  CF Guard: $s_cfguard"
+        echo -e "  $(printf "%-7s" "Xray:") $(_pval "$s_ws" 9),  $(msg lbl_port): $s_port,  $(msg lbl_path): $s_path"
+        echo -e "  $(printf "%-7s" "WARP:") $s_warp,  $(msg lbl_domain): $s_domain"
+        [ -n "$s_connect" ] && echo -e "  $(printf "%-7s" "$(msg lbl_cdn):") ${green}${s_connect}${reset}"
         echo -e "  ${green}1.${reset}  $(msg menu_port)"
         echo -e "  ${green}2.${reset}  $(msg menu_wspath)"
         echo -e "  ${green}3.${reset}  $(msg menu_domain)"
@@ -276,7 +276,7 @@ menu() {
         s_jail_plain=$(_plain "$s_jail")
 
         echo -e "${cyan}================================================================${reset}"
-        printf "   ${red}VWN — VLESS + WARP + REALITY${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
+        printf "   ${red}VWN — Xray Management Panel${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
         echo -e "${cyan}================================================================${reset}"
         echo -e "  ${cyan}── $(msg menu_sep_proto_short) ──────────────────────────────────────────${reset}"
         echo -e "  $(printf "%-9s" "WS:")$s_ws_c,  WARP: $s_warp"

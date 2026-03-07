@@ -223,13 +223,11 @@ manageRelay() {
         echo -e "${cyan}================================================================${reset}"
         printf "   ${red}$(msg relay_title)${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
-        echo -e "  $(msg status): $s_relay"
+        echo -e "  $(msg status):  $s_relay"
         if [ -f "$relayConfigFile" ]; then
             source "$relayConfigFile"
-            echo -e "  $(msg relay_server): ${green}$RELAY_PROTOCOL://$RELAY_HOST:$RELAY_PORT${reset}"
-            echo -e "  $(msg domains_count): ${green}${s_domains:-0}${reset}"
+            echo -e "  $(msg relay_server):  ${green}$RELAY_PROTOCOL://$RELAY_HOST:$RELAY_PORT${reset},  $(msg domains_count): ${green}${s_domains:-0}${reset}"
         fi
-        echo -e "${cyan}----------------------------------------------------------------${reset}"
         echo ""
         echo -e "${green}1.${reset} $(msg relay_setup)"
         echo -e "${green}2.${reset} $(msg relay_mode)"
