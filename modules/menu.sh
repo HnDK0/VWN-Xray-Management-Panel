@@ -260,22 +260,22 @@ menu() {
             clean=$(_strip "$val")
             printf "%s%*s" "$val" $((w - ${#clean})) ""
         }
-        s_ws_c=$(_pval "$s_ws" 16)
-        s_reality_c=$(_pval "$s_reality" 16)
-        s_nginx_c=$(_pval "$s_nginx" 16)
+        s_ws_c=$(_pval "$s_ws" 12)
+        s_reality_c=$(_pval "$s_reality" 12)
+        s_nginx_c=$(_pval "$s_nginx" 12)
 
         echo -e "${cyan}================================================================${reset}"
         printf "   ${red}VWN — VLESS + WARP + REALITY${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
         echo -e "${cyan}================================================================${reset}"
         echo -e "  ${cyan}── $(msg menu_sep_proto_short) ──────────────────────────────────────────${reset}"
-        printf "  %-12s %-18s  %-12s %s\n"             "WS:" "$s_ws_c"             "WARP:" "$s_warp"
-        printf "  %-12s %-18s  %-12s %s\n"             "Reality:" "$s_reality_c"             "SSL:" "$s_ssl"
-        printf "  %-12s %-18s  %-12s %s\n"             "Nginx:" "$s_nginx_c"             "CF Guard:" "$s_cfguard"
-        [ -n "$s_connect" ] &&         printf "  %-12s %s\n" "CDN:" "${green}${s_connect}${reset}"
+        printf "  %-9s %-14s  %-10s %s\n"  "WS:" "$s_ws_c"  "WARP:" "$s_warp"
+        printf "  %-9s %-14s  %-10s %s\n"  "Reality:" "$s_reality_c"  "SSL:" "$s_ssl"
+        printf "  %-9s %-14s  %-10s %s\n"  "Nginx:" "$s_nginx_c"  "CF Guard:" "$s_cfguard"
+        [ -n "$s_connect" ] && printf "  %-9s %s\n" "CDN:" "${green}${s_connect}${reset}"
         echo -e "  ${cyan}── $(msg menu_sep_tun_short) ───────────────────────────────────────────${reset}"
-        printf "  %-12s %-18s  %-12s %-18s  %-10s %s\n"             "Relay:" "$s_relay"             "Psiphon:" "$s_psiphon"             "Tor:" "$s_tor"
+        printf "  %-9s %-14s  %-9s %-14s  %-5s %s\n"  "Relay:" "$s_relay"  "Psiphon:" "$s_psiphon"  "Tor:" "$s_tor"
         echo -e "  ${cyan}── $(msg menu_sep_sec_short) ────────────────────────────────────────────${reset}"
-        printf "  %-12s %-18s  %-12s %-18s  %-10s %s\n"             "BBR:" "$s_bbr"             "F2B:" "$s_f2b"             "Jail:" "$s_jail"
+        printf "  %-9s %-14s  %-9s %-14s  %-5s %s\n"  "BBR:" "$s_bbr"  "F2B:" "$s_f2b"  "Jail:" "$s_jail"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
 
         echo -e "  ${green}1.${reset}  $(msg menu_install)"
