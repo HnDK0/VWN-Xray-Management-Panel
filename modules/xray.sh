@@ -433,12 +433,33 @@ modifyConnectHost() {
 
 
 # Определяет активный транспорт: "ws" или "grpc"
+# Логика: смотрим на listen 443 ssl http2 в nginx (признак gRPC режима)
+# и дополнительно проверяем xray-grpc сервис
 getActiveTransport() {
-    if systemctl is-active --quiet xray-grpc 2>/dev/null; then
+    # Первичный признак — nginx конфиг (http2 включается только при gRPC)
+    if grep -q 'listen 443 ssl http2' "$nginxPath" 2>/dev/null; then
+        echo "grpc"
+    elif systemctl is-active --quiet xray-grpc 2>/dev/null && \
+         ! systemctl is-active --quiet xray 2>/dev/null; then
         echo "grpc"
     else
         echo "ws"
     fi
+}
+
+# Обновляет location gRPC в nginx при смене serviceName
+_writeNginxGrpc() {
+    [ ! -f "$grpcConfigPath" ] && return 1
+    local grpcPort grpcService oldService
+    grpcPort=$(jq -r '.inbounds[0].port' "$grpcConfigPath" 2>/dev/null)
+    grpcService=$(jq -r '.inbounds[0].streamSettings.grpcSettings.serviceName' "$grpcConfigPath" 2>/dev/null)
+    # Заменяем serviceName в nginx location и grpc_pass
+    oldService=$(grep -oP '(?<=location /).*(?=/Tun)' "$nginxPath" 2>/dev/null | head -1)
+    if [ -n "$oldService" ] && [ "$oldService" != "$grpcService" ]; then
+        sed -i "s|location /${oldService}/Tun|location /${grpcService}/Tun|g" "$nginxPath"
+    fi
+    # Обновляем grpc_pass порт
+    sed -i "s|grpc://127.0.0.1:[0-9]*|grpc://127.0.0.1:${grpcPort}|g" "$nginxPath"
 }
 
 writeGrpcConfig() {
@@ -470,12 +491,19 @@ writeGrpcConfig() {
         "streamSettings": {
             "network": "grpc",
             "grpcSettings": {
-                "serviceName": "$grpcService"
+                "serviceName": "$grpcService",
+                "multiMode": false,
+                "idle_timeout": 60,
+                "health_check_timeout": 20,
+                "permit_without_stream": false,
+                "initial_windows_size": 0
             },
             "sockopt": {
                 "tcpKeepAliveIdle": 100,
                 "tcpKeepAliveInterval": 10,
-                "tcpKeepAliveRetry": 3
+                "tcpKeepAliveRetry": 3,
+                "tcpFastOpen": true,
+                "mark": 0
             }
         },
         "sniffing": {"enabled": false}
@@ -627,6 +655,6 @@ getGrpcShareUrl() {
 
 updateXrayCore() {
     bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
-    systemctl restart xray xray-reality 2>/dev/null || true
+    systemctl restart xray xray-grpc xray-reality 2>/dev/null || true
     echo "${green}$(msg xray_updated)${reset}"
 }

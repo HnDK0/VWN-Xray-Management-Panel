@@ -211,9 +211,11 @@ manageWs() {
         echo -e "${cyan}----------------------------------------------------------------${reset}"
         echo -e "  $(printf "%-8s" "Nginx:")$s_nginx,  SSL: $s_ssl,  CF Guard: $s_cfguard"
         if [ "$s_transport" = "grpc" ]; then
-            echo -e "  $(printf "%-8s" "gRPC:")$s_grpc,  $(msg lbl_port): ${green}$s_grpc_port${reset},  $(msg lbl_service): ${green}$s_grpc_svc${reset}"
+            echo -e "  $(printf "%-8s" "gRPC:")${green}ACTIVE${reset} [$s_grpc],  $(msg lbl_port): ${green}$s_grpc_port${reset},  $(msg lbl_service): ${green}$s_grpc_svc${reset}"
+            echo -e "  $(printf "%-8s" "WS:")${yellow}standby${reset} [$s_ws]"
         else
-            echo -e "  $(printf "%-8s" "WS:")$s_ws,  $(msg lbl_port): ${green}$s_port${reset},  $(msg lbl_path): ${green}$s_path${reset}"
+            echo -e "  $(printf "%-8s" "WS:")${green}ACTIVE${reset} [$s_ws],  $(msg lbl_port): ${green}$s_port${reset},  $(msg lbl_path): ${green}$s_path${reset}"
+            [ -f "$grpcConfigPath" ] && echo -e "  $(printf "%-8s" "gRPC:")${yellow}standby${reset} [$s_grpc]"
         fi
         echo -e "  $(printf "%-8s" "WARP:")$s_warp,  $(msg lbl_domain): ${green}$s_domain${reset}"
         [ -n "$s_connect" ] && echo -e "  $(printf "%-8s" "CDN:")${green}${s_connect}${reset}"
@@ -315,7 +317,16 @@ menu() {
         printf "   ${red}VWN — Xray Management Panel${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
         echo -e "${cyan}================================================================${reset}"
         echo -e "  ${cyan}── $(msg menu_sep_proto_short) ──────────────────────────────────────────${reset}"
-        echo -e "  $(printf "%-9s" "WS:")$s_ws_c,  WARP: $s_warp"
+        # Определяем активный транспорт для главного меню
+        local s_transport_label s_transport_svc
+        if [ "$(getActiveTransport 2>/dev/null || echo ws)" = "grpc" ]; then
+            s_transport_label="${green}gRPC${reset}"
+            s_transport_svc=$(getServiceStatus xray-grpc)
+        else
+            s_transport_label="${green}WS${reset}"
+            s_transport_svc=$s_ws
+        fi
+        echo -e "  $(printf "%-9s" "xray:")$(_pval "$s_transport_svc" 7) [$s_transport_label],  WARP: $s_warp"
         echo -e "  $(printf "%-9s" "Reality:")$s_reality_c,  SSL: $s_ssl"
         echo -e "  $(printf "%-9s" "Nginx:")$s_nginx_c,  CF Guard: $s_cfguard"
         [ -n "$s_connect" ] && echo -e "  CDN: ${green}${s_connect}${reset}"
@@ -389,7 +400,7 @@ menu() {
             21) tail -n 80 /var/log/nginx/access.log 2>/dev/null || echo "$(msg no_logs)" ;;
             22) tail -n 80 /var/log/nginx/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
             23) clearLogs ;;
-            24) systemctl restart xray xray-reality nginx warp-svc psiphon tor 2>/dev/null || true
+            24) systemctl restart xray xray-grpc xray-reality nginx warp-svc psiphon tor 2>/dev/null || true
                 echo "${green}$(msg all_services_restarted)${reset}" ;;
             25) updateXrayCore ;;
             26) manageDiag ;;
