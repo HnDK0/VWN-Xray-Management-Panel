@@ -437,7 +437,7 @@ modifyConnectHost() {
 # и дополнительно проверяем xray-grpc сервис
 getActiveTransport() {
     # Первичный признак — nginx конфиг (http2 включается только при gRPC)
-    if grep -q 'listen 443 ssl http2' "$nginxPath" 2>/dev/null; then
+    if grep -q 'listen 443 ssl http2;' "$nginxPath" 2>/dev/null; then
         echo "grpc"
     elif systemctl is-active --quiet xray-grpc 2>/dev/null && \
          ! systemctl is-active --quiet xray 2>/dev/null; then
