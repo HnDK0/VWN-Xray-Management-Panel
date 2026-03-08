@@ -326,7 +326,7 @@ menu() {
             s_transport_label="${green}WS${reset}"
             s_transport_svc=$s_ws
         fi
-        echo -e "  $(printf "%-9s" "xray:")$(_pval "$s_transport_svc" 7) [$s_transport_label],  WARP: $s_warp"
+        echo -e "  $(printf "%-9s" "Xray:")$(_pval "$s_transport_svc" 7) [$s_transport_label],  WARP: $s_warp"
         echo -e "  $(printf "%-9s" "Reality:")$s_reality_c,  SSL: $s_ssl"
         echo -e "  $(printf "%-9s" "Nginx:")$s_nginx_c,  CF Guard: $s_cfguard"
         [ -n "$s_connect" ] && echo -e "  CDN: ${green}${s_connect}${reset}"
