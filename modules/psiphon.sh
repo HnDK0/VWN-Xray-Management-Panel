@@ -245,6 +245,17 @@ removePsiphon() {
     fi
 }
 
+_checkWarpReady() {
+    # Проверяем сервис и что порт 40000 слушается (не делаем внешний запрос)
+    if ! systemctl is-active --quiet warp-svc 2>/dev/null; then
+        return 1
+    fi
+    if ! ss -tlnp 2>/dev/null | grep -q ':40000'; then
+        return 1
+    fi
+    return 0
+}
+
 switchPsiphonTunnelMode() {
     [ ! -f "$psiphonConfigFile" ] && { echo "${red}$(msg psiphon_not_installed)${reset}"; return 1; }
 
@@ -269,15 +280,9 @@ switchPsiphonTunnelMode() {
             echo "${green}$(msg psiphon_mode_plain_ok)${reset}"
             ;;
         2)
-            # Проверяем что WARP запущен
-            if ! systemctl is-active --quiet warp-svc 2>/dev/null; then
+            # Проверяем что WARP запущен и порт слушается
+            if ! _checkWarpReady; then
                 echo "${red}$(msg psiphon_warp_not_running)${reset}"
-                return 1
-            fi
-            local warp_ip
-            warp_ip=$(curl -s --connect-timeout 5 -x socks5://127.0.0.1:40000 https://api.ipify.org 2>/dev/null)
-            if [ -z "$warp_ip" ]; then
-                echo "${red}$(msg psiphon_warp_not_connected)${reset}"
                 return 1
             fi
             writePsiphonConfig "$country" "warp"
@@ -327,7 +332,7 @@ installPsiphon() {
     read -rp "$(msg prompt_choice_plain)" tmode_choice
     local tunnel_mode="plain"
     if [ "$tmode_choice" = "2" ]; then
-        if ! systemctl is-active --quiet warp-svc 2>/dev/null ||            ! curl -s --connect-timeout 5 -x socks5://127.0.0.1:40000 https://api.ipify.org &>/dev/null; then
+        if ! _checkWarpReady; then
             echo "${yellow}$(msg psiphon_warp_not_running) — $(msg psiphon_fallback_plain)${reset}"
         else
             tunnel_mode="warp"
