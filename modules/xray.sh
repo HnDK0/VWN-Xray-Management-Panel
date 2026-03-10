@@ -86,7 +86,7 @@ writeXrayConfig() {
                 "tcpKeepAliveRetry": 3
             }
         },
-        "sniffing": {"enabled": false}
+        "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}
     }],
     "outbounds": [
         {
@@ -105,7 +105,7 @@ writeXrayConfig() {
         }
     ],
     "routing": {
-        "domainStrategy": "IPIfNonMatch",
+        "domainStrategy": "AsIs",
         "rules": [
             {
                 "type": "field",

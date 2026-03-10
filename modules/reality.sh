@@ -62,7 +62,7 @@ writeRealityConfig() {
                 "shortIds": ["$shortId"]
             }
         },
-        "sniffing": {"enabled": false}
+        "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}
     }],
     "outbounds": [
         {
@@ -81,7 +81,7 @@ writeRealityConfig() {
         }
     ],
     "routing": {
-        "domainStrategy": "IPIfNonMatch",
+        "domainStrategy": "AsIs",
         "rules": [
             {
                 "type": "field",
