@@ -39,10 +39,63 @@ installTor() {
     fi
     echo -e "${cyan}$(msg tor_installing)${reset}"
     [ -z "${PACKAGE_MANAGEMENT_INSTALL:-}" ] && identifyOS
-    ${PACKAGE_MANAGEMENT_INSTALL} tor || {
-        echo "${red}$(msg tor_install_fail)${reset}"; return 1
-    }
+
+    # Официальный репозиторий torproject.org — актуальная версия (0.4.8+)
+    # Стандартный Ubuntu репо даёт устаревший 0.4.6 без поддержки FlowCtrl=2/Relay=4
+    if command -v apt &>/dev/null; then
+        local codename
+        codename=$(lsb_release -sc 2>/dev/null || . /etc/os-release && echo "$VERSION_CODENAME")
+        if [ -n "$codename" ]; then
+            echo -e "${cyan}$(msg tor_adding_repo)${reset}"
+            ${PACKAGE_MANAGEMENT_INSTALL} apt-transport-https gpg &>/dev/null || true
+            curl -fsSL https://deb.torproject.org/torproject.org/A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89.asc                 | gpg --dearmor -o /usr/share/keyrings/tor-archive-keyring.gpg 2>/dev/null || true
+            echo "deb [signed-by=/usr/share/keyrings/tor-archive-keyring.gpg] https://deb.torproject.org/torproject.org $codename main"                 > /etc/apt/sources.list.d/tor.list
+            echo "deb-src [signed-by=/usr/share/keyrings/tor-archive-keyring.gpg] https://deb.torproject.org/torproject.org $codename main"                 >> /etc/apt/sources.list.d/tor.list
+            apt-get update -qq 2>/dev/null || true
+            ${PACKAGE_MANAGEMENT_INSTALL} tor deb.torproject.org-keyring || {
+                # Fallback: стандартный репо
+                echo "${yellow}$(msg tor_repo_fail_fallback)${reset}"
+                ${PACKAGE_MANAGEMENT_INSTALL} tor || { echo "${red}$(msg tor_install_fail)${reset}"; return 1; }
+            }
+        else
+            ${PACKAGE_MANAGEMENT_INSTALL} tor || { echo "${red}$(msg tor_install_fail)${reset}"; return 1; }
+        fi
+    else
+        # dnf/yum — нет официального репо, ставим из системного
+        ${PACKAGE_MANAGEMENT_INSTALL} tor || { echo "${red}$(msg tor_install_fail)${reset}"; return 1; }
+    fi
+
+    # GeoIP — нужен для ExitNodes по странам
+    ${PACKAGE_MANAGEMENT_INSTALL} tor-geoipdb 2>/dev/null ||     ${PACKAGE_MANAGEMENT_INSTALL} geoip-database 2>/dev/null || true
+
     echo "${green}$(msg tor_installed)${reset}"
+}
+
+upgradeTor() {
+    echo -e "${cyan}$(msg tor_upgrading)${reset}"
+    [ -z "${PACKAGE_MANAGEMENT_INSTALL:-}" ] && identifyOS
+
+    # Добавляем официальный репо если ещё нет
+    if command -v apt &>/dev/null && [ ! -f /etc/apt/sources.list.d/tor.list ]; then
+        local codename
+        codename=$(lsb_release -sc 2>/dev/null || . /etc/os-release && echo "$VERSION_CODENAME")
+        if [ -n "$codename" ]; then
+            curl -fsSL https://deb.torproject.org/torproject.org/A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89.asc                 | gpg --dearmor -o /usr/share/keyrings/tor-archive-keyring.gpg 2>/dev/null || true
+            echo "deb [signed-by=/usr/share/keyrings/tor-archive-keyring.gpg] https://deb.torproject.org/torproject.org $codename main"                 > /etc/apt/sources.list.d/tor.list
+            apt-get update -qq 2>/dev/null || true
+        fi
+    fi
+
+    if command -v apt &>/dev/null; then
+        apt-get install -y --only-upgrade tor tor-geoipdb 2>/dev/null ||         apt-get install -y tor tor-geoipdb 2>/dev/null || true
+    else
+        ${PACKAGE_MANAGEMENT_INSTALL} tor || true
+    fi
+
+    systemctl restart tor
+    local ver
+    ver=$(tor --version 2>/dev/null | head -1)
+    echo "${green}$(msg tor_upgraded): ${ver}${reset}"
 }
 
 writeTorConfig() {
@@ -71,7 +124,7 @@ setupTorService() {
     systemctl restart tor
     sleep 5
 
-    if curl -s --connect-timeout 15 -x socks5://127.0.0.1:${TOR_PORT} https://api.ipify.org &>/dev/null; then
+    if curl -s --connect-timeout 10 -x socks5://127.0.0.1:${TOR_PORT} https://api.ipify.org &>/dev/null; then
         echo "${green}$(msg tor_running)${reset}"
     else
         echo "${yellow}$(msg tor_started)${reset}"
@@ -102,13 +155,6 @@ applyTorDomains() {
     [ ! -f "$torDomainsFile" ] && touch "$torDomainsFile"
     local domains_json
     domains_json=$(awk 'NF {printf "\"domain:%s\",", $1}' "$torDomainsFile" | sed 's/,$//')
-
-    # Если список доменов пуст — удаляем rule из конфигов, не применяем невалидный domain:[]
-    if [ -z "$domains_json" ]; then
-        echo "${yellow}$(msg tor_domains_empty)${reset}"
-        removeTorFromConfigs
-        return 0
-    fi
 
     applyTorOutbound
 
@@ -146,16 +192,21 @@ removeTorFromConfigs() {
 
 checkTorIP() {
     echo "$(msg tor_real_ip) : $(getServerIP)"
-    echo "$(msg tor_checking)"
-    local ip
-    ip=$(curl -s --connect-timeout 30 -x socks5://127.0.0.1:${TOR_PORT} https://api.ipify.org 2>/dev/null || echo "$(msg unavailable)")
-    echo "$(msg tor_ip) : $ip"
-    if [ "$ip" != "$(msg unavailable)" ]; then
-        local country
-        country=$(curl -s --connect-timeout 10 -x socks5://127.0.0.1:${TOR_PORT} \
-            "http://ip-api.com/line/${ip}?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
-        echo "$(msg tor_exit_country) : ${country:-$(msg unknown)}"
-    fi
+    local ip attempts=3 i=1
+    while [ $i -le $attempts ]; do
+        echo -n "$(msg tor_checking) ($i/$attempts)... "
+        ip=$(curl -s --connect-timeout 5 -x socks5://127.0.0.1:${TOR_PORT} https://api.ipify.org 2>/dev/null)
+        if [ -n "$ip" ]; then
+            echo "$ip"
+            local country
+            country=$(curl -s --connect-timeout 5 -x socks5://127.0.0.1:${TOR_PORT}                 "http://ip-api.com/line/${ip}?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
+            echo "$(msg tor_exit_country) : ${country:-$(msg unknown)}"
+            return 0
+        fi
+        echo "$(msg tor_retry_fail)"
+        i=$((i + 1))
+    done
+    echo "${red}$(msg tor_check_failed)${reset}"
 }
 
 renewTorCircuit() {
@@ -399,6 +450,7 @@ manageTor() {
         echo -e "${green}11.${reset} $(msg tor_bridges)"
         echo -e "${green}12.${reset} $(msg tor_bridges_remove)"
         echo -e "${green}13.${reset} $(msg tor_remove)"
+        echo -e "${green}14.${reset} $(msg tor_upgrade)"
         echo -e "${green}0.${reset} $(msg back)"
         echo ""
         read -rp "$(msg choose)" choice
@@ -446,6 +498,7 @@ manageTor() {
             11) addTorBridges ;;
             12) removeTorBridges ;;
             13) removeTor ;;
+            14) upgradeTor ;;
             0)  break ;;
         esac
         [ "${choice}" = "0" ] && continue
