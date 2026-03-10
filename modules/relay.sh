@@ -147,6 +147,14 @@ applyRelayDomains() {
     [ ! -f "$relayDomainsFile" ] && touch "$relayDomainsFile"
     local domains_json
     domains_json=$(awk 'NF {printf "\"domain:%s\",", $1}' "$relayDomainsFile" | sed 's/,$//')
+
+    # Если список доменов пуст — удаляем rule из конфигов, не применяем невалидный domain:[]
+    if [ -z "$domains_json" ]; then
+        echo "${yellow}$(msg relay_domains_empty)${reset}"
+        removeRelayFromConfigs
+        return 0
+    fi
+
     applyRelayToConfigs || return 1
     for cfg in "$configPath" "$realityConfigPath"; do
         [ -f "$cfg" ] || continue

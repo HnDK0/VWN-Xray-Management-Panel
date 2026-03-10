@@ -7,8 +7,9 @@
 
 PSIPHON_PORT=40002
 PSIPHON_SERVICE="/etc/systemd/system/psiphon.service"
+PSIPHON_MODE_FILE="/usr/local/etc/xray/psiphon_mode"  # plain | warp
 
-# Публичные PropagationChannelId/SponsorId для open-source клиентов (из psiphon-tunnel-core)
+# Публичные PropagationChannelId/SponsorId из открытых клиентов Psiphon
 PSIPHON_PROPAGATION_CHANNEL="FFFFFFFFFFFFFFFF"
 PSIPHON_SPONSOR_ID="FFFFFFFFFFFFFFFF"
 PSIPHON_REMOTE_SERVER_LIST_URL="https://s3.amazonaws.com//psiphon/web/mjr4-p23r-puwl/server_list_compressed"
@@ -18,18 +19,22 @@ getPsiphonStatus() {
     if systemctl is-active --quiet psiphon 2>/dev/null; then
         local country=""
         [ -f "$psiphonConfigFile" ] && country=$(jq -r '.EgressRegion // ""' "$psiphonConfigFile" 2>/dev/null)
-        # Определяем режим по конфигу Xray
-        local mode="маршрут OFF"
+        local tunnel_mode
+        tunnel_mode=$(cat "$PSIPHON_MODE_FILE" 2>/dev/null || echo "plain")
+        # Определяем режим маршрутизации по конфигу Xray
+        local route_mode="OFF"
         if [ -f "$configPath" ]; then
             local ps_rule
             ps_rule=$(jq -r '.routing.rules[] | select(.outboundTag=="psiphon") | if .port == "0-65535" then "Global" elif (.domain | length) > 0 then "Split" else "OFF" end' "$configPath" 2>/dev/null | head -1)
-            [ -n "$ps_rule" ] && mode="$ps_rule"
+            [ -n "$ps_rule" ] && route_mode="$ps_rule"
         fi
         local country_str="${country:+, $country}"
-        case "$mode" in
-            Global) echo "${green}ON | Global${country_str}${reset}" ;;
-            Split)  echo "${green}ON | Split${country_str}${reset}" ;;
-            *)      echo "${yellow}ON | $(msg mode_off)${country_str}${reset}" ;;
+        local tmode_str
+        [ "$tunnel_mode" = "warp" ] && tmode_str=" [WARP+Psiphon]" || tmode_str=" [Psiphon]"
+        case "$route_mode" in
+            Global) echo "${green}ON | Global${tmode_str}${country_str}${reset}" ;;
+            Split)  echo "${green}ON | Split${tmode_str}${country_str}${reset}" ;;
+            *)      echo "${yellow}ON | $(msg mode_off)${tmode_str}${country_str}${reset}" ;;
         esac
     else
         echo "${red}OFF${reset}"
@@ -62,31 +67,49 @@ installPsiphonBinary() {
 
 writePsiphonConfig() {
     local country="${1:-}"
+    local tunnel_mode="${2:-plain}"  # plain | warp
     mkdir -p /usr/local/etc/xray
     mkdir -p /var/log/psiphon
 
-    cat > "$psiphonConfigFile" << EOF
-{
-    "PropagationChannelId": "$PSIPHON_PROPAGATION_CHANNEL",
-    "SponsorId": "$PSIPHON_SPONSOR_ID",
-    "LocalSocksProxyPort": $PSIPHON_PORT,
-    "LocalHttpProxyPort": 0,
-    "DisableLocalSocksProxy": false,
-    "DisableLocalHTTPProxy": true,
-    "EgressRegion": "${country}",
-    "DataRootDirectory": "/var/lib/psiphon",
+    # Сохраняем текущий режим туннеля
+    echo "$tunnel_mode" > "$PSIPHON_MODE_FILE"
+
+
+    export PSIPHON_PROPAGATION_CHANNEL PSIPHON_SPONSOR_ID PSIPHON_PORT
+    export PSIPHON_REMOTE_SERVER_LIST_URL PSIPHON_REMOTE_SERVER_LIST_KEY
+    export PSIPHON_COUNTRY="$country"
+    export PSIPHON_UPSTREAM
+    [ "$tunnel_mode" = "warp" ] && PSIPHON_UPSTREAM="socks5://127.0.0.1:40000" || PSIPHON_UPSTREAM=""
+    export PSIPHON_CONFIG_FILE="$psiphonConfigFile"
+        # Генерируем конфиг через python3 чтобы корректно включать/исключать UpstreamProxyURL
+    python3 - << PYEOF
+import json, os
+cfg = {
+    "PropagationChannelId": os.environ.get("PSIPHON_PROPAGATION_CHANNEL", "FFFFFFFFFFFFFFFF"),
+    "SponsorId":            os.environ.get("PSIPHON_SPONSOR_ID", "FFFFFFFFFFFFFFFF"),
+    "LocalSocksProxyPort":  int(os.environ.get("PSIPHON_PORT", "40002")),
+    "LocalHttpProxyPort":   0,
+    "DisableLocalSocksProxy": False,
+    "DisableLocalHTTPProxy":  True,
+    "EgressRegion":         os.environ.get("PSIPHON_COUNTRY", ""),
+    "DataRootDirectory":    "/var/lib/psiphon",
     "RemoteServerListDownloadFilename": "/var/lib/psiphon/remote_server_list",
-    "RemoteServerListUrl": "$PSIPHON_REMOTE_SERVER_LIST_URL",
-    "RemoteServerListSignaturePublicKey": "$PSIPHON_REMOTE_SERVER_LIST_KEY",
+    "RemoteServerListUrl":  os.environ.get("PSIPHON_REMOTE_SERVER_LIST_URL", ""),
+    "RemoteServerListSignaturePublicKey": os.environ.get("PSIPHON_REMOTE_SERVER_LIST_KEY", ""),
     "MigrateDataStoreDirectory": "/var/lib/psiphon",
-    "ClientPlatform": "Android_4.0.4_com.example.exampleClientLibraryApp",
-    "NetworkID": "default",
-    "UseIndistinguishableTLS": true,
-    "TunnelProtocol": "",
+    "ClientPlatform":       "Android_4.0.4_com.example.exampleClientLibraryApp",
+    "NetworkID":            "default",
+    "UseIndistinguishableTLS": True,
+    "TunnelProtocol":       "",
     "ConnectionWorkerPoolSize": 10,
     "LimitTunnelProtocols": []
 }
-EOF
+upstream = os.environ.get("PSIPHON_UPSTREAM", "")
+if upstream:
+    cfg["UpstreamProxyURL"] = upstream
+with open(os.environ["PSIPHON_CONFIG_FILE"], "w") as f:
+    json.dump(cfg, f, indent=4)
+PYEOF
     # Создаём пользователя и директорию
     id psiphon &>/dev/null || useradd -r -s /sbin/nologin -d /var/lib/psiphon psiphon
     mkdir -p /var/lib/psiphon
@@ -154,6 +177,13 @@ applyPsiphonDomains() {
     local domains_json
     domains_json=$(awk 'NF {printf "\"domain:%s\",", $1}' "$psiphonDomainsFile" | sed 's/,$//')
 
+    # Если список доменов пуст — удаляем rule из конфигов, не применяем невалидный domain:[]
+    if [ -z "$domains_json" ]; then
+        echo "${yellow}$(msg psiphon_domains_empty)${reset}"
+        removePsiphonFromConfigs
+        return 0
+    fi
+
     applyPsiphonOutbound
 
     for cfg in "$configPath" "$realityConfigPath"; do
@@ -207,12 +237,55 @@ removePsiphon() {
     if [[ "$confirm" == "y" ]]; then
         systemctl stop psiphon 2>/dev/null || true
         systemctl disable psiphon 2>/dev/null || true
-        rm -f "$PSIPHON_SERVICE" "$psiphonBin" "$psiphonConfigFile" "$psiphonDomainsFile"
+        rm -f "$PSIPHON_SERVICE" "$psiphonBin" "$psiphonConfigFile" "$psiphonDomainsFile" "$PSIPHON_MODE_FILE"
         rm -rf /var/lib/psiphon /var/log/psiphon
         systemctl daemon-reload
         removePsiphonFromConfigs
         echo "${green}$(msg removed)${reset}"
     fi
+}
+
+switchPsiphonTunnelMode() {
+    [ ! -f "$psiphonConfigFile" ] && { echo "${red}$(msg psiphon_not_installed)${reset}"; return 1; }
+
+    local current
+    current=$(cat "$PSIPHON_MODE_FILE" 2>/dev/null || echo "plain")
+
+    echo -e "${cyan}$(msg psiphon_tunnel_mode_title)${reset}"
+    echo -e "  $(msg psiphon_current_mode): ${green}${current}${reset}"
+    echo ""
+    echo -e "${green}1.${reset} $(msg psiphon_mode_plain)"
+    echo -e "${green}2.${reset} $(msg psiphon_mode_warp)"
+    echo -e "${green}0.${reset} $(msg back)"
+    read -rp "$(msg prompt_choice_plain)" tmode
+
+    local country
+    country=$(jq -r '.EgressRegion // ""' "$psiphonConfigFile" 2>/dev/null)
+
+    case "$tmode" in
+        1)
+            writePsiphonConfig "$country" "plain"
+            systemctl restart psiphon
+            echo "${green}$(msg psiphon_mode_plain_ok)${reset}"
+            ;;
+        2)
+            # Проверяем что WARP запущен
+            if ! systemctl is-active --quiet warp-svc 2>/dev/null; then
+                echo "${red}$(msg psiphon_warp_not_running)${reset}"
+                return 1
+            fi
+            local warp_ip
+            warp_ip=$(curl -s --connect-timeout 5 -x socks5://127.0.0.1:40000 https://api.ipify.org 2>/dev/null)
+            if [ -z "$warp_ip" ]; then
+                echo "${red}$(msg psiphon_warp_not_connected)${reset}"
+                return 1
+            fi
+            writePsiphonConfig "$country" "warp"
+            systemctl restart psiphon
+            echo "${green}$(msg psiphon_mode_warp_ok)${reset}"
+            ;;
+        0) return ;;
+    esac
 }
 
 installPsiphon() {
@@ -248,7 +321,20 @@ installPsiphon() {
         *) country="DE" ;;
     esac
 
-    writePsiphonConfig "$country"
+    echo -e "${cyan}$(msg psiphon_tunnel_mode_title)${reset}"
+    echo -e "${green}1.${reset} $(msg psiphon_mode_plain)"
+    echo -e "${green}2.${reset} $(msg psiphon_mode_warp)"
+    read -rp "$(msg prompt_choice_plain)" tmode_choice
+    local tunnel_mode="plain"
+    if [ "$tmode_choice" = "2" ]; then
+        if ! systemctl is-active --quiet warp-svc 2>/dev/null ||            ! curl -s --connect-timeout 5 -x socks5://127.0.0.1:40000 https://api.ipify.org &>/dev/null; then
+            echo "${yellow}$(msg psiphon_warp_not_running) — $(msg psiphon_fallback_plain)${reset}"
+        else
+            tunnel_mode="warp"
+        fi
+    fi
+
+    writePsiphonConfig "$country" "$tunnel_mode"
     setupPsiphonService
 
     # Добавляем в Xray конфиги с пустым списком доменов (Split режим)
@@ -293,7 +379,11 @@ managePsiphon() {
         echo -e "${cyan}----------------------------------------------------------------${reset}"
         echo -e "  $(msg status): $s_psiphon"
         if [ -f "$psiphonConfigFile" ]; then
+            local s_tmode
+            s_tmode=$(cat "$PSIPHON_MODE_FILE" 2>/dev/null || echo "plain")
+            [ "$s_tmode" = "warp" ] && s_tmode="${green}WARP+Psiphon${reset}" || s_tmode="${green}Psiphon${reset}"
             echo -e "  $(msg country): ${green}${s_country:-$(msg auto)}${reset},  SOCKS5: 127.0.0.1:$PSIPHON_PORT,  $(msg domains_count): ${green}${s_domains:-0}${reset}"
+            echo -e "  $(msg psiphon_tunnel_mode): $s_tmode"
         fi
         echo -e "${cyan}----------------------------------------------------------------${reset}"
         echo ""
@@ -307,6 +397,7 @@ managePsiphon() {
         echo -e "${green}8.${reset} $(msg psiphon_restart)"
         echo -e "${green}9.${reset} $(msg psiphon_logs)"
         echo -e "${green}10.${reset} $(msg psiphon_remove)"
+        echo -e "${green}11.${reset} $(msg psiphon_tunnel_mode)"
         echo -e "${green}0.${reset} $(msg back)"
         echo ""
         read -rp "$(msg choose)" choice
@@ -351,6 +442,7 @@ managePsiphon() {
             8)  systemctl restart psiphon && echo "${green}$(msg restarted)${reset}" ;;
             9)  tail -n 50 /var/log/psiphon/psiphon.log 2>/dev/null || journalctl -u psiphon -n 50 --no-pager ;;
             10) removePsiphon ;;
+            11) switchPsiphonTunnelMode ;;
             0)  break ;;
         esac
         [ "${choice}" = "0" ] && continue
