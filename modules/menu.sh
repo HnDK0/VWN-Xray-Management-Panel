@@ -168,49 +168,93 @@ removeWs() {
 
 manageWs() {
     set +e
+    # _plain доступна здесь через _strip (определена в core.sh через _pad)
+    # Дублируем локально для надёжности
+    _ws_plain() { printf '%s' "$1" | sed 's/\x1b\[[0-9;]*[mABCDJKHf]//g; s/\x1b(B//g'; }
+    # Возвращает "● port" зелёным если слушает, "○ port" красным если нет
+    _portStatus() {
+        local port="$1" label="$2"
+        if ss -tlnp 2>/dev/null | grep -q ":${port}"; then
+            printf "%s ${green}●${reset} %-6s ${green}%s${reset}" "$label" "$port" "LISTEN"
+        else
+            printf "%s ${red}○${reset} %-6s ${red}%s${reset}" "$label" "$port" "DOWN"
+        fi
+    }
+
     while true; do
         clear
-        local s_nginx s_ws s_ssl s_cfguard s_domain s_connect s_warp s_port s_path s_xhttp_path s_grpc_svc
+        local s_nginx s_ws s_ssl s_cfguard s_domain s_connect s_warp
+        local s_ws_port s_xhttp_port s_grpc_port
+        local s_ws_path s_xhttp_path s_grpc_svc
+
         s_nginx=$(getServiceStatus nginx)
         s_ws=$(getServiceStatus xray)
         s_ssl=$(checkCertExpiry)
         s_cfguard=$(getCfGuardStatus)
         s_warp=$(getWarpStatus)
+
         s_domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // .inbounds[0].streamSettings.xhttpSettings.host // "—"' "$configPath" 2>/dev/null)
         s_connect=$(cat "$CONNECT_HOST_FILE" 2>/dev/null | tr -d '[:space:]')
-        s_port=$(jq -r '.inbounds[] | select(.tag=="ws-inbound") | .port // empty' "$configPath" 2>/dev/null || jq -r '.inbounds[0].port // "—"' "$configPath" 2>/dev/null)
-        s_path=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // .inbounds[0].streamSettings.xhttpSettings.path // "—"' "$configPath" 2>/dev/null)
+        [ ${#s_connect} -gt 40 ] && s_connect="${s_connect:0:37}..."
+        [ ${#s_domain}  -gt 35 ] && s_domain="${s_domain:0:32}..."
+
+        # Порты и пути из конфига
+        if [ -f "$configPath" ]; then
+            s_ws_port=$(jq -r '.inbounds[] | select(.tag=="ws-inbound") | .port' "$configPath" 2>/dev/null)
+            s_xhttp_port=$(jq -r '.inbounds[] | select(.tag=="xhttp-inbound") | .port' "$configPath" 2>/dev/null)
+            s_grpc_port=$(jq -r '.inbounds[] | select(.tag=="grpc-inbound") | .port' "$configPath" 2>/dev/null)
+            # Fallback для старых конфигов без тегов
+            [ -z "$s_ws_port" ] && s_ws_port=$(jq -r '.inbounds[0].port // "—"' "$configPath" 2>/dev/null)
+            s_ws_path=$(jq -r '.inbounds[] | select(.tag=="ws-inbound") | .streamSettings.wsSettings.path // empty' "$configPath" 2>/dev/null)
+            [ -z "$s_ws_path" ] && s_ws_path=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // .inbounds[0].streamSettings.xhttpSettings.path // "—"' "$configPath" 2>/dev/null)
+        fi
         s_xhttp_path=$(grep '^XHTTP_PATH=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
         s_grpc_svc=$(grep '^GRPC_SERVICE=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
-        # Обрезаем длинные значения
-        [ ${#s_connect} -gt 35 ] && s_connect="${s_connect:0:32}..."
-        [ ${#s_domain} -gt 30 ]  && s_domain="${s_domain:0:27}..."
 
         echo -e "${cyan}================================================================${reset}"
         printf "   ${red}$(msg menu_ws_title)${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
+        echo -e "${cyan}================================================================${reset}"
+        # Строка 1: сервисы
+        echo -e "  $(_ws_plain "$(printf "%-7s" "Nginx:")")$s_nginx,  SSL: $s_ssl,  CF Guard: $s_cfguard"
+        echo -e "  $(_ws_plain "$(printf "%-7s" "Xray:")")$s_ws,  $(msg lbl_domain): ${green}${s_domain}${reset}"
+        echo -e "  $(_ws_plain "$(printf "%-7s" "WARP:")")$s_warp"
+        [ -n "$s_connect" ] && echo -e "  $(_ws_plain "$(printf "%-7s" "CDN:")")${green}${s_connect}${reset}"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
-        echo -e "  $(printf "%-7s" "Nginx:")$s_nginx,  SSL: ${green}$(_plain "$s_ssl")${reset},  CF Guard: $s_cfguard"
-        echo -e "  $(printf "%-7s" "Xray:")$s_ws,  $(msg lbl_port): ${green}$s_port${reset}"
-        echo -e "  $(printf "%-7s" "WARP:")$s_warp,  $(msg lbl_domain): ${green}$s_domain${reset}"
-        [ -n "$s_connect" ] && echo -e "  $(printf "%-7s" "CDN:")${green}${s_connect}${reset}"
-        echo -e "  $(msg lbl_ws_path):   ${green}${s_path:-—}${reset}"
-        [ -n "$s_xhttp_path" ] && echo -e "  $(msg lbl_xhttp_path): ${green}${s_xhttp_path}${reset}"
-        [ -n "$s_grpc_svc"   ] && echo -e "  $(msg lbl_grpc_svc):  ${green}${s_grpc_svc}${reset}"
-        echo -e "${cyan}----------------------------------------------------------------${reset}"
+        # Строка 2: статусы трёх inbound'ов
+        if [ -f "$configPath" ]; then
+            printf "  WS    %-14s  $(_portStatus "$s_ws_port" "port")\n" "${s_ws_path:-—}"
+            if [ -n "$s_xhttp_path" ] && [ -n "$s_xhttp_port" ]; then
+                printf "  XHTTP %-14s  $(_portStatus "$s_xhttp_port" "port")\n" "${s_xhttp_path:-—}"
+            fi
+            if [ -n "$s_grpc_svc" ] && [ -n "$s_grpc_port" ]; then
+                printf "  gRPC  %-14s  $(_portStatus "$s_grpc_port" "port")\n" "${s_grpc_svc:-—}"
+            fi
+        else
+            echo -e "  ${yellow}$(msg xray_not_installed)${reset}"
+        fi
+        echo -e "${cyan}================================================================${reset}"
+        echo -e "  ${cyan}── $(msg menu_sep_config) ──${reset}"
         echo -e "  ${green}1.${reset}  $(msg menu_port)"
         echo -e "  ${green}2.${reset}  $(msg menu_wspath)"
         echo -e "  ${green}3.${reset}  $(msg menu_domain)"
         echo -e "  ${green}4.${reset}  $(msg menu_cdn_host)"
-        echo -e "  ${green}5.${reset}  $(msg menu_ssl)"
-        echo -e "  ${green}6.${reset}  $(msg menu_stub)"
-        echo -e "  ${green}7.${reset}  $(msg menu_cfguard)"
-        echo -e "  ${green}8.${reset}  $(msg menu_cf_update_ip)"
-        echo -e "  ${green}9.${reset}  $(msg menu_ssl_cron)"
-        echo -e "  ${green}10.${reset} $(msg menu_log_cron)"
-        echo -e "  ${green}11.${reset} $(msg menu_uuid)"
-        echo -e "${cyan}----------------------------------------------------------------${reset}"
-        echo -e "  ${green}12.${reset} $(msg menu_install)"
-        echo -e "  ${green}13.${reset} $(msg menu_remove)"
+        echo -e "  ${green}5.${reset}  $(msg menu_stub)"
+        echo -e "  ${green}6.${reset}  $(msg menu_uuid)"
+        echo -e "  ${cyan}── $(msg menu_sep_sec_short) ──${reset}"
+        echo -e "  ${green}7.${reset}  $(msg menu_ssl)"
+        echo -e "  ${green}8.${reset}  $(msg menu_ssl_cron)"
+        echo -e "  ${green}9.${reset}  $(msg menu_cfguard)"
+        echo -e "  ${green}10.${reset} $(msg menu_cf_update_ip)"
+        echo -e "  ${cyan}── $(msg menu_sep_logs) ──${reset}"
+        echo -e "  ${green}11.${reset} $(msg menu_log_cron)"
+        echo -e "  ${green}12.${reset} $(msg menu_xray_acc)"
+        echo -e "  ${green}13.${reset} $(msg menu_xray_err)"
+        echo -e "  ${green}14.${reset} $(msg menu_nginx_acc)"
+        echo -e "  ${green}15.${reset} $(msg menu_nginx_err)"
+        echo -e "  ${cyan}── $(msg menu_sep_svc) ──${reset}"
+        echo -e "  ${green}16.${reset} $(msg menu_restart)"
+        echo -e "  ${green}17.${reset} $(msg menu_install)"
+        echo -e "  ${green}18.${reset} $(msg menu_remove)"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
         echo -e "  ${green}0.${reset}  $(msg back)"
         echo -e "${cyan}================================================================${reset}"
@@ -220,15 +264,20 @@ manageWs() {
             2)  modifyWsPath ;;
             3)  modifyDomain ;;
             4)  modifyConnectHost ;;
-            5)  getConfigInfo && userDomain="$xray_userDomain" && configCert ;;
-            6)  modifyProxyPassUrl ;;
-            7)  toggleCfGuard ;;
-            8)  setupRealIpRestore && { [ -f /etc/nginx/conf.d/cf_guard.conf ] && _fetchCfGuardIPs; } && nginx -t && systemctl reload nginx ;;
-            9)  manageSslCron ;;
-            10) manageLogClearCron ;;
-            11) modifyXrayUUID ;;
-            12) install ;;
-            13) removeWs ;;
+            5)  modifyProxyPassUrl ;;
+            6)  modifyXrayUUID ;;
+            7)  getConfigInfo && userDomain="$xray_userDomain" && configCert ;;
+            8)  manageSslCron ;;
+            9)  toggleCfGuard ;;
+            10) setupRealIpRestore && { [ -f /etc/nginx/conf.d/cf_guard.conf ] && _fetchCfGuardIPs; } && nginx -t && systemctl reload nginx ;;
+            11) manageLogClearCron ;;
+            12) tail -n 80 /var/log/xray/access.log 2>/dev/null || echo "$(msg no_logs)" ;;
+            13) tail -n 80 /var/log/xray/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
+            14) tail -n 80 /var/log/nginx/access.log 2>/dev/null || echo "$(msg no_logs)" ;;
+            15) tail -n 80 /var/log/nginx/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
+            16) systemctl restart xray nginx && echo "${green}$(msg restarted)${reset}" ;;
+            17) install ;;
+            18) removeWs ;;
             0)  break ;;
         esac
         [ "$choice" = "0" ] && continue
@@ -288,12 +337,20 @@ menu() {
         echo -e "  $(printf "%-9s" "Reality:")$s_reality_c,  SSL: $s_ssl"
         echo -e "  $(printf "%-9s" "Nginx:")$s_nginx_c,  CF Guard: $s_cfguard"
         [ -n "$s_connect" ] && echo -e "  CDN: ${green}${s_connect}${reset}"
-        # Показываем пути XHTTP/gRPC если конфиг уже установлен
+        # XHTTP / gRPC — показываем пути и статус портов если конфиг установлен
         if [ -f "$configPath" ]; then
-            local _xhttp_path _grpc_svc
+            local _xhttp_path _grpc_svc _xhttp_port _grpc_port _ws_port
             _xhttp_path=$(grep '^XHTTP_PATH=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
             _grpc_svc=$(grep '^GRPC_SERVICE=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
-            [ -n "$_xhttp_path" ] && echo -e "  $(msg lbl_xhttp_path): ${green}${_xhttp_path}${reset}  $(msg lbl_grpc_svc): ${green}${_grpc_svc:-—}${reset}"
+            _ws_port=$(jq -r '.inbounds[] | select(.tag=="ws-inbound") | .port' "$configPath" 2>/dev/null | head -1)
+            [ -z "$_ws_port" ] && _ws_port=$(jq -r '.inbounds[0].port' "$configPath" 2>/dev/null)
+            _xhttp_port=$(jq -r '.inbounds[] | select(.tag=="xhttp-inbound") | .port' "$configPath" 2>/dev/null | head -1)
+            _grpc_port=$(jq -r '.inbounds[] | select(.tag=="grpc-inbound") | .port' "$configPath" 2>/dev/null | head -1)
+            # Статус порта: ● слушает, ○ нет
+            _pst() { ss -tlnp 2>/dev/null | grep -q ":${1}" && printf "${green}●${reset}" || printf "${red}○${reset}"; }
+            if [ -n "$_xhttp_path" ]; then
+                echo -e "  WS $(_pst "$_ws_port") ${green}${s_ws_path_short:-$(jq -r '.inbounds[0].streamSettings.wsSettings.path // "—"' "$configPath" 2>/dev/null)}${reset}  XHTTP $(_pst "$_xhttp_port") ${green}${_xhttp_path}${reset}  gRPC $(_pst "$_grpc_port") ${green}${_grpc_svc:-—}${reset}"
+            fi
         fi
         echo -e "  ${cyan}── $(msg menu_sep_tun_short) ───────────────────────────────────────────${reset}"
         echo -e "  Relay: $s_relay,  Psiphon: $s_psiphon,  Tor: $s_tor"
