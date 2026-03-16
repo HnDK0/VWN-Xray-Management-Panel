@@ -210,39 +210,40 @@ manageWs() {
         printf "   ${red}$(msg menu_ws_title)${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
         echo -e "${cyan}================================================================${reset}"
         echo -e "  Nginx: $s_nginx,  SSL: $s_ssl,  CF Guard: $s_cfguard"
-        echo -e "  Xray:  $s_ws,  $(msg lbl_domain): ${green}${s_domain}${reset}"
         echo -e "  WARP:  $s_warp"
         [ -n "$s_connect" ] && echo -e "  CDN:   ${green}${s_connect}${reset}"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
+        # Протоколы — показываем всегда, NOT INSTALLED если конфига нет
         if [ -f "$configPath" ]; then
-            echo -e "  WS    ${green}${s_ws_path:-—}${reset}\t  port ${green}${s_ws_port:-—}${reset}  $(_portSt "$s_ws_port")"
-            [ -n "$s_xhttp_path" ] && [ -n "$s_xhttp_port" ] && \
-                echo -e "  XHTTP ${green}${s_xhttp_path}${reset}\t  port ${green}${s_xhttp_port}${reset}  $(_portSt "$s_xhttp_port")"
-            [ -n "$s_grpc_svc" ]  && [ -n "$s_grpc_port" ]  && \
-                echo -e "  gRPC  ${green}${s_grpc_svc}${reset}\t  port ${green}${s_grpc_port}${reset}  $(_portSt "$s_grpc_port")"
+            echo -e "  $(printf "%-7s" "WS:")$s_ws  $(_portSt "$s_ws_port") ${green}${s_ws_path:-—}${reset}  :${s_ws_port:-—}"
+            echo -e "  $(printf "%-7s" "XHTTP:")$s_ws  $(_portSt "$s_xhttp_port") ${green}${s_xhttp_path:-—}${reset}  :${s_xhttp_port:-—}"
+            echo -e "  $(printf "%-7s" "gRPC:")$s_ws  $(_portSt "$s_grpc_port") ${green}${s_grpc_svc:-—}${reset}  :${s_grpc_port:-—}"
+            echo -e "  $(msg lbl_domain): ${green}${s_domain}${reset}"
         else
-            echo -e "  ${yellow}$(msg xray_not_installed)${reset}"
+            echo -e "  $(printf "%-7s" "WS:")${yellow}NOT INSTALLED${reset}"
+            echo -e "  $(printf "%-7s" "XHTTP:")${yellow}NOT INSTALLED${reset}"
+            echo -e "  $(printf "%-7s" "gRPC:")${yellow}NOT INSTALLED${reset}"
         fi
         echo -e "${cyan}================================================================${reset}"
-        echo -e "  ${cyan}── $(msg menu_sep_config) ──${reset}"
+        echo -e "  ${cyan}$(msg menu_sep_config)${reset}"
         echo -e "  ${green}1.${reset}  $(msg menu_port)"
         echo -e "  ${green}2.${reset}  $(msg menu_wspath)"
         echo -e "  ${green}3.${reset}  $(msg menu_domain)"
         echo -e "  ${green}4.${reset}  $(msg menu_cdn_host)"
         echo -e "  ${green}5.${reset}  $(msg menu_stub)"
         echo -e "  ${green}6.${reset}  $(msg menu_uuid)"
-        echo -e "  ${cyan}── $(msg menu_sep_sec_short) ──${reset}"
+        echo -e "  ${cyan}$(msg menu_sep_sec)${reset}"
         echo -e "  ${green}7.${reset}  $(msg menu_ssl)"
         echo -e "  ${green}8.${reset}  $(msg menu_ssl_cron)"
         echo -e "  ${green}9.${reset}  $(msg menu_cfguard)"
         echo -e "  ${green}10.${reset} $(msg menu_cf_update_ip)"
-        echo -e "  ${cyan}── $(msg menu_sep_logs) ──${reset}"
+        echo -e "  ${cyan}$(msg menu_sep_logs)${reset}"
         echo -e "  ${green}11.${reset} $(msg menu_log_cron)"
         echo -e "  ${green}12.${reset} $(msg menu_xray_acc)"
         echo -e "  ${green}13.${reset} $(msg menu_xray_err)"
         echo -e "  ${green}14.${reset} $(msg menu_nginx_acc)"
         echo -e "  ${green}15.${reset} $(msg menu_nginx_err)"
-        echo -e "  ${cyan}── $(msg menu_sep_svc) ──${reset}"
+        echo -e "  ${cyan}$(msg menu_sep_svc)${reset}"
         echo -e "  ${green}16.${reset} $(msg menu_restart)"
         echo -e "  ${green}17.${reset} $(msg menu_install)"
         echo -e "  ${green}18.${reset} $(msg menu_remove)"
@@ -316,32 +317,43 @@ menu() {
         printf "   ${red}VWN — Xray Management Panel${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
         echo -e "${cyan}================================================================${reset}"
         echo -e "  ${cyan}── $(msg menu_sep_proto_short) ──────────────────────────────────────────${reset}"
-        echo -e "  $(printf "%-9s" "WS:")$s_ws_c,  WARP: $s_warp"
-        echo -e "  $(printf "%-9s" "Reality:")$s_reality_c,  SSL: $s_ssl"
-        echo -e "  $(printf "%-9s" "Nginx:")$s_nginx_c,  CF Guard: $s_cfguard"
-        [ -n "$s_connect" ] && echo -e "  CDN: ${green}${s_connect}${reset}"
-        # XHTTP / gRPC — показываем пути и статус портов если конфиг установлен
+        # Вспомогательная: статус порта ● / ○
+        _pst() { [ -n "$1" ] && ss -tlnp 2>/dev/null | grep -q ":${1}" && echo "${green}●${reset}" || echo "${red}○${reset}"; }
+        # WS + XHTTP + gRPC — показываем всегда: статус сервиса + путь/порт или NOT INSTALLED
         if [ -f "$configPath" ]; then
-            local _xhttp_path _grpc_svc _xhttp_port _grpc_port _ws_port _ws_path
+            local _ws_path _xhttp_path _grpc_svc _ws_port _xhttp_port _grpc_port
             _ws_path=$(jq -r '.inbounds[] | select(.tag=="ws-inbound") | .streamSettings.wsSettings.path // empty' "$configPath" 2>/dev/null | head -1)
             [ -z "$_ws_path" ] && _ws_path=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // "—"' "$configPath" 2>/dev/null)
             _xhttp_path=$(grep '^XHTTP_PATH=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
             _grpc_svc=$(grep '^GRPC_SERVICE=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
-            # Fallback для конфигов без vwn.conf: вычисляем из WS пути
-            [ -z "$_xhttp_path" ] && [ -n "$_ws_path" ] && [ "$_ws_path" != "—" ] && _xhttp_path="${_ws_path}x"
-            [ -z "$_grpc_svc"   ] && [ -n "$_ws_path" ] && [ "$_ws_path" != "—" ] && _grpc_svc="${_ws_path#/}g"
+            [ -z "$_xhttp_path" ] && [ "$_ws_path" != "—" ] && _xhttp_path="${_ws_path}x"
+            [ -z "$_grpc_svc"   ] && [ "$_ws_path" != "—" ] && _grpc_svc="${_ws_path#/}g"
             _ws_port=$(jq -r '.inbounds[] | select(.tag=="ws-inbound") | .port' "$configPath" 2>/dev/null | head -1)
             [ -z "$_ws_port" ] && _ws_port=$(jq -r '.inbounds[0].port' "$configPath" 2>/dev/null)
             _xhttp_port=$(jq -r '.inbounds[] | select(.tag=="xhttp-inbound") | .port' "$configPath" 2>/dev/null | head -1)
             _grpc_port=$(jq -r '.inbounds[] | select(.tag=="grpc-inbound") | .port' "$configPath" 2>/dev/null | head -1)
-            # ● зелёный — порт слушает, ○ красный — нет
-            _pst() { ss -tlnp 2>/dev/null | grep -q ":${1}" && echo "${green}●${reset}" || echo "${red}○${reset}"; }
-            local _dot_ws _dot_xhttp _dot_grpc
-            _dot_ws=$(_pst "$_ws_port")
-            _dot_xhttp=$(_pst "$_xhttp_port")
-            _dot_grpc=$(_pst "$_grpc_port")
-            echo -e "  WS ${_dot_ws} ${green}${_ws_path}${reset}  XHTTP ${_dot_xhttp} ${green}${_xhttp_path:-—}${reset}  gRPC ${_dot_grpc} ${green}${_grpc_svc:-—}${reset}"
+            echo -e "  $(printf "%-8s" "WS:")$s_ws_c  $(_pst "$_ws_port") ${green}${_ws_path}${reset}  :${_ws_port}"
+            echo -e "  $(printf "%-8s" "XHTTP:")$s_ws_c  $(_pst "$_xhttp_port") ${green}${_xhttp_path:-—}${reset}  :${_xhttp_port:-—}"
+            echo -e "  $(printf "%-8s" "gRPC:")$s_ws_c  $(_pst "$_grpc_port") ${green}${_grpc_svc:-—}${reset}  :${_grpc_port:-—}"
+        else
+            echo -e "  $(printf "%-8s" "WS:")${yellow}NOT INSTALLED${reset}"
+            echo -e "  $(printf "%-8s" "XHTTP:")${yellow}NOT INSTALLED${reset}"
+            echo -e "  $(printf "%-8s" "gRPC:")${yellow}NOT INSTALLED${reset}"
         fi
+        # Reality — всегда показываем
+        if [ -f "$realityConfigPath" ]; then
+            local _r_port _r_dest
+            _r_port=$(jq -r '.inbounds[0].port' "$realityConfigPath" 2>/dev/null)
+            _r_dest=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0] // "—"' "$realityConfigPath" 2>/dev/null)
+            echo -e "  $(printf "%-8s" "Reality:")$s_reality_c  $(_pst "$_r_port") ${green}${_r_dest}${reset}  :${_r_port}"
+        else
+            echo -e "  $(printf "%-8s" "Reality:")${yellow}NOT INSTALLED${reset}"
+        fi
+        # Nginx + SSL + CF Guard
+        echo -e "  $(printf "%-8s" "Nginx:")$s_nginx_c  SSL: $s_ssl  CF Guard: $s_cfguard"
+        # WARP
+        echo -e "  $(printf "%-8s" "WARP:")$s_warp"
+        [ -n "$s_connect" ] && echo -e "  $(printf "%-8s" "CDN:")${green}${s_connect}${reset}"
         echo -e "  ${cyan}── $(msg menu_sep_tun_short) ───────────────────────────────────────────${reset}"
         echo -e "  Relay: $s_relay,  Psiphon: $s_psiphon,  Tor: $s_tor"
         echo -e "  ${cyan}── $(msg menu_sep_sec_short) ────────────────────────────────────────────${reset}"
