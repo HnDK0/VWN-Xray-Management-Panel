@@ -311,15 +311,6 @@ menu() {
         s_nginx_c=$(_pval "$s_nginx" 7)
         # Чистые значения для правой колонки и туннелей (без ANSI — printf %-Ns не считает escape)
         _plain() { printf '%s' "$1" | sed 's/\[[0-9;]*[mABCDJKHf]//g; s/(B//g'; }
-        s_warp_plain=$(_plain "$s_warp")
-        s_ssl_plain=$(_plain "$s_ssl")
-        s_cfguard_plain=$(_plain "$s_cfguard")
-        s_relay_plain=$(_plain "$s_relay")
-        s_psiphon_plain=$(_plain "$s_psiphon")
-        s_tor_plain=$(_plain "$s_tor")
-        s_bbr_plain=$(_plain "$s_bbr")
-        s_f2b_plain=$(_plain "$s_f2b")
-        s_jail_plain=$(_plain "$s_jail")
 
         echo -e "${cyan}================================================================${reset}"
         printf "   ${red}VWN — Xray Management Panel${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
@@ -336,6 +327,9 @@ menu() {
             [ -z "$_ws_path" ] && _ws_path=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // "—"' "$configPath" 2>/dev/null)
             _xhttp_path=$(grep '^XHTTP_PATH=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
             _grpc_svc=$(grep '^GRPC_SERVICE=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
+            # Fallback для конфигов без vwn.conf: вычисляем из WS пути
+            [ -z "$_xhttp_path" ] && [ -n "$_ws_path" ] && [ "$_ws_path" != "—" ] && _xhttp_path="${_ws_path}x"
+            [ -z "$_grpc_svc"   ] && [ -n "$_ws_path" ] && [ "$_ws_path" != "—" ] && _grpc_svc="${_ws_path#/}g"
             _ws_port=$(jq -r '.inbounds[] | select(.tag=="ws-inbound") | .port' "$configPath" 2>/dev/null | head -1)
             [ -z "$_ws_port" ] && _ws_port=$(jq -r '.inbounds[0].port' "$configPath" 2>/dev/null)
             _xhttp_port=$(jq -r '.inbounds[] | select(.tag=="xhttp-inbound") | .port' "$configPath" 2>/dev/null | head -1)
@@ -346,7 +340,7 @@ menu() {
             _dot_ws=$(_pst "$_ws_port")
             _dot_xhttp=$(_pst "$_xhttp_port")
             _dot_grpc=$(_pst "$_grpc_port")
-            echo -e "  WS $(_plain "$_dot_ws") ${green}${_ws_path}${reset}  XHTTP $(_plain "$_dot_xhttp") ${green}${_xhttp_path:-—}${reset}  gRPC $(_plain "$_dot_grpc") ${green}${_grpc_svc:-—}${reset}"
+            echo -e "  WS ${_dot_ws} ${green}${_ws_path}${reset}  XHTTP ${_dot_xhttp} ${green}${_xhttp_path:-—}${reset}  gRPC ${_dot_grpc} ${green}${_grpc_svc:-—}${reset}"
         fi
         echo -e "  ${cyan}── $(msg menu_sep_tun_short) ───────────────────────────────────────────${reset}"
         echo -e "  Relay: $s_relay,  Psiphon: $s_psiphon,  Tor: $s_tor"

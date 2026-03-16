@@ -96,13 +96,12 @@ DEFAULTCONF
     xhttpPath="${wsPath}x"
     grpcService="${wsPath#/}g"
 
-    # WS требует HTTP/1.1, gRPC требует HTTP/2.
-    # Решение: два listen — один без http2 (для WS и XHTTP), один с http2 (для gRPC).
-    # nginx корректно мультиплексирует ALPN: h2 → gRPC location, http/1.1 → WS/XHTTP.
+    # WS и XHTTP работают по HTTP/1.1 — http2 на listen ломает WS upgrade.
+    # gRPC идёт через Cloudflare CDN который сам управляет h2.
+    # nginx → xray (loopback): grpc_pass использует h2c автоматически без http2 на listen.
     cat > "$nginxPath" << EOF
 server {
     listen 443 ssl;
-    listen 443 ssl http2;
     server_name $domain;
 
     ssl_certificate     /etc/nginx/cert/cert.pem;
@@ -281,18 +280,22 @@ toggleCfGuard() {
         fi
     else
         _fetchCfGuardIPs || return 1
-        local wsPath
-        wsPath=$(jq -r ".inbounds[0].streamSettings.wsSettings.path" "$configPath" 2>/dev/null)
+        local wsPath xhttpPath grpcService
+        wsPath=$(jq -r '.inbounds[] | select(.tag=="ws-inbound") | .streamSettings.wsSettings.path // empty' "$configPath" 2>/dev/null | head -1)
+        [ -z "$wsPath" ] && wsPath=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // ""' "$configPath" 2>/dev/null)
+        xhttpPath=$(grep '^XHTTP_PATH=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
+        grpcService=$(grep '^GRPC_SERVICE=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
         if [ -n "$wsPath" ] && [ "$wsPath" != "null" ]; then
             if ! grep -q "cloudflare_ip" "$nginxPath" 2>/dev/null; then
-                python3 - "$nginxPath" "$wsPath" << 'PYEOF'
+                python3 - "$nginxPath" "$wsPath" "$xhttpPath" "$grpcService" << 'PYEOF'
 import sys, re
-path, wspath = sys.argv[1], sys.argv[2]
+path, wspath, xhttppath, grpcsvc = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 with open(path, 'r') as f: content = f.read()
 cf_check = '    if ($cloudflare_ip != 1) { return 444; }\n\n'
-pattern = r'(\s+location ' + re.escape(wspath) + r'\s*\{)'
-new_content = re.sub(pattern, cf_check + r'\1', content, count=1)
-with open(path, 'w') as f: f.write(new_content)
+for loc in filter(None, [wspath, xhttppath, '/' + grpcsvc if grpcsvc else None]):
+    pattern = r'(\s+location ' + re.escape(loc) + r'\s*\{)'
+    content = re.sub(pattern, cf_check + r'\1', content, count=1)
+with open(path, 'w') as f: f.write(content)
 PYEOF
             fi
         fi
