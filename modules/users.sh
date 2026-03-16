@@ -60,8 +60,10 @@ _applyUsersToConfigs() {
     clients_r+="]"; clients_x+="]"
 
     if [ -f "$configPath" ]; then
-        jq --argjson c "$clients_x" '.inbounds[0].settings.clients = $c' \
-            "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
+        # Применяем clients ко всем inbound'ам (ws, xhttp, grpc) в config.json
+        jq --argjson c "$clients_x" '
+            .inbounds = [.inbounds[] | .settings.clients = $c]
+        ' "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
     fi
     if [ -f "$realityConfigPath" ]; then
         jq --argjson c "$clients_r" '.inbounds[0].settings.clients = $c' \
@@ -118,9 +120,28 @@ buildUserSubFile() {
         wep=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$wp" 2>/dev/null || echo "$wp")
         connect_host=$(getConnectHost 2>/dev/null || echo "$domain")
         [ -z "$connect_host" ] && connect_host="$domain"
+
+        # WS
         name="${flag} VL-WS-CDN | ${label} ${flag}"
         encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$name" 2>/dev/null || echo "$name")
         lines+="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=ws&host=${domain}&path=${wep}#${encoded_name}"$'\n'
+
+        # XHTTP
+        local xhttp_path xep xhttp_name xhttp_encoded_name
+        xhttp_path=$(grep '^XHTTP_PATH=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
+        [ -z "$xhttp_path" ] && xhttp_path="${wp}x"
+        xep=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$xhttp_path" 2>/dev/null || echo "$xhttp_path")
+        xhttp_name="${flag} VL-XHTTP-CDN | ${label} ${flag}"
+        xhttp_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$xhttp_name" 2>/dev/null || echo "$xhttp_name")
+        lines+="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=xhttp&host=${domain}&path=${xep}&mode=auto#${xhttp_encoded_name}"$'\n'
+
+        # gRPC
+        local grpc_service grpc_name grpc_encoded_name
+        grpc_service=$(grep '^GRPC_SERVICE=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
+        [ -z "$grpc_service" ] && grpc_service="${wp#/}g"
+        grpc_name="${flag} VL-gRPC-CDN | ${label} ${flag}"
+        grpc_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$grpc_name" 2>/dev/null || echo "$grpc_name")
+        lines+="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=grpc&serviceName=${grpc_service}&mode=gun#${grpc_encoded_name}"$'\n'
     fi
 
     if [ -f "$realityConfigPath" ]; then
@@ -139,9 +160,112 @@ buildUserSubFile() {
     safe=$(_safeLabel "$label")
     filename=$(_subFilename "$label" "$token")
     # Удаляем старые файлы этого label (любой токен) перед записью нового
-    rm -f "${SUB_DIR}/${safe}_"*.txt
+    rm -f "${SUB_DIR}/${safe}_"*.txt "${SUB_DIR}/${safe}_"*.html
     printf '%s' "$lines" | base64 -w 0 > "${SUB_DIR}/${filename}"
     chmod 644 "${SUB_DIR}/${filename}"
+
+    # Генерируем HTML-страницу с конфигами (защита — токен в URL)
+    buildUserHtmlPage "$uuid" "$label" "$token" "$lines" 2>/dev/null || true
+}
+
+# Генерирует HTML-страницу /sub/<label>_<token>.html
+# Доступна только по прямой ссылке — токен из 24 случайных символов защищает от перебора
+buildUserHtmlPage() {
+    local uuid="$1" label="$2" token="$3" lines="$4"
+    local domain safe htmlfile sub_url
+    domain=$(_getDomain)
+    [ -z "$domain" ] && return 0
+    safe=$(_safeLabel "$label")
+    htmlfile="${SUB_DIR}/${safe}_${token}.html"
+    sub_url="https://${domain}/sub/${safe}_${token}.txt"
+
+    # Разбиваем lines на массив ссылок
+    local configs=()
+    while IFS= read -r line; do
+        [ -n "$line" ] && configs+=("$line")
+    done <<< "$lines"
+
+    cat > "$htmlfile" << HTMLEOF
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>VWN — ${label}</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:monospace;background:#0f0f0f;color:#d0d0d0;padding:12px;max-width:860px;margin:0 auto}
+h2{color:#89b4fa;font-size:14px;margin:18px 0 8px;border-top:1px solid #222;padding-top:12px}
+h2:first-of-type{border-top:none;margin-top:0}
+.row{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;padding:6px 8px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:6px}
+.lbl{background:#252540;color:#89b4fa;padding:4px 8px;border-radius:4px;font-size:11px;font-weight:700;white-space:nowrap;min-width:120px;text-align:center}
+.lbl.sub{background:#254025;color:#a6e3a1}
+.cfg{flex:1;white-space:nowrap;overflow-x:auto;padding:6px 8px;background:#111;border-radius:4px;color:#a6e3a1;font-size:11px;scrollbar-width:none}
+.cfg::-webkit-scrollbar{display:none}
+.btn{border:1px solid #444;padding:5px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:700;background:#222;color:#ccc;white-space:nowrap}
+.btn:hover{background:#89b4fa;color:#111;border-color:#89b4fa}
+.btn.qr{color:#89b4fa;border-color:#89b4fa}
+.btn.qr:hover{background:#89b4fa;color:#111}
+.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:99;justify-content:center;align-items:center}
+.modal.open{display:flex}
+.mbox{background:#1a1a1a;border:1px solid #89b4fa;border-radius:10px;padding:20px;text-align:center}
+#qrcode{background:#fff;padding:8px;border-radius:6px;margin-bottom:10px}
+.cls{background:#c31e1e;color:#fff;border:none;padding:7px 18px;border-radius:4px;cursor:pointer;font-size:12px}
+@media(max-width:580px){.lbl{min-width:100%;margin-bottom:2px}.cfg{min-width:100%}}
+</style>
+</head>
+<body>
+<h2>Subscription URL</h2>
+<div class="row">
+  <div class="lbl sub">Subscription</div>
+  <div class="cfg" id="c0">${sub_url}</div>
+  <button class="btn" onclick="cp('c0',this)">Copy</button>
+  <button class="btn qr" onclick="qr('c0')">QR</button>
+</div>
+<h2>Конфиги</h2>
+HTMLEOF
+
+    local i=1
+    for cfg in "${configs[@]}"; do
+        # Имя из фрагмента (#...) URL-декодированное
+        local cname
+        cname=$(python3 -c "import sys,urllib.parse; u=sys.argv[1]; print(urllib.parse.unquote(u.split('#')[-1]) if '#' in u else u[:30])" "$cfg" 2>/dev/null || echo "Config $i")
+        cat >> "$htmlfile" << HTMLEOF
+<div class="row">
+  <div class="lbl">${cname}</div>
+  <div class="cfg" id="c${i}">${cfg}</div>
+  <button class="btn" onclick="cp('c${i}',this)">Copy</button>
+  <button class="btn qr" onclick="qr('c${i}')">QR</button>
+</div>
+HTMLEOF
+        i=$(( i + 1 ))
+    done
+
+    cat >> "$htmlfile" << 'HTMLEOF'
+<div id="modal" class="modal" onclick="if(event.target===this)closeQr()">
+  <div class="mbox"><div id="qrcode"></div><button class="cls" onclick="closeQr()">Close</button></div>
+</div>
+<script>
+function cp(id,btn){
+  navigator.clipboard.writeText(document.getElementById(id).innerText)
+    .then(()=>{var t=btn.innerText;btn.innerText='OK';btn.style.background='#a6e3a1';btn.style.color='#111';
+      setTimeout(()=>{btn.innerText=t;btn.style.background='';btn.style.color=''},1500)})
+    .catch(()=>{var r=document.createRange();r.selectNode(document.getElementById(id));window.getSelection().removeAllRanges();window.getSelection().addRange(r);document.execCommand('copy')});
+}
+function qr(id){
+  var txt=document.getElementById(id).innerText;
+  var box=document.getElementById('qrcode');
+  box.innerHTML='';
+  new QRCode(box,{text:txt,width:256,height:256,colorDark:'#000',colorLight:'#fff',correctLevel:QRCode.CorrectLevel.L});
+  document.getElementById('modal').classList.add('open');
+}
+function closeQr(){document.getElementById('modal').classList.remove('open')}
+</script>
+</body></html>
+HTMLEOF
+    chmod 644 "$htmlfile"
 }
 
 rebuildAllSubFiles() {
@@ -307,6 +431,29 @@ showUserQR() {
       Host: ${domain}${reset}\n"
 
         echo -e "${cyan}================================================================${reset}"
+
+        # XHTTP
+        local xhttp_path xep url_xhttp xhttp_name xhttp_encoded
+        xhttp_path=$(grep '^XHTTP_PATH=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
+        [ -z "$xhttp_path" ] && xhttp_path="${wp}x"
+        xep=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$xhttp_path" 2>/dev/null || echo "$xhttp_path")
+        xhttp_name="${flag} VL-XHTTP-CDN | ${label} ${flag}"
+        xhttp_encoded=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$xhttp_name" 2>/dev/null || echo "$xhttp_name")
+        url_xhttp="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=xhttp&host=${domain}&path=${xep}&mode=auto#${xhttp_encoded}"
+        echo -e "\n${cyan}=== ${xhttp_name} ===${reset}"
+        qrencode -s 1 -m 1 -t ANSIUTF8 "$url_xhttp" 2>/dev/null || true
+        echo -e "\n${green}${url_xhttp}${reset}\n"
+
+        # gRPC
+        local grpc_service url_grpc grpc_name grpc_encoded
+        grpc_service=$(grep '^GRPC_SERVICE=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
+        [ -z "$grpc_service" ] && grpc_service="${wp#/}g"
+        grpc_name="${flag} VL-gRPC-CDN | ${label} ${flag}"
+        grpc_encoded=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$grpc_name" 2>/dev/null || echo "$grpc_name")
+        url_grpc="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=grpc&serviceName=${grpc_service}&mode=gun#${grpc_encoded}"
+        echo -e "${cyan}=== ${grpc_name} ===${reset}"
+        qrencode -s 1 -m 1 -t ANSIUTF8 "$url_grpc" 2>/dev/null || true
+        echo -e "\n${green}${url_grpc}${reset}\n"
     fi
 
     # Reality
@@ -328,15 +475,20 @@ showUserQR() {
         echo -e "\n${green}${url_reality}${reset}\n"
     fi
 
-    # Subscription URL
+    # Subscription URL + HTML-страница
     buildUserSubFile "$uuid" "$label" "$token" 2>/dev/null || true
-    local sub_url
+    local sub_url safe html_url
     sub_url=$(getSubUrl "$label" "$token")
+    safe=$(_safeLabel "$label")
+    html_url="https://${domain}/sub/${safe}_${token}.html"
     if [ -n "$sub_url" ]; then
-        echo -e "${cyan}[ Subscription URL — все протоколы сразу ]${reset}"
+        echo -e "${cyan}[ Subscription URL — для клиентов (v2rayNG, Hiddify...) ]${reset}"
         qrencode -s 1 -m 1 -t ANSIUTF8 "$sub_url" 2>/dev/null || true
         echo -e "\n${green}${sub_url}${reset}"
         echo -e "${yellow}v2rayNG: + → Subscription group → URL${reset}"
+        echo ""
+        echo -e "${cyan}[ $(msg users_html_hint) ]${reset}"
+        echo -e "${green}${html_url}${reset}"
     fi
 
     echo -e "\n${cyan}================================================================${reset}"

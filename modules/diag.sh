@@ -92,13 +92,45 @@ _diagXray() {
             _fail "$(msg diag_xhttp_stopped)"
         fi
 
-        # Порт слушается
-        local xray_port
-        xray_port=$(jq -r '.inbounds[0].port' "$configPath" 2>/dev/null)
-        if ss -tlnp 2>/dev/null | grep -q ":${xray_port}"; then
-            _pass "$(msg diag_port_listen): $xray_port"
+        # Проверяем все три порта (WS, XHTTP, gRPC)
+        local ws_port xhttp_port grpc_port
+        ws_port=$(jq -r '.inbounds[] | select(.tag=="ws-inbound") | .port // .port' "$configPath" 2>/dev/null | head -1)
+        # Fallback для старых конфигов без тегов
+        [ -z "$ws_port" ] && ws_port=$(jq -r '.inbounds[0].port' "$configPath" 2>/dev/null)
+        xhttp_port=$(jq -r '.inbounds[] | select(.tag=="xhttp-inbound") | .port' "$configPath" 2>/dev/null)
+        grpc_port=$(jq -r '.inbounds[] | select(.tag=="grpc-inbound") | .port' "$configPath" 2>/dev/null)
+
+        if ss -tlnp 2>/dev/null | grep -q ":${ws_port}"; then
+            _pass "$(msg diag_port_listen): WS $ws_port"
         else
-            _fail "$(msg diag_port_not_listen): $xray_port"
+            _fail "$(msg diag_port_not_listen): WS $ws_port"
+        fi
+        if [ -n "$xhttp_port" ]; then
+            if ss -tlnp 2>/dev/null | grep -q ":${xhttp_port}"; then
+                _pass "$(msg diag_port_listen): XHTTP $xhttp_port"
+            else
+                _fail "$(msg diag_port_not_listen): XHTTP $xhttp_port"
+            fi
+        fi
+        if [ -n "$grpc_port" ]; then
+            if ss -tlnp 2>/dev/null | grep -q ":${grpc_port}"; then
+                _pass "$(msg diag_port_listen): gRPC $grpc_port"
+            else
+                _fail "$(msg diag_port_not_listen): gRPC $grpc_port"
+            fi
+        fi
+
+        # Проверяем синхронизацию users.conf с конфигом
+        local users_file="/usr/local/etc/xray/users.conf"
+        if [ -f "$users_file" ]; then
+            local conf_count users_count
+            conf_count=$(jq '.inbounds[] | select(.tag=="ws-inbound" or (.tag == null and .streamSettings.network == "ws")) | .settings.clients | length' "$configPath" 2>/dev/null | head -1)
+            users_count=$(grep -c '.' "$users_file" 2>/dev/null || echo 0)
+            if [ "${conf_count:-0}" -eq "$users_count" ]; then
+                _pass "users.conf: $users_count $(msg users_list | tr '[:upper:]' '[:lower:]') OK"
+            else
+                _warn "users.conf ($users_count) ≠ config ($conf_count) — $(msg menu_sub)"
+            fi
         fi
     else
         _skip "WebSocket $(msg diag_not_installed)"

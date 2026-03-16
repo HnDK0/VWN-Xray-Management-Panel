@@ -58,6 +58,15 @@ writeXrayConfig() {
     [ -z "$new_uuid" ] && new_uuid=$(cat /proc/sys/kernel/random/uuid)
     mkdir -p /usr/local/etc/xray /var/log/xray
 
+    # Дополнительные порты для XHTTP и gRPC (следующие за WS)
+    local xhttpPort grpcPort xhttpPath grpcService
+    xhttpPort=$(( xrayPort + 1 ))
+    grpcPort=$(( xrayPort + 2 ))
+    # XHTTP path: тот же wsPath + суффикс 'x'
+    xhttpPath="${wsPath}x"
+    # gRPC serviceName: wsPath без ведущего '/' + суффикс 'g'
+    grpcService="${wsPath#/}g"
+
     cat > "$configPath" << EOF
 {
     "log": {
@@ -65,7 +74,9 @@ writeXrayConfig() {
         "error": "/var/log/xray/error.log",
         "loglevel": "error"
     },
-    "inbounds": [{
+    "inbounds": [
+    {
+        "tag": "ws-inbound",
         "port": $xrayPort,
         "listen": "127.0.0.1",
         "protocol": "vless",
@@ -84,6 +95,58 @@ writeXrayConfig() {
                 "tcpKeepAliveIdle": 100,
                 "tcpKeepAliveInterval": 10,
                 "tcpKeepAliveRetry": 3
+            }
+        },
+        "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}
+    },
+    {
+        "tag": "xhttp-inbound",
+        "port": $xhttpPort,
+        "listen": "127.0.0.1",
+        "protocol": "vless",
+        "settings": {
+            "clients": [{"id": "$new_uuid"}],
+            "decryption": "none"
+        },
+        "streamSettings": {
+            "network": "xhttp",
+            "xhttpSettings": {
+                "path": "$xhttpPath",
+                "host": "$domain",
+                "mode": "auto",
+                "extra": {
+                    "noGRPCHeader": false,
+                    "xPaddingBytes": "400-800",
+                    "scMaxEachPostBytes": 1500000,
+                    "scMinPostsIntervalMs": 20,
+                    "scStreamUpServerSecs": "60-240",
+                    "xmux": {
+                        "maxConcurrency": "3-5",
+                        "maxConnections": 0,
+                        "cMaxReuseTimes": "1000-3000",
+                        "hMaxRequestTimes": "400-700",
+                        "hMaxReusableSecs": "1200-1800",
+                        "hKeepAlivePeriod": 0
+                    }
+                }
+            }
+        },
+        "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}
+    },
+    {
+        "tag": "grpc-inbound",
+        "port": $grpcPort,
+        "listen": "127.0.0.1",
+        "protocol": "vless",
+        "settings": {
+            "clients": [{"id": "$new_uuid"}],
+            "decryption": "none"
+        },
+        "streamSettings": {
+            "network": "grpc",
+            "grpcSettings": {
+                "serviceName": "$grpcService",
+                "multiMode": false
             }
         },
         "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}
@@ -132,6 +195,36 @@ writeXrayConfig() {
     }
 }
 EOF
+
+    # Сохраняем пути xhttp и grpc в vwn.conf для использования в подписках
+    local vwn_conf="/usr/local/etc/xray/vwn.conf"
+    sed -i '/^XHTTP_PATH=/d; /^GRPC_SERVICE=/d' "$vwn_conf" 2>/dev/null || true
+    echo "XHTTP_PATH=${xhttpPath}" >> "$vwn_conf"
+    echo "GRPC_SERVICE=${grpcService}" >> "$vwn_conf"
+}
+
+# Читает xhttp path и grpc serviceName из vwn.conf (сохранены при writeXrayConfig)
+_getXhttpPath() {
+    local p
+    p=$(grep '^XHTTP_PATH=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
+    # Fallback: вывести из wsPath inbound[0] + суффикс 'x'
+    if [ -z "$p" ] && [ -f "$configPath" ]; then
+        local ws
+        ws=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // ""' "$configPath" 2>/dev/null)
+        p="${ws}x"
+    fi
+    echo "$p"
+}
+
+_getGrpcService() {
+    local s
+    s=$(grep '^GRPC_SERVICE=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
+    if [ -z "$s" ] && [ -f "$configPath" ]; then
+        local ws
+        ws=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // ""' "$configPath" 2>/dev/null)
+        s="${ws#/}g"
+    fi
+    echo "$s"
 }
 
 getConfigInfo() {
@@ -331,11 +424,29 @@ modifyXrayPort() {
     if ! _validatePort "$xrayPort" &>/dev/null; then
         echo "${red}$(msg invalid_port)${reset}"; return 1
     fi
-    jq ".inbounds[0].port = $xrayPort" \
-        "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
+    local oldXhttp oldGrpc newXhttp newGrpc
+    oldXhttp=$(( oldPort + 1 ))
+    oldGrpc=$(( oldPort + 2 ))
+    newXhttp=$(( xrayPort + 1 ))
+    newGrpc=$(( xrayPort + 2 ))
+
+    # Обновляем все три порта в config.json по тегу
+    jq --argjson ws "$xrayPort" --argjson xh "$newXhttp" --argjson gr "$newGrpc" '
+        .inbounds = [.inbounds[] |
+            if .tag == "ws-inbound"   then .port = $ws
+            elif .tag == "xhttp-inbound" then .port = $xh
+            elif .tag == "grpc-inbound"  then .port = $gr
+            else . end]
+    ' "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
+
+    # Обновляем порты в nginx
     sed -i "s|127.0.0.1:${oldPort}|127.0.0.1:${xrayPort}|g" "$nginxPath"
+    sed -i "s|127.0.0.1:${oldXhttp}|127.0.0.1:${newXhttp}|g" "$nginxPath"
+    sed -i "s|127.0.0.1:${oldGrpc}|127.0.0.1:${newGrpc}|g" "$nginxPath"
+    sed -i "s|grpc://127.0.0.1:${oldGrpc}|grpc://127.0.0.1:${newGrpc}|g" "$nginxPath"
+
     systemctl restart xray nginx
-    echo "${green}$(msg port_changed) $xrayPort${reset}"
+    echo "${green}$(msg port_changed) $xrayPort (xhttp: $newXhttp, grpc: $newGrpc)${reset}"
 }
 
 modifyWsPath() {
@@ -346,15 +457,43 @@ modifyWsPath() {
     wsPath=$(echo "$wsPath" | tr -cd 'A-Za-z0-9/_-')
     [[ ! "$wsPath" =~ ^/ ]] && wsPath="/$wsPath"
 
-    local oldPathEscaped newPathEscaped
-    oldPathEscaped=$(printf '%s\n' "$oldPath" | sed 's|[[\.*^$()+?{|]|\\&|g')
-    newPathEscaped=$(printf '%s\n' "$wsPath" | sed 's|[[\.*^$()+?{|]|\\&|g')
-    sed -i "s|location ${oldPathEscaped}|location ${newPathEscaped}|g" "$nginxPath"
+    local oldXhttpPath newXhttpPath oldGrpcService newGrpcService
+    oldXhttpPath="${oldPath}x"
+    newXhttpPath="${wsPath}x"
+    oldGrpcService="${oldPath#/}g"
+    newGrpcService="${wsPath#/}g"
 
-    jq ".inbounds[0].streamSettings.wsSettings.path = \"$wsPath\"" \
-        "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
+    # Обновляем пути в nginx
+    local oldPathEsc newPathEsc oldXhttpEsc newXhttpEsc oldGrpcEsc newGrpcEsc
+    oldPathEsc=$(printf '%s\n' "$oldPath"        | sed 's|[[\.*^$()+?{|]|\\&|g')
+    newPathEsc=$(printf '%s\n' "$wsPath"         | sed 's|[[\.*^$()+?{|]|\\&|g')
+    oldXhttpEsc=$(printf '%s\n' "$oldXhttpPath"  | sed 's|[[\.*^$()+?{|]|\\&|g')
+    newXhttpEsc=$(printf '%s\n' "$newXhttpPath"  | sed 's|[[\.*^$()+?{|]|\\&|g')
+    oldGrpcEsc=$(printf '%s\n' "/$oldGrpcService" | sed 's|[[\.*^$()+?{|]|\\&|g')
+    newGrpcEsc=$(printf '%s\n' "/$newGrpcService" | sed 's|[[\.*^$()+?{|]|\\&|g')
+    sed -i "s|location ${oldPathEsc} |location ${newPathEsc} |g" "$nginxPath"
+    sed -i "s|location ${oldXhttpEsc} |location ${newXhttpEsc} |g" "$nginxPath"
+    sed -i "s|location ${oldGrpcEsc} |location ${newGrpcEsc} |g" "$nginxPath"
+
+    # Обновляем пути в config.json по тегу
+    jq --arg ws "$wsPath" --arg xh "$newXhttpPath" --arg gs "$newGrpcService" '
+        .inbounds = [.inbounds[] |
+            if .tag == "ws-inbound"      then .streamSettings.wsSettings.path = $ws
+            elif .tag == "xhttp-inbound" then .streamSettings.xhttpSettings.path = $xh
+            elif .tag == "grpc-inbound"  then .streamSettings.grpcSettings.serviceName = $gs
+            else . end]
+    ' "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
+
+    # Сохраняем новые пути в vwn.conf
+    local vwn_conf="/usr/local/etc/xray/vwn.conf"
+    sed -i '/^XHTTP_PATH=/d; /^GRPC_SERVICE=/d' "$vwn_conf" 2>/dev/null || true
+    echo "XHTTP_PATH=${newXhttpPath}" >> "$vwn_conf"
+    echo "GRPC_SERVICE=${newGrpcService}" >> "$vwn_conf"
+
     systemctl restart xray nginx
-    echo "${green}$(msg new_path): $wsPath${reset}"
+    # Пересобираем подписки с новыми путями
+    rebuildAllSubFiles 2>/dev/null || true
+    echo "${green}$(msg new_path): WS=$wsPath  XHTTP=$newXhttpPath  gRPC=$newGrpcService${reset}"
 }
 
 modifyProxyPassUrl() {

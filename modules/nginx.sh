@@ -59,6 +59,10 @@ http {
     keepalive_timeout 75s;
     keepalive_requests 10000;
 
+    # HTTP/2 — для gRPC через Cloudflare
+    http2_recv_timeout 300s;
+    http2_idle_timeout 300s;
+
     server_tokens off;
     gzip on;
     gzip_vary on;
@@ -86,11 +90,19 @@ server {
 }
 DEFAULTCONF
 
-    # Основной конфиг без http2 — WS работает только на HTTP/1.1,
-    # http2 создаёт проблемы с upgrade на мобильных клиентах
+    local xhttpPort grpcPort xhttpPath grpcService
+    xhttpPort=$(( xrayPort + 1 ))
+    grpcPort=$(( xrayPort + 2 ))
+    xhttpPath="${wsPath}x"
+    grpcService="${wsPath#/}g"
+
+    # WS требует HTTP/1.1, gRPC требует HTTP/2.
+    # Решение: два listen — один без http2 (для WS и XHTTP), один с http2 (для gRPC).
+    # nginx корректно мультиплексирует ALPN: h2 → gRPC location, http/1.1 → WS/XHTTP.
     cat > "$nginxPath" << EOF
 server {
     listen 443 ssl;
+    listen 443 ssl http2;
     server_name $domain;
 
     ssl_certificate     /etc/nginx/cert/cert.pem;
@@ -100,40 +112,70 @@ server {
     ssl_session_cache   shared:SSL:10m;
     ssl_session_timeout 10m;
 
-    # Отключаем буферизацию глобально для этого сервера
+    # Отключаем буферизацию глобально — критично для WS и XHTTP
     proxy_buffering off;
     proxy_cache off;
     proxy_buffer_size 4k;
 
+    # ── WebSocket ────────────────────────────────────────────────
     location $wsPath {
         proxy_pass http://127.0.0.1:$xrayPort;
         proxy_http_version 1.1;
-
-        # Обязательные заголовки для WebSocket upgrade
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
-
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-
-        # Большие таймауты — мобильный может не слать данные долго
-        # (экран выключен, фон, слабый сигнал)
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
         proxy_connect_timeout 10s;
-
-        # Не буферизировать тело запроса — критично для WS
         proxy_request_buffering off;
-
-        # TCP keepalive на уровне nginx к upstream
         proxy_socket_keepalive on;
+    }
+
+    # ── XHTTP ────────────────────────────────────────────────────
+    location $xhttpPath {
+        proxy_pass http://127.0.0.1:$xhttpPort;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        # Передаём Content-Type без изменений — xhttp использует application/grpc-web
+        proxy_pass_header Content-Type;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_connect_timeout 10s;
+        proxy_request_buffering off;
+        proxy_buffering off;
+        client_body_buffer_size 1m;
+        client_body_timeout 1h;
+        client_max_body_size 0;
+    }
+
+    # ── gRPC ─────────────────────────────────────────────────────
+    location /$grpcService {
+        if (\$content_type !~ "application/grpc") {
+            return 404;
+        }
+        grpc_pass grpc://127.0.0.1:$grpcPort;
+        grpc_read_timeout 1h;
+        grpc_send_timeout 1h;
+        grpc_socket_keepalive on;
+        grpc_set_header Host \$host;
+        grpc_set_header X-Real-IP \$remote_addr;
+        grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
 
     location /sub/ {
         alias /usr/local/etc/xray/sub/;
-        default_type text/plain;
+        # .txt отдаётся как text/plain (для клиентов-подписчиков),
+        # .html открывается как страница — mime.types разрулит
+        types {
+            text/plain   txt;
+            text/html    html;
+        }
         add_header Content-Disposition "attachment; filename=\"\$sub_label.txt\"";
         add_header profile-title "\$sub_label";
         add_header Cache-Control 'no-cache, no-store, must-revalidate';
@@ -351,7 +393,10 @@ with open(path) as f: c = f.read()
 block = (
     "\n    location /sub/ {\n"
     "        alias /usr/local/etc/xray/sub/;\n"
-    "        default_type text/plain;\n"
+    "        types {\n"
+    "            text/plain   txt;\n"
+    "            text/html    html;\n"
+    "        }\n"
     '        add_header Content-Disposition "attachment; filename=\\"$sub_label.txt\\"";\n'
     '        add_header profile-title "$sub_label";\n'
     "        add_header Cache-Control 'no-cache, no-store, must-revalidate';\n"

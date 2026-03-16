@@ -170,7 +170,7 @@ manageWs() {
     set +e
     while true; do
         clear
-        local s_nginx s_ws s_ssl s_cfguard s_domain s_connect s_warp s_port s_path
+        local s_nginx s_ws s_ssl s_cfguard s_domain s_connect s_warp s_port s_path s_xhttp_path s_grpc_svc
         s_nginx=$(getServiceStatus nginx)
         s_ws=$(getServiceStatus xray)
         s_ssl=$(checkCertExpiry)
@@ -178,20 +178,24 @@ manageWs() {
         s_warp=$(getWarpStatus)
         s_domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // .inbounds[0].streamSettings.xhttpSettings.host // "—"' "$configPath" 2>/dev/null)
         s_connect=$(cat "$CONNECT_HOST_FILE" 2>/dev/null | tr -d '[:space:]')
-        s_port=$(jq -r '.inbounds[0].port // "—"' "$configPath" 2>/dev/null)
+        s_port=$(jq -r '.inbounds[] | select(.tag=="ws-inbound") | .port // empty' "$configPath" 2>/dev/null || jq -r '.inbounds[0].port // "—"' "$configPath" 2>/dev/null)
         s_path=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // .inbounds[0].streamSettings.xhttpSettings.path // "—"' "$configPath" 2>/dev/null)
+        s_xhttp_path=$(grep '^XHTTP_PATH=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
+        s_grpc_svc=$(grep '^GRPC_SERVICE=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
         # Обрезаем длинные значения
         [ ${#s_connect} -gt 35 ] && s_connect="${s_connect:0:32}..."
         [ ${#s_domain} -gt 30 ]  && s_domain="${s_domain:0:27}..."
 
         echo -e "${cyan}================================================================${reset}"
-        echo -e "${cyan}================================================================${reset}"
-        printf "   ${red}WebSocket + TLS + Nginx${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
+        printf "   ${red}$(msg menu_ws_title)${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
-        echo -e "  $(printf "%-7s" "Nginx:")$s_nginx,  SSL: ${green}$s_ssl_plain${reset},  CF Guard: $s_cfguard"
-        echo -e "  $(printf "%-7s" "Xray:")$s_ws,  $(msg lbl_port): ${green}$s_port${reset},  $(msg lbl_path): ${green}$s_path${reset}"
+        echo -e "  $(printf "%-7s" "Nginx:")$s_nginx,  SSL: ${green}$(_plain "$s_ssl")${reset},  CF Guard: $s_cfguard"
+        echo -e "  $(printf "%-7s" "Xray:")$s_ws,  $(msg lbl_port): ${green}$s_port${reset}"
         echo -e "  $(printf "%-7s" "WARP:")$s_warp,  $(msg lbl_domain): ${green}$s_domain${reset}"
         [ -n "$s_connect" ] && echo -e "  $(printf "%-7s" "CDN:")${green}${s_connect}${reset}"
+        echo -e "  $(msg lbl_ws_path):   ${green}${s_path:-—}${reset}"
+        [ -n "$s_xhttp_path" ] && echo -e "  $(msg lbl_xhttp_path): ${green}${s_xhttp_path}${reset}"
+        [ -n "$s_grpc_svc"   ] && echo -e "  $(msg lbl_grpc_svc):  ${green}${s_grpc_svc}${reset}"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
         echo -e "  ${green}1.${reset}  $(msg menu_port)"
         echo -e "  ${green}2.${reset}  $(msg menu_wspath)"
@@ -284,6 +288,13 @@ menu() {
         echo -e "  $(printf "%-9s" "Reality:")$s_reality_c,  SSL: $s_ssl"
         echo -e "  $(printf "%-9s" "Nginx:")$s_nginx_c,  CF Guard: $s_cfguard"
         [ -n "$s_connect" ] && echo -e "  CDN: ${green}${s_connect}${reset}"
+        # Показываем пути XHTTP/gRPC если конфиг уже установлен
+        if [ -f "$configPath" ]; then
+            local _xhttp_path _grpc_svc
+            _xhttp_path=$(grep '^XHTTP_PATH=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
+            _grpc_svc=$(grep '^GRPC_SERVICE=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
+            [ -n "$_xhttp_path" ] && echo -e "  $(msg lbl_xhttp_path): ${green}${_xhttp_path}${reset}  $(msg lbl_grpc_svc): ${green}${_grpc_svc:-—}${reset}"
+        fi
         echo -e "  ${cyan}── $(msg menu_sep_tun_short) ───────────────────────────────────────────${reset}"
         echo -e "  Relay: $s_relay,  Psiphon: $s_psiphon,  Tor: $s_tor"
         echo -e "  ${cyan}── $(msg menu_sep_sec_short) ────────────────────────────────────────────${reset}"
