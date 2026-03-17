@@ -27,7 +27,7 @@ prepareSoftwareWs() {
     run_task "Системные параметры" applySysctl
 }
 
-# Установка VLESS + WebSocket + TLS + Nginx + WARP + CDN
+# Установка VLESS + WS + XHTTP + gRPC + TLS + Nginx + WARP + CDN
 installWsTls() {
     isRoot
     clear
@@ -63,8 +63,8 @@ installWsTls() {
         break
     done
 
-    local xhttpPath
-    xhttpPath=$(generateRandomPath)
+    local wsBasePath
+    wsBasePath=$(generateRandomPath)
 
     # URL заглушки
     local proxyUrl validated_url
@@ -79,8 +79,8 @@ installWsTls() {
     done
 
     echo -e "\n${green}---${reset}"
-    run_task "Создание конфига Xray"   "writeXrayConfig '$xrayPort' '$xhttpPath' '$userDomain'"
-    run_task "Создание конфига Nginx"  "writeNginxConfig '$xrayPort' '$userDomain' '$proxyUrl' '$xhttpPath'"
+    run_task "Создание конфига Xray"   "writeXrayConfig '$xrayPort' '$wsBasePath' '$userDomain'"
+    run_task "Создание конфига Nginx"  "writeNginxConfig '$xrayPort' '$userDomain' '$proxyUrl' '$wsBasePath'"
     run_task "Настройка WARP"          configWarp
     run_task "Выпуск SSL"              "userDomain='$userDomain' configCert"
     run_task "Применение правил WARP"  applyWarpDomains
@@ -93,7 +93,9 @@ installWsTls() {
     systemctl restart xray nginx
 
     echo -e "\n${green}$(msg install_complete)${reset}"
-    getQrCode
+    # Инициализируем users.conf и показываем все конфиги для default пользователя
+    _initUsersFile
+    showUserQR
 }
 
 # Установка VLESS + Reality + WARP
