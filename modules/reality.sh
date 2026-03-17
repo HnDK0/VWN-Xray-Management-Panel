@@ -28,14 +28,22 @@ writeRealityConfig() {
     echo -e "${cyan}$(msg reality_keygen)${reset}"
     local keys privKey pubKey shortId new_uuid
 
-    keys=$(/usr/local/bin/xray x25519 2>/dev/null) || {
-        echo "${red}$(msg reality_keys_fail)${reset}"; return 1
+    # Определяем путь к xray
+    local xray_bin
+    xray_bin=$(command -v xray 2>/dev/null || echo "/usr/local/bin/xray")
+    if [ ! -x "$xray_bin" ]; then
+        echo "${red}$(msg reality_keys_fail): xray not found${reset}"; return 1
+    fi
+
+    # Захватываем и stdout и stderr — xray x25519 пишет в stdout
+    keys=$("$xray_bin" x25519 2>&1) || {
+        echo "${red}$(msg reality_keys_fail): $keys${reset}"; return 1
     }
     privKey=$(echo "$keys" | tr -d '\r' | awk '/Private key:/{print $3}')
     pubKey=$(echo "$keys"  | tr -d '\r' | awk '/Public key:/{print $3}')
-    [ -z "$privKey" ] || [ -z "$pubKey" ] && {
-        echo "${red}$(msg reality_keys_err)${reset}"; return 1
-    }
+    if [ -z "$privKey" ] || [ -z "$pubKey" ]; then
+        echo "${red}$(msg reality_keys_err): $keys${reset}"; return 1
+    fi
 
     shortId=$(cat /proc/sys/kernel/random/uuid | tr -d '-' | cut -c1-16)
 
