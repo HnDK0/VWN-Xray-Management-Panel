@@ -61,7 +61,6 @@ writeXrayConfig() {
     local wsPath="$2"
     local domain="$3"
     local new_uuid
-    # Если users.conf уже есть — берём UUID первого пользователя
     if [ -f "$USERS_FILE" ] && [ -s "$USERS_FILE" ]; then
         new_uuid=$(cut -d'|' -f1 "$USERS_FILE" | head -1)
     fi
@@ -137,7 +136,6 @@ writeXrayConfig() {
                 "heartbeatPeriod": 30
             },
             "sockopt": {
-                "acceptProxyProtocol": true,
                 "tcpKeepAliveIdle": 100,
                 "tcpKeepAliveInterval": 10,
                 "tcpKeepAliveRetry": 3
@@ -175,9 +173,6 @@ writeXrayConfig() {
                         "hKeepAlivePeriod": 0
                     }
                 }
-            },
-            "sockopt": {
-                "acceptProxyProtocol": true
             }
         },
         "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}
@@ -196,9 +191,6 @@ writeXrayConfig() {
             "grpcSettings": {
                 "serviceName": "$grpcService",
                 "multiMode": false
-            },
-            "sockopt": {
-                "acceptProxyProtocol": true
             }
         },
         "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}

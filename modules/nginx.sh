@@ -99,6 +99,23 @@ server {
     proxy_cache off;
     proxy_buffer_size 4k;
 
+    # ── Подписки (HTTP/1.1) ───────────────────────────────────────
+    location ~ ^/sub/.*\\.html\$ {
+        alias /usr/local/etc/xray/sub/;
+        types { text/html html; }
+        add_header Cache-Control 'no-cache, no-store, must-revalidate';
+    }
+
+    location /sub/ {
+        alias /usr/local/etc/xray/sub/;
+        try_files \$uri =404;
+        types { text/plain txt; }
+        default_type text/plain;
+        add_header Content-Disposition "attachment; filename=\"\$sub_label.txt\"";
+        add_header profile-title "\$sub_label";
+        add_header Cache-Control 'no-cache, no-store, must-revalidate';
+    }
+
     # ── WebSocket ──────────────────────────────────────────────────
     location $wsPath {
         proxy_pass http://127.0.0.1:$xrayPort;
@@ -133,22 +150,7 @@ server {
         client_max_body_size 0;
     }
 
-    # ── Подписки ───────────────────────────────────────────────────
-    location ~ ^/sub/.*\\.html\$ {
-        alias /usr/local/etc/xray/sub/;
-        types { text/html html; }
-        add_header Cache-Control 'no-cache, no-store, must-revalidate';
-    }
-
-    location /sub/ {
-        alias /usr/local/etc/xray/sub/;
-        types { text/plain txt; }
-        default_type text/plain;
-        add_header Content-Disposition "attachment; filename=\"\$sub_label.txt\"";
-        add_header profile-title "\$sub_label";
-        add_header Cache-Control 'no-cache, no-store, must-revalidate';
-    }
-
+    # ── Заглушка (HTTP/1.1) ────────────────────────────────────────
     location / {
         proxy_pass $proxyUrl;
         proxy_http_version 1.1;
@@ -163,13 +165,48 @@ server {
     error_log  /var/log/nginx/error.log;
 }
 
-# ── HTTP/2 socket — gRPC ───────────────────────────────────────────
+# ── HTTP/2 socket — gRPC + XHTTP (HTTP/2) + Подписки (HTTP/2) ─────
 server {
     listen unix:/dev/shm/nginx_h2.sock http2 proxy_protocol;
     server_name $domain;
 
     set_real_ip_from unix:;
     real_ip_header proxy_protocol;
+
+    # ── Подписки (HTTP/2) ─────────────────────────────────────────
+    location ~ ^/sub/.*\\.html\$ {
+        alias /usr/local/etc/xray/sub/;
+        types { text/html html; }
+        add_header Cache-Control 'no-cache, no-store, must-revalidate';
+    }
+
+    location /sub/ {
+        alias /usr/local/etc/xray/sub/;
+        try_files \$uri =404;
+        types { text/plain txt; }
+        default_type text/plain;
+        add_header Content-Disposition "attachment; filename=\"\$sub_label.txt\"";
+        add_header profile-title "\$sub_label";
+        add_header Cache-Control 'no-cache, no-store, must-revalidate';
+    }
+
+    # ── XHTTP (HTTP/2) ─────────────────────────────────────────────
+    location $xhttpPath {
+        proxy_pass http://127.0.0.1:$xhttpPort;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_pass_header Content-Type;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_connect_timeout 10s;
+        proxy_request_buffering off;
+        proxy_buffering off;
+        client_body_buffer_size 1m;
+        client_body_timeout 1h;
+        client_max_body_size 0;
+    }
 
     # ── gRPC ───────────────────────────────────────────────────────
     location /$grpcService {
@@ -182,7 +219,7 @@ server {
         grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
 
-    # ── Заглушка (браузер с h2) ────────────────────────────────────
+    # ── Заглушка (HTTP/2) ──────────────────────────────────────────
     location / {
         proxy_pass $proxyUrl;
         proxy_http_version 1.1;
@@ -360,7 +397,6 @@ configCert() {
         --fullchain-file /etc/nginx/cert/cert.pem \
         --reloadcmd "systemctl restart xray"
 
-    # Права на ключ
     chown root:ssl-cert /etc/nginx/cert/cert.key
     chmod 640 /etc/nginx/cert/cert.key
     chmod 755 /etc/nginx/cert
