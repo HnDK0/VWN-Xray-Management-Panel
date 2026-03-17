@@ -109,7 +109,8 @@ writeXrayConfig() {
                 "alpn": ["h2", "http/1.1"],
                 "minVersion": "1.2"
             }
-        }
+        },
+        "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}
     },
     {
         "tag": "ws-inbound",
