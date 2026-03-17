@@ -93,14 +93,14 @@ _initLang() {
 
     # ── INSTALL TYPE SELECTION ────────────────────────────────────
     MSG[install_type_title]=$(   [ "$VWN_LANG" = en ] && echo "Select installation type:" || echo "Выберите тип установки:")
-    MSG[install_type_1]=$(       [ "$VWN_LANG" = en ] && echo "1) VLESS + WS + XHTTP + gRPC + TLS + Nginx + WARP + CDN" || echo "1) VLESS + WS + XHTTP + gRPC + TLS + Nginx + WARP + CDN")
+    MSG[install_type_1]=$(       [ "$VWN_LANG" = en ] && echo "1) VLESS + WS + TLS + Nginx + WARP + CDN" || echo "1) VLESS + WS + TLS + Nginx + WARP + CDN")
     MSG[install_type_2]=$(       [ "$VWN_LANG" = en ] && echo "2) VLESS + Reality + WARP" || echo "2) VLESS + Reality + WARP")
-    MSG[install_type_ws_title]=$([ "$VWN_LANG" = en ] && echo "=== Installing VLESS+WS+XHTTP+gRPC+TLS+WARP+CDN ===" || echo "=== Установка VLESS+WS+XHTTP+gRPC+TLS+WARP+CDN ===")
+    MSG[install_type_ws_title]=$([ "$VWN_LANG" = en ] && echo "=== Installing VLESS+WS+TLS+WARP+CDN ===" || echo "=== Установка VLESS+WS+TLS+WARP+CDN ===")
     MSG[install_type_reality_title]=$([ "$VWN_LANG" = en ] && echo "=== Installing VLESS+Reality+WARP ===" || echo "=== Установка VLESS+Reality+WARP ===")
 
     # ── MENU ──────────────────────────────────────────────────────
     MSG[menu_title]=$(        [ "$VWN_LANG" = en ] && echo "XRAY VLESS + WARP + CDN + REALITY" || echo "XRAY VLESS + WARP + CDN + REALITY")
-    MSG[menu_install]=$(      [ "$VWN_LANG" = en ] && echo "Install (VLESS+WS+XHTTP+gRPC+TLS+WARP+CDN)"  || echo "Установить (VLESS+WS+XHTTP+gRPC+TLS+WARP+CDN)")
+    MSG[menu_install]=$(      [ "$VWN_LANG" = en ] && echo "Install Xray (VLESS+WS+TLS+WARP+CDN)"  || echo "Установить Xray (VLESS+WS+TLS+WARP+CDN)")
     MSG[menu_qr]=$(           [ "$VWN_LANG" = en ] && echo "Show QR code and link"     || echo "Показать QR-код и ссылку")
     MSG[menu_uuid]=$(         [ "$VWN_LANG" = en ] && echo "Change UUID"               || echo "Сменить UUID")
     MSG[menu_sep_config]=$(   [ "$VWN_LANG" = en ] && echo "─── Configuration ───────────────────" || echo "─────────────── Конфигурация ─────────────")
@@ -489,7 +489,7 @@ _initLang() {
     MSG[qr_uri_title]=$(          [ "$VWN_LANG" = en ] && echo "[ 1. URI link (v2rayNG / Hiddify / Nekoray) ]" || echo "[ 1. URI ссылка (v2rayNG / Hiddify / Nekoray) ]")
     MSG[qr_sub_title]=$(          [ "$VWN_LANG" = en ] && echo "[ Subscription URL — all protocols ]"          || echo "[ Subscription URL — все протоколы сразу ]")
     MSG[qr_sub_hint]=$(           [ "$VWN_LANG" = en ] && echo "v2rayNG: + → Subscription group → URL"         || echo "v2rayNG: + → Subscription group → URL")
-    MSG[ws_tls_formats]=$(        [ "$VWN_LANG" = en ] && echo "WS+XHTTP+gRPC — connection formats"             || echo "WS+XHTTP+gRPC — форматы подключения")
+    MSG[ws_tls_formats]=$(        [ "$VWN_LANG" = en ] && echo "WebSocket+TLS — connection formats"             || echo "WebSocket+TLS — форматы подключения")
 
     # ── INPUT PROMPTS (generic) ───────────────────────────────────
     MSG[prompt_choice]=$(         [ "$VWN_LANG" = en ] && echo "Choice [1]: "               || echo "Выбор [1]: ")

@@ -33,13 +33,7 @@ writeNginxConfig() {
     local proxy_host
     proxy_host=$(echo "$proxyUrl" | sed 's|https://||;s|http://||;s|/.*||')
 
-    mkdir -p /dev/shm
-
-    local xhttpPort grpcPort xhttpPath grpcService
-    xhttpPort=$(( xrayPort + 1 ))
-    grpcPort=$(( xrayPort + 2 ))
-    xhttpPath="${wsPath}x"
-    grpcService="${wsPath#/}g"
+    setNginxCert
 
     cat > /etc/nginx/nginx.conf << 'NGINXMAIN'
 user www-data;
@@ -61,15 +55,10 @@ http {
     tcp_nopush on;
     tcp_nodelay on;
 
+    # Keepalive — чуть больше чем у Cloudflare (70s), чтобы не рвать соединения
     keepalive_timeout 75s;
     keepalive_requests 10000;
 
-<<<<<<< HEAD
-    http2_recv_timeout 300s;
-    http2_idle_timeout 300s;
-
-=======
->>>>>>> parent of fa950d3 (Update)
     server_tokens off;
     gzip on;
     gzip_vary on;
@@ -85,57 +74,37 @@ server {
     listen 80 default_server;
     listen [::]:80 default_server;
     server_name _;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl default_server;
+    ssl_certificate     /etc/nginx/cert/default.crt;
+    ssl_certificate_key /etc/nginx/cert/default.key;
+    server_name _;
     return 444;
 }
 DEFAULTCONF
 
-<<<<<<< HEAD
-=======
     # Основной конфиг без http2 — WS работает только на HTTP/1.1,
     # http2 создаёт проблемы с upgrade на мобильных клиентах
->>>>>>> parent of fa950d3 (Update)
     cat > "$nginxPath" << EOF
-# ── HTTP/1.1 socket — WS + XHTTP ──────────────────────────────────
 server {
-<<<<<<< HEAD
-    listen unix:/dev/shm/nginx.sock proxy_protocol;
-=======
     listen 443 ssl;
->>>>>>> parent of fa950d3 (Update)
     server_name $domain;
 
-    set_real_ip_from unix:;
-    real_ip_header proxy_protocol;
+    ssl_certificate     /etc/nginx/cert/cert.pem;
+    ssl_certificate_key /etc/nginx/cert/cert.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 10m;
 
-<<<<<<< HEAD
-=======
     # Отключаем буферизацию глобально для этого сервера
->>>>>>> parent of fa950d3 (Update)
     proxy_buffering off;
     proxy_cache off;
     proxy_buffer_size 4k;
 
-<<<<<<< HEAD
-    # ── Подписки (HTTP/1.1) ───────────────────────────────────────
-    location ~ ^/sub/.*\\.html\$ {
-        alias /usr/local/etc/xray/sub/;
-        types { text/html html; }
-        add_header Cache-Control 'no-cache, no-store, must-revalidate';
-    }
-
-    location /sub/ {
-        alias /usr/local/etc/xray/sub/;
-        try_files \$uri =404;
-        types { text/plain txt; }
-        default_type text/plain;
-        add_header Content-Disposition "attachment; filename=\"\$sub_label.txt\"";
-        add_header profile-title "\$sub_label";
-        add_header Cache-Control 'no-cache, no-store, must-revalidate';
-    }
-
-    # ── WebSocket ──────────────────────────────────────────────────
-=======
->>>>>>> parent of fa950d3 (Update)
     location $wsPath {
         proxy_pass http://127.0.0.1:$xrayPort;
         proxy_http_version 1.1;
@@ -147,13 +116,10 @@ server {
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-<<<<<<< HEAD
-=======
         proxy_set_header X-Forwarded-Proto \$scheme;
 
         # Большие таймауты — мобильный может не слать данные долго
         # (экран выключен, фон, слабый сигнал)
->>>>>>> parent of fa950d3 (Update)
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
         proxy_connect_timeout 10s;
@@ -165,108 +131,21 @@ server {
         proxy_socket_keepalive on;
     }
 
-<<<<<<< HEAD
-    # ── XHTTP ──────────────────────────────────────────────────────
-    location $xhttpPath {
-        proxy_pass http://127.0.0.1:$xhttpPort;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_pass_header Content-Type;
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-        proxy_connect_timeout 10s;
-        proxy_request_buffering off;
-        proxy_buffering off;
-        client_body_buffer_size 1m;
-        client_body_timeout 1h;
-        client_max_body_size 0;
-    }
-
-    # ── Заглушка (HTTP/1.1) ────────────────────────────────────────
-    location / {
-        proxy_pass $proxyUrl;
-        proxy_http_version 1.1;
-        proxy_set_header Host $proxy_host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_ssl_server_name on;
-        proxy_read_timeout 60s;
-    }
-
-    access_log /var/log/nginx/access.log;
-    error_log  /var/log/nginx/error.log;
-}
-
-# ── HTTP/2 socket — gRPC + XHTTP (HTTP/2) + Подписки (HTTP/2) ─────
-server {
-    listen unix:/dev/shm/nginx_h2.sock http2 proxy_protocol;
-    server_name $domain;
-
-    set_real_ip_from unix:;
-    real_ip_header proxy_protocol;
-
-    # ── Подписки (HTTP/2) ─────────────────────────────────────────
-    location ~ ^/sub/.*\\.html\$ {
-        alias /usr/local/etc/xray/sub/;
-        types { text/html html; }
-        add_header Cache-Control 'no-cache, no-store, must-revalidate';
-    }
-
     location /sub/ {
         alias /usr/local/etc/xray/sub/;
-        try_files \$uri =404;
-        types { text/plain txt; }
-=======
-    location /sub/ {
-        alias /usr/local/etc/xray/sub/;
->>>>>>> parent of fa950d3 (Update)
         default_type text/plain;
         add_header Content-Disposition "attachment; filename=\"\$sub_label.txt\"";
         add_header profile-title "\$sub_label";
         add_header Cache-Control 'no-cache, no-store, must-revalidate';
     }
 
-<<<<<<< HEAD
-    # ── XHTTP (HTTP/2) ─────────────────────────────────────────────
-    location $xhttpPath {
-        proxy_pass http://127.0.0.1:$xhttpPort;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_pass_header Content-Type;
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-        proxy_connect_timeout 10s;
-        proxy_request_buffering off;
-        proxy_buffering off;
-        client_body_buffer_size 1m;
-        client_body_timeout 1h;
-        client_max_body_size 0;
-    }
-
-    # ── gRPC ───────────────────────────────────────────────────────
-    location /$grpcService {
-        grpc_pass grpc://127.0.0.1:$grpcPort;
-        grpc_read_timeout 1h;
-        grpc_send_timeout 1h;
-        grpc_socket_keepalive on;
-        grpc_set_header Host \$host;
-        grpc_set_header X-Real-IP \$remote_addr;
-        grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    }
-
-    # ── Заглушка (HTTP/2) ──────────────────────────────────────────
-=======
->>>>>>> parent of fa950d3 (Update)
     location / {
         proxy_pass $proxyUrl;
         proxy_http_version 1.1;
         proxy_set_header Host $proxy_host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_ssl_server_name on;
         proxy_read_timeout 60s;
     }
@@ -276,6 +155,7 @@ server {
 }
 EOF
 
+    # Генерируем map-блок для имён подписок
     local server_ip country_code
     server_ip=$(getServerIP 2>/dev/null || curl -s --connect-timeout 5 ifconfig.me)
     country_code=$(_getCountryCode "$server_ip")
@@ -285,8 +165,13 @@ map \$uri \$sub_label {
     default                                                    "${country_code} VLESS";
 }
 MAPEOF
+    # Восстанавливаем реальный IP — всегда нужно при Cloudflare
+    setupRealIpRestore
 }
 
+# Восстановление реального IP клиента из CF-Connecting-IP.
+# Вызывается автоматически при writeNginxConfig.
+# nginx.conf уже содержит include conf.d/*.conf — отдельный include не нужен.
 setupRealIpRestore() {
     echo -e "${cyan}$(msg cf_ips_setup)${reset}"
     local tmp
@@ -315,6 +200,8 @@ setupRealIpRestore() {
     echo "${green}$(msg cf_ips_ok)${reset}"
 }
 
+# CF Guard — блокировка прямого доступа, только Cloudflare IP.
+# Включается вручную через меню (пункт 3→7).
 _fetchCfGuardIPs() {
     local tmp
     tmp=$(mktemp) || return 1
@@ -346,28 +233,24 @@ toggleCfGuard() {
         read -r confirm
         if [[ "$confirm" == "y" ]]; then
             rm -f /etc/nginx/conf.d/cf_guard.conf
-            sed -i '/if.*cloudflare_ip.*!=.*1.*{.*return 444;.*}/d' "$nginxPath"
+            sed -i '/cloudflare_ip.*!=.*1/d' "$nginxPath" 2>/dev/null || true
             nginx -t && systemctl reload nginx
             echo "${green}$(msg cfguard_disabled)${reset}"
         fi
     else
         _fetchCfGuardIPs || return 1
-        local wsPath xhttpPath grpcService
-        wsPath=$(get_ws_path)
-        [ -z "$wsPath" ] && wsPath=$(jq -r '.inbounds[] | select(.tag=="ws-inbound") | .streamSettings.wsSettings.path // ""' "$configPath" 2>/dev/null | head -1)
-        xhttpPath=$(get_xhttp_path)
-        grpcService=$(get_grpc_service)
+        local wsPath
+        wsPath=$(jq -r ".inbounds[0].streamSettings.wsSettings.path" "$configPath" 2>/dev/null)
         if [ -n "$wsPath" ] && [ "$wsPath" != "null" ]; then
             if ! grep -q "cloudflare_ip" "$nginxPath" 2>/dev/null; then
-                python3 - "$nginxPath" "$wsPath" "$xhttpPath" "$grpcService" << 'PYEOF'
+                python3 - "$nginxPath" "$wsPath" << 'PYEOF'
 import sys, re
-path, wspath, xhttppath, grpcsvc = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+path, wspath = sys.argv[1], sys.argv[2]
 with open(path, 'r') as f: content = f.read()
 cf_check = '    if ($cloudflare_ip != 1) { return 444; }\n\n'
-for loc in filter(None, [wspath, xhttppath, '/' + grpcsvc if grpcsvc else None]):
-    pattern = r'(\s+location ' + re.escape(loc) + r'\s*\{)'
-    content = re.sub(pattern, cf_check + r'\1', content, count=1)
-with open(path, 'w') as f: f.write(content)
+pattern = r'(\s+location ' + re.escape(wspath) + r'\s*\{)'
+new_content = re.sub(pattern, cf_check + r'\1', content, count=1)
+with open(path, 'w') as f: f.write(new_content)
 PYEOF
             fi
         fi
@@ -376,6 +259,7 @@ PYEOF
         echo "${green}$(msg cfguard_enabled)${reset}"
     fi
 }
+
 
 openPort80() {
     ufw status | grep -q inactive && return
@@ -402,10 +286,12 @@ configCert() {
 
     installPackage "socat" || true
 
+
     if [ ! -f ~/.acme.sh/acme.sh ]; then
         curl -fsSL https://get.acme.sh | sh -s email="acme@${userDomain}"
     fi
 
+    # Проверяем что acme.sh установился
     if [ ! -f ~/.acme.sh/acme.sh ]; then
         echo "${red}$(msg acme_install_fail)${reset}"; return 1
     fi
@@ -436,18 +322,16 @@ configCert() {
     ~/.acme.sh/acme.sh --install-cert -d "$userDomain" \
         --key-file /etc/nginx/cert/cert.key \
         --fullchain-file /etc/nginx/cert/cert.pem \
-        --reloadcmd "systemctl restart xray"
-
-    chown root:ssl-cert /etc/nginx/cert/cert.key
-    chmod 640 /etc/nginx/cert/cert.key
-    chmod 755 /etc/nginx/cert
+        --reloadcmd "systemctl reload nginx"
 
     echo "${green}$(msg ssl_success) $userDomain${reset}"
 }
 
+# Добавляет location /sub/ и обновляет sub_map.conf с флагом страны
 applyNginxSub() {
     [ ! -f "$nginxPath" ] && return 1
 
+    # Обновляем/создаём sub_map.conf с актуальным кодом страны
     local server_ip country_code
     server_ip=$(getServerIP 2>/dev/null || curl -s --connect-timeout 5 ifconfig.me)
     country_code=$(_getCountryCode "$server_ip")
@@ -458,32 +342,22 @@ map \$uri \$sub_label {
 }
 MAPEOF
 
+    # Добавляем location /sub/ в xray.conf если его ещё нет
     if ! grep -q 'location /sub/' "$nginxPath"; then
         python3 - "$nginxPath" << 'PYEOF'
 import sys, re
 path = sys.argv[1]
 with open(path) as f: c = f.read()
-html_block = (
-    "\n    location ~ ^/sub/.*\\.html$ {\n"
-    "        alias /usr/local/etc/xray/sub/;\n"
-    "        types { text/html html; }\n"
-    "        add_header Cache-Control 'no-cache, no-store, must-revalidate';\n"
-    "    }\n"
-)
-txt_block = (
+block = (
     "\n    location /sub/ {\n"
     "        alias /usr/local/etc/xray/sub/;\n"
-<<<<<<< HEAD
-    "        types { text/plain txt; }\n"
-=======
->>>>>>> parent of fa950d3 (Update)
     "        default_type text/plain;\n"
     '        add_header Content-Disposition "attachment; filename=\\"$sub_label.txt\\"";\n'
     '        add_header profile-title "$sub_label";\n'
     "        add_header Cache-Control 'no-cache, no-store, must-revalidate';\n"
     "    }\n"
 )
-c = re.sub(r'(\n    location / \{)', html_block + txt_block + r'\1', c, count=1)
+c = re.sub(r'(\n    location / \{)', block + r'\1', c, count=1)
 with open(path, 'w') as f: f.write(c)
 PYEOF
     fi

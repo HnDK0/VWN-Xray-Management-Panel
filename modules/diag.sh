@@ -154,23 +154,11 @@ _diagNginx() {
         _fail "$(msg diag_nginx_stopped)"
     fi
 
-    # Unix sockets — nginx слушает на них (не на TCP 443)
-    if [ -S /dev/shm/nginx.sock ]; then
-        _pass "$(msg diag_port_listen): unix:nginx.sock"
-    else
-        _fail "$(msg diag_port_not_listen): unix:nginx.sock"
-    fi
-    if [ -S /dev/shm/nginx_h2.sock ]; then
-        _pass "$(msg diag_port_listen): unix:nginx_h2.sock (gRPC)"
-    else
-        _fail "$(msg diag_port_not_listen): unix:nginx_h2.sock (gRPC)"
-    fi
-
-    # Порт 443 слушает xray (не nginx)
+    # Порт 443 слушается
     if ss -tlnp 2>/dev/null | grep -q ':443'; then
-        _pass "$(msg diag_port_listen): 443 (xray)"
+        _pass "$(msg diag_port_listen): 443"
     else
-        _fail "$(msg diag_port_not_listen): 443 (xray)"
+        _fail "$(msg diag_port_not_listen): 443"
     fi
 
     # SSL сертификат

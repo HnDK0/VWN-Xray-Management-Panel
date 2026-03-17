@@ -60,10 +60,12 @@ applyWarpDomains() {
         local has_rule
         has_rule=$(jq '.routing.rules[] | select(.outboundTag=="warp")' "$cfg" 2>/dev/null)
         if [ -z "$has_rule" ]; then
+            # Правила нет — вставляем после block (индекс 0)
             jq --argjson r "$warp_rule" \
                 '.routing.rules = [.routing.rules[0]] + [$r] + .routing.rules[1:]' \
                 "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
         else
+            # Правило есть — обновляем домены, убираем port
             jq --argjson doms "[$domains_json]" \
                 '(.routing.rules[] | select(.outboundTag == "warp")) |= (.domain = $doms | del(.port))' \
                 "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
@@ -133,6 +135,7 @@ checkWarpStatus() {
 addDomainToWarpProxy() {
     read -rp "$(msg warp_domain_add)" domain
     [ -z "$domain" ] && return
+    # Убираем ведущую точку и префикс domain: при сохранении
     domain=$(echo "$domain" | sed 's/^domain://;s/^\.//')
     [ -z "$domain" ] && return
     [ ! -f "$warpDomainsFile" ] && touch "$warpDomainsFile"
@@ -163,36 +166,12 @@ setupWarpWatchdog() {
 #!/bin/bash
 CHECK_URL="https://www.cloudflare.com/cdn-cgi/trace/"
 PROXY="socks5://127.0.0.1:40000"
-MAX_LATENCY=10
-LOG_TAG="warp-watchdog"
+MAX_LATENCY=5
 
-# Проверка, слушается ли порт
-if ! ss -tlnp 2>/dev/null | grep -q ':40000'; then
-    logger -t $LOG_TAG "port 40000 not listening, restarting warp-svc..."
-    systemctl restart warp-svc
-    sleep 8
-    warp-cli --accept-tos connect
-    exit 0
-fi
-
-# Первая проверка
 result=$(curl -s --connect-timeout $MAX_LATENCY -x "$PROXY" "$CHECK_URL" 2>/dev/null)
-if echo "$result" | grep -q "warp=on\|warp=plus"; then
-    exit 0
-fi
+if echo "$result" | grep -q "warp=on\|warp=plus"; then exit 0; fi
 
-logger -t $LOG_TAG "first check failed, waiting 30 seconds and retry..."
-sleep 30
-
-# Повторная проверка
-result=$(curl -s --connect-timeout $MAX_LATENCY -x "$PROXY" "$CHECK_URL" 2>/dev/null)
-if echo "$result" | grep -q "warp=on\|warp=plus"; then
-    logger -t $LOG_TAG "WARP recovered after delay."
-    exit 0
-fi
-
-# Если всё ещё не работает — перезапускаем
-logger -t $LOG_TAG "WARP not responding — reconnecting..."
+logger -t warp-watchdog "WARP не отвечает — переподключение..."
 warp-cli --accept-tos disconnect 2>/dev/null
 sleep 2
 warp-cli --accept-tos connect
@@ -200,9 +179,9 @@ sleep 5
 
 result2=$(curl -s --connect-timeout $MAX_LATENCY -x "$PROXY" "$CHECK_URL" 2>/dev/null)
 if echo "$result2" | grep -q "warp=on\|warp=plus"; then
-    logger -t $LOG_TAG "WARP restored after reconnect."
+    logger -t warp-watchdog "WARP восстановлен."
 else
-    logger -t $LOG_TAG "WARP still down — restarting warp-svc..."
+    logger -t warp-watchdog "WARP не восстановился — перезапуск сервиса..."
     systemctl restart warp-svc
     sleep 8
     warp-cli --accept-tos connect
@@ -211,8 +190,8 @@ WDOG
     chmod +x /usr/local/bin/warp-watchdog.sh
 
     cat > /etc/cron.d/warp-watchdog << 'EOF'
-# Проверка WARP каждые 5 минут
-*/5 * * * * root /usr/local/bin/warp-watchdog.sh
+# Проверка WARP каждые 2 минуты
+*/2 * * * * root /usr/local/bin/warp-watchdog.sh
 EOF
     chmod 644 /etc/cron.d/warp-watchdog
     echo "${green}$(msg warp_watchdog_ok)${reset}"
