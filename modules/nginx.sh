@@ -33,7 +33,14 @@ writeNginxConfig() {
     local proxy_host
     proxy_host=$(echo "$proxyUrl" | sed 's|https://||;s|http://||;s|/.*||')
 
-    setNginxCert
+    # Создаём /dev/shm для unix sockets (tmpfs в RAM, пересоздаётся при перезагрузке)
+    mkdir -p /dev/shm
+
+    local xhttpPort grpcPort xhttpPath grpcService
+    xhttpPort=$(( xrayPort + 1 ))
+    grpcPort=$(( xrayPort + 2 ))
+    xhttpPath="${wsPath}x"
+    grpcService="${wsPath#/}g"
 
     cat > /etc/nginx/nginx.conf << 'NGINXMAIN'
 user www-data;
@@ -55,11 +62,10 @@ http {
     tcp_nopush on;
     tcp_nodelay on;
 
-    # Keepalive — чуть больше чем у Cloudflare (70s), чтобы не рвать соединения
     keepalive_timeout 75s;
     keepalive_requests 10000;
 
-    # HTTP/2 — для gRPC через Cloudflare
+    # HTTP/2 keepalive — для gRPC через nginx_h2.sock
     http2_recv_timeout 300s;
     http2_idle_timeout 300s;
 
@@ -73,50 +79,35 @@ http {
 }
 NGINXMAIN
 
+    # default.conf — отклоняем прямые TCP подключения на 80 (xray держит 443)
     cat > /etc/nginx/conf.d/default.conf << 'DEFAULTCONF'
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
     server_name _;
-    return 301 https://$host$request_uri;
-}
-
-server {
-    listen 443 ssl default_server;
-    ssl_certificate     /etc/nginx/cert/default.crt;
-    ssl_certificate_key /etc/nginx/cert/default.key;
-    server_name _;
     return 444;
 }
 DEFAULTCONF
 
-    local xhttpPort grpcPort xhttpPath grpcService
-    xhttpPort=$(( xrayPort + 1 ))
-    grpcPort=$(( xrayPort + 2 ))
-    xhttpPath="${wsPath}x"
-    grpcService="${wsPath#/}g"
-
-    # WS и XHTTP работают по HTTP/1.1 — http2 на listen ломает WS upgrade.
-    # gRPC идёт через Cloudflare CDN который сам управляет h2.
-    # nginx → xray (loopback): grpc_pass использует h2c автоматически без http2 на listen.
+    # Основной конфиг: два server блока на unix sockets
+    # nginx.sock     — HTTP/1.1 — для WS и XHTTP (от xray fallback default)
+    # nginx_h2.sock  — HTTP/2   — для gRPC       (от xray fallback alpn=h2)
+    # TLS терминирует xray, поэтому здесь нет ssl директив
+    # Реальный IP клиента восстанавливается через proxy_protocol (xver=2 в fallback)
     cat > "$nginxPath" << EOF
+# ── HTTP/1.1 socket — WS + XHTTP ──────────────────────────────────
 server {
-    listen 443 ssl;
+    listen unix:/dev/shm/nginx.sock proxy_protocol;
     server_name $domain;
 
-    ssl_certificate     /etc/nginx/cert/cert.pem;
-    ssl_certificate_key /etc/nginx/cert/cert.key;
-    ssl_protocols       TLSv1.2 TLSv1.3;
-    ssl_ciphers         HIGH:!aNULL:!MD5;
-    ssl_session_cache   shared:SSL:10m;
-    ssl_session_timeout 10m;
+    set_real_ip_from unix:;
+    real_ip_header proxy_protocol;
 
-    # Отключаем буферизацию глобально — критично для WS и XHTTP
     proxy_buffering off;
     proxy_cache off;
     proxy_buffer_size 4k;
 
-    # ── WebSocket ────────────────────────────────────────────────
+    # ── WebSocket ──────────────────────────────────────────────────
     location $wsPath {
         proxy_pass http://127.0.0.1:$xrayPort;
         proxy_http_version 1.1;
@@ -125,7 +116,6 @@ server {
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
         proxy_connect_timeout 10s;
@@ -133,15 +123,13 @@ server {
         proxy_socket_keepalive on;
     }
 
-    # ── XHTTP ────────────────────────────────────────────────────
+    # ── XHTTP ──────────────────────────────────────────────────────
     location $xhttpPath {
         proxy_pass http://127.0.0.1:$xhttpPort;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        # Передаём Content-Type без изменений — xhttp использует application/grpc-web
         proxy_pass_header Content-Type;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
@@ -153,28 +141,17 @@ server {
         client_max_body_size 0;
     }
 
-    # ── gRPC ─────────────────────────────────────────────────────
-    location /$grpcService {
-        if (\$content_type !~ "application/grpc") {
-            return 404;
-        }
-        grpc_pass grpc://127.0.0.1:$grpcPort;
-        grpc_read_timeout 1h;
-        grpc_send_timeout 1h;
-        grpc_socket_keepalive on;
-        grpc_set_header Host \$host;
-        grpc_set_header X-Real-IP \$remote_addr;
-        grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    # ── Подписки ───────────────────────────────────────────────────
+    location ~ ^/sub/.*\\.html\$ {
+        alias /usr/local/etc/xray/sub/;
+        types { text/html html; }
+        add_header Cache-Control 'no-cache, no-store, must-revalidate';
     }
 
     location /sub/ {
         alias /usr/local/etc/xray/sub/;
-        # .txt отдаётся как text/plain (для клиентов-подписчиков),
-        # .html открывается как страница — mime.types разрулит
-        types {
-            text/plain   txt;
-            text/html    html;
-        }
+        types { text/plain txt; }
+        default_type text/plain;
         add_header Content-Disposition "attachment; filename=\"\$sub_label.txt\"";
         add_header profile-title "\$sub_label";
         add_header Cache-Control 'no-cache, no-store, must-revalidate';
@@ -186,7 +163,40 @@ server {
         proxy_set_header Host $proxy_host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_ssl_server_name on;
+        proxy_read_timeout 60s;
+    }
+
+    access_log /var/log/nginx/access.log;
+    error_log  /var/log/nginx/error.log;
+}
+
+# ── HTTP/2 socket — gRPC ───────────────────────────────────────────
+server {
+    listen unix:/dev/shm/nginx_h2.sock http2 proxy_protocol;
+    server_name $domain;
+
+    set_real_ip_from unix:;
+    real_ip_header proxy_protocol;
+
+    # ── gRPC ───────────────────────────────────────────────────────
+    location /$grpcService {
+        grpc_pass grpc://127.0.0.1:$grpcPort;
+        grpc_read_timeout 1h;
+        grpc_send_timeout 1h;
+        grpc_socket_keepalive on;
+        grpc_set_header Host \$host;
+        grpc_set_header X-Real-IP \$remote_addr;
+        grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+
+    # ── Заглушка (браузер с h2) ────────────────────────────────────
+    location / {
+        proxy_pass $proxyUrl;
+        proxy_http_version 1.1;
+        proxy_set_header Host $proxy_host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_ssl_server_name on;
         proxy_read_timeout 60s;
     }
@@ -206,8 +216,8 @@ map \$uri \$sub_label {
     default                                                    "${country_code} VLESS";
 }
 MAPEOF
-    # Восстанавливаем реальный IP — всегда нужно при Cloudflare
-    setupRealIpRestore
+    # Real IP восстанавливается через proxy_protocol (xver=2) от xray fallback.
+    # setupRealIpRestore здесь не нужен — nginx не на TCP порту.
 }
 
 # Восстановление реального IP клиента из CF-Connecting-IP.
@@ -367,12 +377,12 @@ configCert() {
     ~/.acme.sh/acme.sh --install-cert -d "$userDomain" \
         --key-file /etc/nginx/cert/cert.key \
         --fullchain-file /etc/nginx/cert/cert.pem \
-        --reloadcmd "systemctl reload nginx"
+        --reloadcmd "systemctl restart xray"
 
     echo "${green}$(msg ssl_success) $userDomain${reset}"
 }
 
-# Добавляет location /sub/ и обновляет sub_map.conf с флагом страны
+# Добавляет location /sub/ в первый server блок (nginx.sock — HTTP/1.1) если ещё нет
 applyNginxSub() {
     [ ! -f "$nginxPath" ] && return 1
 
@@ -387,25 +397,33 @@ map \$uri \$sub_label {
 }
 MAPEOF
 
-    # Добавляем location /sub/ в xray.conf если его ещё нет
+    # Добавляем /sub/ locations если ещё нет (для старых конфигов)
     if ! grep -q 'location /sub/' "$nginxPath"; then
         python3 - "$nginxPath" << 'PYEOF'
 import sys, re
 path = sys.argv[1]
 with open(path) as f: c = f.read()
-block = (
+# HTML location (без Content-Disposition)
+html_block = (
+    "\n    location ~ ^/sub/.*\\.html$ {\n"
+    "        alias /usr/local/etc/xray/sub/;\n"
+    "        types { text/html html; }\n"
+    "        add_header Cache-Control 'no-cache, no-store, must-revalidate';\n"
+    "    }\n"
+)
+# TXT location (со скачиванием)
+txt_block = (
     "\n    location /sub/ {\n"
     "        alias /usr/local/etc/xray/sub/;\n"
-    "        types {\n"
-    "            text/plain   txt;\n"
-    "            text/html    html;\n"
-    "        }\n"
+    "        types { text/plain txt; }\n"
+    "        default_type text/plain;\n"
     '        add_header Content-Disposition "attachment; filename=\\"$sub_label.txt\\"";\n'
     '        add_header profile-title "$sub_label";\n'
     "        add_header Cache-Control 'no-cache, no-store, must-revalidate';\n"
     "    }\n"
 )
-c = re.sub(r'(\n    location / \{)', block + r'\1', c, count=1)
+# Вставляем перед location / в первом server блоке
+c = re.sub(r'(\n    location / \{)', html_block + txt_block + r'\1', c, count=1)
 with open(path, 'w') as f: f.write(c)
 PYEOF
     fi

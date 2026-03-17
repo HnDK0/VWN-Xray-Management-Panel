@@ -58,14 +58,15 @@ writeXrayConfig() {
     [ -z "$new_uuid" ] && new_uuid=$(cat /proc/sys/kernel/random/uuid)
     mkdir -p /usr/local/etc/xray /var/log/xray
 
-    # Дополнительные порты для XHTTP и gRPC (следующие за WS)
+    # Порты loopback inbound'ов
     local xhttpPort grpcPort xhttpPath grpcService
     xhttpPort=$(( xrayPort + 1 ))
     grpcPort=$(( xrayPort + 2 ))
-    # XHTTP path: тот же wsPath + суффикс 'x'
     xhttpPath="${wsPath}x"
-    # gRPC serviceName: wsPath без ведущего '/' + суффикс 'g'
     grpcService="${wsPath#/}g"
+
+    # Убеждаемся что /dev/shm существует (tmpfs в RAM)
+    mkdir -p /dev/shm
 
     cat > "$configPath" << EOF
 {
@@ -75,6 +76,42 @@ writeXrayConfig() {
         "loglevel": "error"
     },
     "inbounds": [
+    {
+        "tag": "tls-inbound",
+        "port": 443,
+        "listen": "0.0.0.0",
+        "protocol": "vless",
+        "settings": {
+            "clients": [{"id": "$new_uuid"}],
+            "decryption": "none",
+            "fallbacks": [
+                {
+                    "alpn": "h2",
+                    "dest": "/dev/shm/nginx_h2.sock",
+                    "xver": 2
+                },
+                {
+                    "dest": "/dev/shm/nginx.sock",
+                    "xver": 2
+                }
+            ]
+        },
+        "streamSettings": {
+            "network": "raw",
+            "security": "tls",
+            "tlsSettings": {
+                "certificates": [
+                    {
+                        "certificateFile": "/etc/nginx/cert/cert.pem",
+                        "keyFile": "/etc/nginx/cert/cert.key"
+                    }
+                ],
+                "alpn": ["h2", "http/1.1"],
+                "minVersion": "1.2"
+            }
+        },
+        "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}
+    },
     {
         "tag": "ws-inbound",
         "port": $xrayPort,
@@ -92,6 +129,7 @@ writeXrayConfig() {
                 "heartbeatPeriod": 30
             },
             "sockopt": {
+                "acceptProxyProtocol": true,
                 "tcpKeepAliveIdle": 100,
                 "tcpKeepAliveInterval": 10,
                 "tcpKeepAliveRetry": 3
@@ -113,7 +151,7 @@ writeXrayConfig() {
             "xhttpSettings": {
                 "path": "$xhttpPath",
                 "host": "$domain",
-                "mode": "auto",
+                "mode": "stream-one",
                 "extra": {
                     "noGRPCHeader": false,
                     "xPaddingBytes": "400-800",
@@ -129,6 +167,9 @@ writeXrayConfig() {
                         "hKeepAlivePeriod": 0
                     }
                 }
+            },
+            "sockopt": {
+                "acceptProxyProtocol": true
             }
         },
         "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}
@@ -147,6 +188,9 @@ writeXrayConfig() {
             "grpcSettings": {
                 "serviceName": "$grpcService",
                 "multiMode": false
+            },
+            "sockopt": {
+                "acceptProxyProtocol": true
             }
         },
         "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}
@@ -417,8 +461,11 @@ modifyXrayUUID() {
 }
 
 modifyXrayPort() {
+    # tls-inbound всегда на 443 — не трогаем
+    # Меняем только loopback порты WS/XHTTP/gRPC
     local oldPort
-    oldPort=$(jq ".inbounds[0].port" "$configPath")
+    oldPort=$(jq -r '.inbounds[] | select(.tag=="ws-inbound") | .port' "$configPath" 2>/dev/null)
+    [ -z "$oldPort" ] && oldPort=$(jq -r '.inbounds[1].port // 16500' "$configPath" 2>/dev/null)
     read -rp "$(msg enter_new_port) [$oldPort]: " xrayPort
     [ -z "$xrayPort" ] && return
     if ! _validatePort "$xrayPort" &>/dev/null; then
@@ -430,22 +477,22 @@ modifyXrayPort() {
     newXhttp=$(( xrayPort + 1 ))
     newGrpc=$(( xrayPort + 2 ))
 
-    # Обновляем все три порта в config.json по тегу
+    # Обновляем loopback порты в config.json по тегу (tls-inbound не трогаем)
     jq --argjson ws "$xrayPort" --argjson xh "$newXhttp" --argjson gr "$newGrpc" '
         .inbounds = [.inbounds[] |
-            if .tag == "ws-inbound"   then .port = $ws
+            if .tag == "ws-inbound"      then .port = $ws
             elif .tag == "xhttp-inbound" then .port = $xh
             elif .tag == "grpc-inbound"  then .port = $gr
             else . end]
     ' "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
 
-    # Обновляем порты в nginx
+    # Обновляем порты в nginx (proxy_pass на loopback)
     sed -i "s|127.0.0.1:${oldPort}|127.0.0.1:${xrayPort}|g" "$nginxPath"
     sed -i "s|127.0.0.1:${oldXhttp}|127.0.0.1:${newXhttp}|g" "$nginxPath"
     sed -i "s|127.0.0.1:${oldGrpc}|127.0.0.1:${newGrpc}|g" "$nginxPath"
     sed -i "s|grpc://127.0.0.1:${oldGrpc}|grpc://127.0.0.1:${newGrpc}|g" "$nginxPath"
 
-    systemctl restart xray nginx
+    systemctl restart nginx xray
     echo "${green}$(msg port_changed) $xrayPort (xhttp: $newXhttp, grpc: $newGrpc)${reset}"
 }
 
@@ -522,9 +569,19 @@ modifyDomain() {
         echo "${red}$(msg invalid): '$new_domain'${reset}"; return 1
     fi
     new_domain="$validated"
+    # Обновляем server_name в nginx
     sed -i "s/server_name ${xray_userDomain};/server_name ${new_domain};/" "$nginxPath"
-    jq ".inbounds[0].streamSettings.wsSettings.host = \"$new_domain\"" \
-        "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
+    # Обновляем домен в xray: tls serverNames, ws host, xhttp host
+    jq --arg d "$new_domain" '
+        .inbounds = [.inbounds[] |
+            if .tag == "tls-inbound" then
+                .streamSettings.tlsSettings.serverName = $d
+            elif .tag == "ws-inbound" then
+                .streamSettings.wsSettings.host = $d
+            elif .tag == "xhttp-inbound" then
+                .streamSettings.xhttpSettings.host = $d
+            else . end]
+    ' "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
     userDomain="$new_domain"
     configCert
     systemctl restart nginx xray

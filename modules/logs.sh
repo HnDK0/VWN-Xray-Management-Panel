@@ -92,7 +92,8 @@ EOF
 setupSslCron() {
     cat > /etc/cron.d/acme-renew << 'EOF'
 # SSL автообновление — каждые 35 дней в 03:00
-0 3 */35 * * root /root/.acme.sh/acme.sh --cron --home /root/.acme.sh --pre-hook "/usr/local/bin/vwn open-80" --post-hook "/usr/local/bin/vwn close-80" >> /var/log/acme_cron.log 2>&1
+# После обновления перезапускаем xray (он держит TLS, читает сертификат)
+0 3 */35 * * root /root/.acme.sh/acme.sh --cron --home /root/.acme.sh --pre-hook "/usr/local/bin/vwn open-80" --post-hook "/usr/local/bin/vwn close-80 && systemctl restart xray" >> /var/log/acme_cron.log 2>&1
 EOF
     chmod 644 /etc/cron.d/acme-renew
     echo "${green}$(msg ssl_cron_enabled)${reset}"

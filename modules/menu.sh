@@ -23,7 +23,8 @@ prepareSoftwareWs() {
     run_task "Установка Nginx" "installPackage nginx" || true
 
     echo "--- [3/3] $(msg menu_sep_sec) ---"
-    run_task "Настройка UFW" "ufw allow 22/tcp && ufw allow 443/tcp && ufw allow 443/udp && echo 'y' | ufw enable"
+    run_task "Создание /dev/shm" "mkdir -p /dev/shm && chmod 755 /dev/shm"
+    run_task "Настройка UFW" "ufw allow 22/tcp && ufw allow 443/tcp && echo 'y' | ufw enable"
     run_task "Системные параметры" applySysctl
 }
 
@@ -89,8 +90,10 @@ installWsTls() {
     run_task "Автообновление SSL"      setupSslCron
     run_task "WARP Watchdog"           setupWarpWatchdog
 
-    systemctl enable --now xray nginx
-    systemctl restart xray nginx
+    systemctl enable --now nginx
+    systemctl restart nginx
+    systemctl enable --now xray
+    systemctl restart xray
 
     echo -e "\n${green}$(msg install_complete)${reset}"
     # Инициализируем users.conf и показываем все конфиги для default пользователя
@@ -141,6 +144,7 @@ fullRemove() {
         rm -f /etc/systemd/system/psiphon.service
         rm -f "$torDomainsFile"
         rm -f "$psiphonBin"
+        rm -f /dev/shm/nginx.sock /dev/shm/nginx_h2.sock 2>/dev/null || true
         rm -rf /etc/nginx /usr/local/etc/xray /root/.cloudflare_api \
                /var/lib/psiphon /var/log/psiphon \
                /etc/cron.d/acme-renew /etc/cron.d/clear-logs /etc/cron.d/warp-watchdog \
@@ -182,14 +186,13 @@ manageWs() {
 
     while true; do
         clear
-        local s_nginx s_ws s_ssl s_cfguard s_domain s_connect s_warp
+        local s_nginx s_ws s_ssl s_domain s_connect s_warp
         local s_ws_port s_xhttp_port s_grpc_port
         local s_ws_path s_xhttp_path s_grpc_svc
 
         s_nginx=$(getServiceStatus nginx)
         s_ws=$(getServiceStatus xray)
         s_ssl=$(checkCertExpiry)
-        s_cfguard=$(getCfGuardStatus)
         s_warp=$(getWarpStatus)
 
         s_domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // .inbounds[0].streamSettings.xhttpSettings.host // "—"' "$configPath" 2>/dev/null)
@@ -211,7 +214,7 @@ manageWs() {
         echo -e "${cyan}================================================================${reset}"
         printf "   ${red}$(msg menu_ws_title)${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
         echo -e "${cyan}================================================================${reset}"
-        echo -e "  Nginx: $s_nginx,  SSL: $s_ssl,  CF Guard: $s_cfguard"
+        echo -e "  Nginx: $s_nginx,  SSL: $s_ssl"
         echo -e "  WARP:  $s_warp"
         [ -n "$s_connect" ] && echo -e "  CDN:   ${green}${s_connect}${reset}"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
@@ -237,18 +240,16 @@ manageWs() {
         echo -e "  ${cyan}$(msg menu_sep_sec)${reset}"
         echo -e "  ${green}7.${reset}  $(msg menu_ssl)"
         echo -e "  ${green}8.${reset}  $(msg menu_ssl_cron)"
-        echo -e "  ${green}9.${reset}  $(msg menu_cfguard)"
-        echo -e "  ${green}10.${reset} $(msg menu_cf_update_ip)"
         echo -e "  ${cyan}$(msg menu_sep_logs)${reset}"
-        echo -e "  ${green}11.${reset} $(msg menu_log_cron)"
-        echo -e "  ${green}12.${reset} $(msg menu_xray_acc)"
-        echo -e "  ${green}13.${reset} $(msg menu_xray_err)"
-        echo -e "  ${green}14.${reset} $(msg menu_nginx_acc)"
-        echo -e "  ${green}15.${reset} $(msg menu_nginx_err)"
+        echo -e "  ${green}9.${reset}  $(msg menu_log_cron)"
+        echo -e "  ${green}10.${reset} $(msg menu_xray_acc)"
+        echo -e "  ${green}11.${reset} $(msg menu_xray_err)"
+        echo -e "  ${green}12.${reset} $(msg menu_nginx_acc)"
+        echo -e "  ${green}13.${reset} $(msg menu_nginx_err)"
         echo -e "  ${cyan}$(msg menu_sep_svc)${reset}"
-        echo -e "  ${green}16.${reset} $(msg menu_restart)"
-        echo -e "  ${green}17.${reset} $(msg menu_install)"
-        echo -e "  ${green}18.${reset} $(msg menu_remove)"
+        echo -e "  ${green}14.${reset} $(msg menu_restart)"
+        echo -e "  ${green}15.${reset} $(msg menu_install)"
+        echo -e "  ${green}16.${reset} $(msg menu_remove)"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
         echo -e "  ${green}0.${reset}  $(msg back)"
         echo -e "${cyan}================================================================${reset}"
@@ -262,16 +263,14 @@ manageWs() {
             6)  modifyXrayUUID ;;
             7)  getConfigInfo && userDomain="$xray_userDomain" && configCert ;;
             8)  manageSslCron ;;
-            9)  toggleCfGuard ;;
-            10) setupRealIpRestore && { [ -f /etc/nginx/conf.d/cf_guard.conf ] && _fetchCfGuardIPs; } && nginx -t && systemctl reload nginx ;;
-            11) manageLogClearCron ;;
-            12) tail -n 80 /var/log/xray/access.log 2>/dev/null || echo "$(msg no_logs)" ;;
-            13) tail -n 80 /var/log/xray/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
-            14) tail -n 80 /var/log/nginx/access.log 2>/dev/null || echo "$(msg no_logs)" ;;
-            15) tail -n 80 /var/log/nginx/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
-            16) systemctl restart xray nginx && echo "${green}$(msg restarted)${reset}" ;;
-            17) install ;;
-            18) removeWs ;;
+            9)  manageLogClearCron ;;
+            10) journalctl -u xray -n 100 --no-pager 2>/dev/null || echo "$(msg no_logs)" ;;
+            11) journalctl -u xray -n 100 --no-pager -p err 2>/dev/null || tail -n 80 /var/log/xray/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
+            12) journalctl -u nginx -n 100 --no-pager 2>/dev/null || tail -n 80 /var/log/nginx/access.log 2>/dev/null || echo "$(msg no_logs)" ;;
+            13) journalctl -u nginx -n 100 --no-pager -p err 2>/dev/null || tail -n 80 /var/log/nginx/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
+            14) systemctl restart nginx && systemctl restart xray && echo "${green}$(msg restarted)${reset}" ;;
+            15) install ;;
+            16) removeWs ;;
             0)  break ;;
         esac
         [ "$choice" = "0" ] && continue
@@ -286,7 +285,7 @@ menu() {
     # Первичная очистка экрана
     clear
     while true; do
-        local s_nginx s_ws s_reality s_warp s_ssl s_bbr s_f2b s_jail s_cfguard s_relay s_psiphon s_tor s_connect
+        local s_nginx s_ws s_reality s_warp s_ssl s_bbr s_f2b s_jail s_relay s_psiphon s_tor s_connect
         clear
         s_nginx=$(getServiceStatus nginx)
         s_ws=$(getServiceStatus xray)
@@ -296,7 +295,6 @@ menu() {
         s_bbr=$(getBbrStatus)
         s_f2b=$(getF2BStatus)
         s_jail=$(getWebJailStatus)
-        s_cfguard=$(getCfGuardStatus)
         s_relay=$(getRelayStatus)
         s_psiphon=$(getPsiphonStatus)
         s_tor=$(getTorStatus)
@@ -351,8 +349,8 @@ menu() {
         else
             echo -e "  $(printf "%-8s" "Reality:")${yellow}NOT INSTALLED${reset}"
         fi
-        # Nginx + SSL + CF Guard
-        echo -e "  $(printf "%-8s" "Nginx:")$s_nginx_c  SSL: $s_ssl  CF Guard: $s_cfguard"
+        # Nginx + SSL
+        echo -e "  $(printf "%-8s" "Nginx:")$s_nginx_c  SSL: $s_ssl"
         # WARP
         echo -e "  $(printf "%-8s" "WARP:")$s_warp"
         [ -n "$s_connect" ] && echo -e "  $(printf "%-8s" "CDN:")${green}${s_connect}${reset}"
@@ -421,12 +419,12 @@ menu() {
             16) setupWebJail ;;
             17) changeSshPort ;;
             18) manageUFW ;;
-            19) tail -n 80 /var/log/xray/access.log 2>/dev/null || echo "$(msg no_logs)" ;;
-            20) tail -n 80 /var/log/xray/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
-            21) tail -n 80 /var/log/nginx/access.log 2>/dev/null || echo "$(msg no_logs)" ;;
-            22) tail -n 80 /var/log/nginx/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
+            19) journalctl -u xray -n 100 --no-pager 2>/dev/null || echo "$(msg no_logs)" ;;
+            20) journalctl -u xray -n 100 --no-pager -p err 2>/dev/null || tail -n 80 /var/log/xray/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
+            21) journalctl -u nginx -n 100 --no-pager 2>/dev/null || tail -n 80 /var/log/nginx/access.log 2>/dev/null || echo "$(msg no_logs)" ;;
+            22) journalctl -u nginx -n 100 --no-pager -p err 2>/dev/null || tail -n 80 /var/log/nginx/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
             23) clearLogs ;;
-            24) systemctl restart xray xray-reality nginx warp-svc psiphon tor 2>/dev/null || true
+            24) systemctl restart nginx 2>/dev/null || true; systemctl restart xray xray-reality warp-svc psiphon tor 2>/dev/null || true
                 echo "${green}$(msg all_services_restarted)${reset}" ;;
             25) updateXrayCore ;;
             26) manageDiag ;;
