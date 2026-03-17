@@ -129,7 +129,6 @@ writeXrayConfig() {
             "security": "none",
             "xhttpSettings": {
                 "path": "$xhttpPath",
-                "host": "$domain",
                 "mode": "auto",
                 "extra": {
                     "xPaddingBytes": "400-800"

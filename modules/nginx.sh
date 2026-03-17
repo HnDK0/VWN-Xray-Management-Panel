@@ -185,7 +185,7 @@ backend xray_ws
 
 backend xray_xhttp
     mode http
-    server xray 127.0.0.1:${xhttpPort} check
+    server xray 127.0.0.1:${xhttpPort} check proto h2
 
 backend xray_grpc
     mode http
@@ -387,3 +387,4 @@ applyNginxSub() {
     [ ! -f "$nginxPath" ] && return 1
     nginx -t &>/dev/null && systemctl reload nginx || true
 }
+
