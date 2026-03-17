@@ -67,6 +67,7 @@ writeXrayConfig() {
     [ -z "$new_uuid" ] && new_uuid=$(cat /proc/sys/kernel/random/uuid)
     mkdir -p /usr/local/etc/xray /var/log/xray
 
+<<<<<<< HEAD
     local xhttpPort grpcPort xhttpPath grpcService
     xhttpPort=$(( xrayPort + 1 ))
     grpcPort=$(( xrayPort + 2 ))
@@ -75,6 +76,8 @@ writeXrayConfig() {
 
     mkdir -p /dev/shm
 
+=======
+>>>>>>> parent of fa950d3 (Update)
     cat > "$configPath" << EOF
 {
     "log": {
@@ -82,6 +85,7 @@ writeXrayConfig() {
         "error": "/var/log/xray/error.log",
         "loglevel": "error"
     },
+<<<<<<< HEAD
     "inbounds": [
     {
         "tag": "tls-inbound",
@@ -121,6 +125,9 @@ writeXrayConfig() {
     },
     {
         "tag": "ws-inbound",
+=======
+    "inbounds": [{
+>>>>>>> parent of fa950d3 (Update)
         "port": $xrayPort,
         "listen": "127.0.0.1",
         "protocol": "vless",
@@ -143,6 +150,7 @@ writeXrayConfig() {
             }
         },
         "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}
+<<<<<<< HEAD
     },
     {
         "tag": "xhttp-inbound",
@@ -207,6 +215,8 @@ writeXrayConfig() {
             }
         },
         "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}
+=======
+>>>>>>> parent of fa950d3 (Update)
     }],
     "outbounds": [
         {
@@ -252,6 +262,7 @@ writeXrayConfig() {
     }
 }
 EOF
+<<<<<<< HEAD
 
     local vwn_conf="/usr/local/etc/xray/vwn.conf"
     sed -i '/^WS_PATH=/d; /^XHTTP_PATH=/d; /^GRPC_SERVICE=/d' "$vwn_conf" 2>/dev/null || true
@@ -274,6 +285,8 @@ get_domain() {
 }
 get_uuid() {
     jq -r '.inbounds[] | select(.tag=="ws-inbound") | .settings.clients[0].id' "$configPath" 2>/dev/null | head -1
+=======
+>>>>>>> parent of fa950d3 (Update)
 }
 
 getConfigInfo() {
@@ -457,6 +470,7 @@ modifyXrayPort() {
     if ! _validatePort "$xrayPort" &>/dev/null; then
         echo "${red}$(msg invalid_port)${reset}"; return 1
     fi
+<<<<<<< HEAD
     local oldXhttp oldGrpc newXhttp newGrpc
     oldXhttp=$(( oldPort + 1 ))
     oldGrpc=$(( oldPort + 2 ))
@@ -478,6 +492,13 @@ modifyXrayPort() {
 
     systemctl restart nginx xray
     echo "${green}$(msg port_changed) $xrayPort (xhttp: $newXhttp, grpc: $newGrpc)${reset}"
+=======
+    jq ".inbounds[0].port = $xrayPort" \
+        "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
+    sed -i "s|127.0.0.1:${oldPort}|127.0.0.1:${xrayPort}|g" "$nginxPath"
+    systemctl restart xray nginx
+    echo "${green}$(msg port_changed) $xrayPort${reset}"
+>>>>>>> parent of fa950d3 (Update)
 }
 
 modifyWsPath() {
@@ -488,6 +509,7 @@ modifyWsPath() {
     wsPath=$(echo "$wsPath" | tr -cd 'A-Za-z0-9/_-')
     [[ ! "$wsPath" =~ ^/ ]] && wsPath="/$wsPath"
 
+<<<<<<< HEAD
     local oldXhttpPath newXhttpPath oldGrpcService newGrpcService
     oldXhttpPath=$(get_xhttp_path)
     newXhttpPath="${wsPath}x"
@@ -518,10 +540,22 @@ modifyWsPath() {
     echo "WS_PATH=${wsPath}" >> "$vwn_conf"
     echo "XHTTP_PATH=${newXhttpPath}" >> "$vwn_conf"
     echo "GRPC_SERVICE=${newGrpcService}" >> "$vwn_conf"
+=======
+    local oldPathEscaped newPathEscaped
+    oldPathEscaped=$(printf '%s\n' "$oldPath" | sed 's|[[\.*^$()+?{|]|\\&|g')
+    newPathEscaped=$(printf '%s\n' "$wsPath" | sed 's|[[\.*^$()+?{|]|\\&|g')
+    sed -i "s|location ${oldPathEscaped}|location ${newPathEscaped}|g" "$nginxPath"
+>>>>>>> parent of fa950d3 (Update)
 
+    jq ".inbounds[0].streamSettings.wsSettings.path = \"$wsPath\"" \
+        "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
     systemctl restart xray nginx
+<<<<<<< HEAD
     rebuildAllSubFiles 2>/dev/null || true
     echo "${green}$(msg new_path): WS=$wsPath  XHTTP=$newXhttpPath  gRPC=$newGrpcService${reset}"
+=======
+    echo "${green}$(msg new_path): $wsPath${reset}"
+>>>>>>> parent of fa950d3 (Update)
 }
 
 modifyProxyPassUrl() {

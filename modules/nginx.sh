@@ -64,9 +64,12 @@ http {
     keepalive_timeout 75s;
     keepalive_requests 10000;
 
+<<<<<<< HEAD
     http2_recv_timeout 300s;
     http2_idle_timeout 300s;
 
+=======
+>>>>>>> parent of fa950d3 (Update)
     server_tokens off;
     gzip on;
     gzip_vary on;
@@ -86,19 +89,33 @@ server {
 }
 DEFAULTCONF
 
+<<<<<<< HEAD
+=======
+    # Основной конфиг без http2 — WS работает только на HTTP/1.1,
+    # http2 создаёт проблемы с upgrade на мобильных клиентах
+>>>>>>> parent of fa950d3 (Update)
     cat > "$nginxPath" << EOF
 # ── HTTP/1.1 socket — WS + XHTTP ──────────────────────────────────
 server {
+<<<<<<< HEAD
     listen unix:/dev/shm/nginx.sock proxy_protocol;
+=======
+    listen 443 ssl;
+>>>>>>> parent of fa950d3 (Update)
     server_name $domain;
 
     set_real_ip_from unix:;
     real_ip_header proxy_protocol;
 
+<<<<<<< HEAD
+=======
+    # Отключаем буферизацию глобально для этого сервера
+>>>>>>> parent of fa950d3 (Update)
     proxy_buffering off;
     proxy_cache off;
     proxy_buffer_size 4k;
 
+<<<<<<< HEAD
     # ── Подписки (HTTP/1.1) ───────────────────────────────────────
     location ~ ^/sub/.*\\.html\$ {
         alias /usr/local/etc/xray/sub/;
@@ -117,21 +134,38 @@ server {
     }
 
     # ── WebSocket ──────────────────────────────────────────────────
+=======
+>>>>>>> parent of fa950d3 (Update)
     location $wsPath {
         proxy_pass http://127.0.0.1:$xrayPort;
         proxy_http_version 1.1;
+
+        # Обязательные заголовки для WebSocket upgrade
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
+
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+<<<<<<< HEAD
+=======
+        proxy_set_header X-Forwarded-Proto \$scheme;
+
+        # Большие таймауты — мобильный может не слать данные долго
+        # (экран выключен, фон, слабый сигнал)
+>>>>>>> parent of fa950d3 (Update)
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
         proxy_connect_timeout 10s;
+
+        # Не буферизировать тело запроса — критично для WS
         proxy_request_buffering off;
+
+        # TCP keepalive на уровне nginx к upstream
         proxy_socket_keepalive on;
     }
 
+<<<<<<< HEAD
     # ── XHTTP ──────────────────────────────────────────────────────
     location $xhttpPath {
         proxy_pass http://127.0.0.1:$xhttpPort;
@@ -184,12 +218,17 @@ server {
         alias /usr/local/etc/xray/sub/;
         try_files \$uri =404;
         types { text/plain txt; }
+=======
+    location /sub/ {
+        alias /usr/local/etc/xray/sub/;
+>>>>>>> parent of fa950d3 (Update)
         default_type text/plain;
         add_header Content-Disposition "attachment; filename=\"\$sub_label.txt\"";
         add_header profile-title "\$sub_label";
         add_header Cache-Control 'no-cache, no-store, must-revalidate';
     }
 
+<<<<<<< HEAD
     # ── XHTTP (HTTP/2) ─────────────────────────────────────────────
     location $xhttpPath {
         proxy_pass http://127.0.0.1:$xhttpPort;
@@ -220,6 +259,8 @@ server {
     }
 
     # ── Заглушка (HTTP/2) ──────────────────────────────────────────
+=======
+>>>>>>> parent of fa950d3 (Update)
     location / {
         proxy_pass $proxyUrl;
         proxy_http_version 1.1;
@@ -432,7 +473,10 @@ html_block = (
 txt_block = (
     "\n    location /sub/ {\n"
     "        alias /usr/local/etc/xray/sub/;\n"
+<<<<<<< HEAD
     "        types { text/plain txt; }\n"
+=======
+>>>>>>> parent of fa950d3 (Update)
     "        default_type text/plain;\n"
     '        add_header Content-Disposition "attachment; filename=\\"$sub_label.txt\\"";\n'
     '        add_header profile-title "$sub_label";\n'

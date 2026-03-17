@@ -10,7 +10,6 @@ _BACKUP_PATHS=(
     /etc/nginx/conf.d
     /etc/nginx/cert
     /root/.cloudflare_api
-    /root/.acme.sh
     /etc/cron.d/acme-renew
     /etc/cron.d/clear-logs
     /etc/cron.d/warp-watchdog
@@ -19,9 +18,6 @@ _BACKUP_PATHS=(
     /etc/sysctl.d/99-xray.conf
     /etc/fail2ban/jail.local
     /etc/fail2ban/filter.d/nginx-probe.conf
-    /etc/systemd/system/psiphon.service
-    /var/lib/psiphon
-    /etc/tor/torrc
 )
 
 createBackup() {
@@ -96,6 +92,7 @@ restoreBackup() {
     systemctl stop xray xray-reality nginx 2>/dev/null || true
 
     if tar -xzf "$archive" -C / 2>/dev/null; then
+<<<<<<< HEAD
         # Восстанавливаем права на acme.sh
         [ -f /root/.acme.sh/acme.sh ] && chmod +x /root/.acme.sh/acme.sh
         # Права на сертификат
@@ -103,6 +100,8 @@ restoreBackup() {
             chown root:ssl-cert /etc/nginx/cert/cert.key 2>/dev/null || true
             chmod 640 /etc/nginx/cert/cert.key 2>/dev/null || true
         fi
+=======
+>>>>>>> parent of fa950d3 (Update)
         systemctl daemon-reload
         systemctl restart xray xray-reality nginx 2>/dev/null || true
         echo "${green}$(msg backup_restored)${reset}"

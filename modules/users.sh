@@ -50,9 +50,14 @@ _applyUsersToConfigs() {
     clients_r+="]"; clients_x+="]"
 
     if [ -f "$configPath" ]; then
+<<<<<<< HEAD
         jq --argjson c "$clients_x" '
             .inbounds = [.inbounds[] | .settings.clients = $c]
         ' "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
+=======
+        jq --argjson c "$clients_x" '.inbounds[0].settings.clients = $c' \
+            "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
+>>>>>>> parent of fa950d3 (Update)
     fi
     if [ -f "$realityConfigPath" ]; then
         jq --argjson c "$clients_r" '.inbounds[0].settings.clients = $c' \
@@ -107,11 +112,10 @@ buildUserSubFile() {
         wep=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$wp" 2>/dev/null || echo "$wp")
         connect_host=$(getConnectHost 2>/dev/null || echo "$domain")
         [ -z "$connect_host" ] && connect_host="$domain"
-
-        # WS
         name="${flag} VL-WS-CDN | ${label} ${flag}"
         encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$name" 2>/dev/null || echo "$name")
         lines+="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=ws&host=${domain}&path=${wep}#${encoded_name}"$'\n'
+<<<<<<< HEAD
 
         # XHTTP
         local xhttp_path xep xhttp_name xhttp_encoded_name
@@ -129,6 +133,8 @@ buildUserSubFile() {
         grpc_name="${flag} VL-gRPC-CDN | ${label} ${flag}"
         grpc_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$grpc_name" 2>/dev/null || echo "$grpc_name")
         lines+="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=grpc&serviceName=${grpc_service}&mode=gun#${grpc_encoded_name}"$'\n'
+=======
+>>>>>>> parent of fa950d3 (Update)
     fi
 
     if [ -f "$realityConfigPath" ]; then
@@ -146,6 +152,7 @@ buildUserSubFile() {
     local filename safe
     safe=$(_safeLabel "$label")
     filename=$(_subFilename "$label" "$token")
+<<<<<<< HEAD
     rm -f "${SUB_DIR}/${safe}_"*.txt "${SUB_DIR}/${safe}_"*.html
     printf '%s' "$lines" | base64 -w 0 > "${SUB_DIR}/${filename}"
     chmod 644 "${SUB_DIR}/${filename}"
@@ -247,6 +254,12 @@ function closeQr(){document.getElementById('modal').classList.remove('open')}
 </body></html>
 HTMLEOF
     chmod 644 "$htmlfile"
+=======
+    # Удаляем старые файлы этого label (любой токен) перед записью нового
+    rm -f "${SUB_DIR}/${safe}_"*.txt
+    printf '%s' "$lines" | base64 -w 0 > "${SUB_DIR}/${filename}"
+    chmod 644 "${SUB_DIR}/${filename}"
+>>>>>>> parent of fa950d3 (Update)
 }
 
 rebuildAllSubFiles() {
@@ -412,6 +425,7 @@ showUserQR() {
       Host: ${domain}${reset}\n"
 
         echo -e "${cyan}================================================================${reset}"
+<<<<<<< HEAD
 
         # XHTTP
         local xhttp_path xep url_xhttp xhttp_name xhttp_encoded
@@ -435,6 +449,8 @@ showUserQR() {
         echo -e "${cyan}=== ${grpc_name} ===${reset}"
         qrencode -s 1 -m 1 -t ANSIUTF8 "$url_grpc" 2>/dev/null || true
         echo -e "\n${green}${url_grpc}${reset}\n"
+=======
+>>>>>>> parent of fa950d3 (Update)
     fi
 
     # Reality
@@ -456,20 +472,15 @@ showUserQR() {
         echo -e "\n${green}${url_reality}${reset}\n"
     fi
 
-    # Subscription URL + HTML-страница
+    # Subscription URL
     buildUserSubFile "$uuid" "$label" "$token" 2>/dev/null || true
-    local sub_url safe html_url
+    local sub_url
     sub_url=$(getSubUrl "$label" "$token")
-    safe=$(_safeLabel "$label")
-    html_url="https://${domain}/sub/${safe}_${token}.html"
     if [ -n "$sub_url" ]; then
-        echo -e "${cyan}[ Subscription URL — для клиентов (v2rayNG, Hiddify...) ]${reset}"
+        echo -e "${cyan}[ Subscription URL — все протоколы сразу ]${reset}"
         qrencode -s 1 -m 1 -t ANSIUTF8 "$sub_url" 2>/dev/null || true
         echo -e "\n${green}${sub_url}${reset}"
         echo -e "${yellow}v2rayNG: + → Subscription group → URL${reset}"
-        echo ""
-        echo -e "${cyan}[ $(msg users_html_hint) ]${reset}"
-        echo -e "${green}${html_url}${reset}"
     fi
 
     echo -e "\n${cyan}================================================================${reset}"

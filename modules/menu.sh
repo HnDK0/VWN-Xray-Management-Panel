@@ -178,10 +178,14 @@ manageWs() {
     set +e
     while true; do
         clear
+<<<<<<< HEAD
         local s_nginx s_ws s_ssl s_domain s_connect s_warp
         local s_ws_port s_xhttp_port s_grpc_port
         local s_ws_path s_xhttp_path s_grpc_svc
 
+=======
+        local s_nginx s_ws s_ssl s_cfguard s_domain s_connect s_warp s_port s_path
+>>>>>>> parent of fa950d3 (Update)
         s_nginx=$(getServiceStatus nginx)
         s_ws=$(getServiceStatus xray)
         s_ssl=$(checkCertExpiry)
@@ -189,6 +193,7 @@ manageWs() {
 
         s_domain=$(get_domain)
         s_connect=$(cat "$CONNECT_HOST_FILE" 2>/dev/null | tr -d '[:space:]')
+<<<<<<< HEAD
         [ ${#s_connect} -gt 40 ] && s_connect="${s_connect:0:37}..."
         [ ${#s_domain}  -gt 35 ] && s_domain="${s_domain:0:32}..."
 
@@ -220,6 +225,23 @@ manageWs() {
         fi
         echo -e "${cyan}================================================================${reset}"
         echo -e "  ${cyan}$(msg menu_sep_config)${reset}"
+=======
+        s_port=$(jq -r '.inbounds[0].port // "—"' "$configPath" 2>/dev/null)
+        s_path=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // .inbounds[0].streamSettings.xhttpSettings.path // "—"' "$configPath" 2>/dev/null)
+        # Обрезаем длинные значения
+        [ ${#s_connect} -gt 35 ] && s_connect="${s_connect:0:32}..."
+        [ ${#s_domain} -gt 30 ]  && s_domain="${s_domain:0:27}..."
+
+        echo -e "${cyan}================================================================${reset}"
+        echo -e "${cyan}================================================================${reset}"
+        printf "   ${red}WebSocket + TLS + Nginx${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
+        echo -e "${cyan}----------------------------------------------------------------${reset}"
+        echo -e "  $(printf "%-7s" "Nginx:")$s_nginx,  SSL: ${green}$s_ssl_plain${reset},  CF Guard: $s_cfguard"
+        echo -e "  $(printf "%-7s" "Xray:")$s_ws,  $(msg lbl_port): ${green}$s_port${reset},  $(msg lbl_path): ${green}$s_path${reset}"
+        echo -e "  $(printf "%-7s" "WARP:")$s_warp,  $(msg lbl_domain): ${green}$s_domain${reset}"
+        [ -n "$s_connect" ] && echo -e "  $(printf "%-7s" "CDN:")${green}${s_connect}${reset}"
+        echo -e "${cyan}----------------------------------------------------------------${reset}"
+>>>>>>> parent of fa950d3 (Update)
         echo -e "  ${green}1.${reset}  $(msg menu_port)"
         echo -e "  ${green}2.${reset}  $(msg menu_wspath)"
         echo -e "  ${green}3.${reset}  $(msg menu_domain)"
@@ -301,6 +323,7 @@ menu() {
         printf "   ${red}VWN — Xray Management Panel${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
         echo -e "${cyan}================================================================${reset}"
         echo -e "  ${cyan}── $(msg menu_sep_proto_short) ──────────────────────────────────────────${reset}"
+<<<<<<< HEAD
         _pst() { [ -n "$1" ] && ss -tlnp 2>/dev/null | grep -q ":${1}" && echo "${green}●${reset}" || echo "${red}○${reset}"; }
         if [ -f "$configPath" ]; then
             local _ws_path _xhttp_path _grpc_svc _ws_port _xhttp_port _grpc_port
@@ -329,6 +352,12 @@ menu() {
         echo -e "  $(printf "%-8s" "Nginx:")$s_nginx_c  SSL: $s_ssl"
         echo -e "  $(printf "%-8s" "WARP:")$s_warp"
         [ -n "$s_connect" ] && echo -e "  $(printf "%-8s" "CDN:")${green}${s_connect}${reset}"
+=======
+        echo -e "  $(printf "%-9s" "WS:")$s_ws_c,  WARP: $s_warp"
+        echo -e "  $(printf "%-9s" "Reality:")$s_reality_c,  SSL: $s_ssl"
+        echo -e "  $(printf "%-9s" "Nginx:")$s_nginx_c,  CF Guard: $s_cfguard"
+        [ -n "$s_connect" ] && echo -e "  CDN: ${green}${s_connect}${reset}"
+>>>>>>> parent of fa950d3 (Update)
         echo -e "  ${cyan}── $(msg menu_sep_tun_short) ───────────────────────────────────────────${reset}"
         echo -e "  Relay: $s_relay,  Psiphon: $s_psiphon,  Tor: $s_tor"
         echo -e "  ${cyan}── $(msg menu_sep_sec_short) ────────────────────────────────────────────${reset}"
