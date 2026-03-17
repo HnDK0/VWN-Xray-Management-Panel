@@ -5,7 +5,6 @@
 
 BACKUP_DIR="/root/vwn-backups"
 
-# Список того что бэкапим
 _BACKUP_PATHS=(
     /usr/local/etc/xray
     /etc/nginx/conf.d
@@ -33,7 +32,6 @@ createBackup() {
 
     echo -e "${cyan}$(msg backup_creating)...${reset}"
 
-    # Собираем только существующие пути
     local existing_paths=()
     for p in "${_BACKUP_PATHS[@]}"; do
         [ -e "$p" ] && existing_paths+=("$p")
@@ -95,12 +93,16 @@ restoreBackup() {
 
     echo -e "${cyan}$(msg backup_restoring)...${reset}"
 
-    # Останавливаем сервисы перед восстановлением
     systemctl stop xray xray-reality nginx 2>/dev/null || true
 
     if tar -xzf "$archive" -C / 2>/dev/null; then
-        # Восстанавливаем права на acme.sh — tar может не сохранить execute bit
+        # Восстанавливаем права на acme.sh
         [ -f /root/.acme.sh/acme.sh ] && chmod +x /root/.acme.sh/acme.sh
+        # Права на сертификат
+        if [ -f /etc/nginx/cert/cert.key ]; then
+            chown root:ssl-cert /etc/nginx/cert/cert.key 2>/dev/null || true
+            chmod 640 /etc/nginx/cert/cert.key 2>/dev/null || true
+        fi
         systemctl daemon-reload
         systemctl restart xray xray-reality nginx 2>/dev/null || true
         echo "${green}$(msg backup_restored)${reset}"
@@ -141,7 +143,6 @@ manageBackup() {
         clear
         echo -e "${cyan}$(msg backup_title)${reset}"
         echo ""
-        # Показываем сколько бэкапов есть
         local count=0
         [ -d "$BACKUP_DIR" ] && count=$(ls "$BACKUP_DIR"/vwn-backup-*.tar.gz 2>/dev/null | wc -l)
         echo -e "  $(msg backup_dir): ${green}$BACKUP_DIR${reset}"

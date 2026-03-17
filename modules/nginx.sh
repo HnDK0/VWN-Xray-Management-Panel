@@ -33,7 +33,6 @@ writeNginxConfig() {
     local proxy_host
     proxy_host=$(echo "$proxyUrl" | sed 's|https://||;s|http://||;s|/.*||')
 
-    # Создаём /dev/shm для unix sockets (tmpfs в RAM, пересоздаётся при перезагрузке)
     mkdir -p /dev/shm
 
     local xhttpPort grpcPort xhttpPath grpcService
@@ -65,7 +64,6 @@ http {
     keepalive_timeout 75s;
     keepalive_requests 10000;
 
-    # HTTP/2 keepalive — для gRPC через nginx_h2.sock
     http2_recv_timeout 300s;
     http2_idle_timeout 300s;
 
@@ -79,7 +77,6 @@ http {
 }
 NGINXMAIN
 
-    # default.conf — отклоняем прямые TCP подключения на 80 (xray держит 443)
     cat > /etc/nginx/conf.d/default.conf << 'DEFAULTCONF'
 server {
     listen 80 default_server;
@@ -89,11 +86,6 @@ server {
 }
 DEFAULTCONF
 
-    # Основной конфиг: два server блока на unix sockets
-    # nginx.sock     — HTTP/1.1 — для WS и XHTTP (от xray fallback default)
-    # nginx_h2.sock  — HTTP/2   — для gRPC       (от xray fallback alpn=h2)
-    # TLS терминирует xray, поэтому здесь нет ssl директив
-    # Реальный IP клиента восстанавливается через proxy_protocol (xver=2 в fallback)
     cat > "$nginxPath" << EOF
 # ── HTTP/1.1 socket — WS + XHTTP ──────────────────────────────────
 server {
@@ -206,7 +198,6 @@ server {
 }
 EOF
 
-    # Генерируем map-блок для имён подписок
     local server_ip country_code
     server_ip=$(getServerIP 2>/dev/null || curl -s --connect-timeout 5 ifconfig.me)
     country_code=$(_getCountryCode "$server_ip")
@@ -216,13 +207,8 @@ map \$uri \$sub_label {
     default                                                    "${country_code} VLESS";
 }
 MAPEOF
-    # Real IP восстанавливается через proxy_protocol (xver=2) от xray fallback.
-    # setupRealIpRestore здесь не нужен — nginx не на TCP порту.
 }
 
-# Восстановление реального IP клиента из CF-Connecting-IP.
-# Вызывается автоматически при writeNginxConfig.
-# nginx.conf уже содержит include conf.d/*.conf — отдельный include не нужен.
 setupRealIpRestore() {
     echo -e "${cyan}$(msg cf_ips_setup)${reset}"
     local tmp
@@ -251,8 +237,6 @@ setupRealIpRestore() {
     echo "${green}$(msg cf_ips_ok)${reset}"
 }
 
-# CF Guard — блокировка прямого доступа, только Cloudflare IP.
-# Включается вручную через меню (пункт 3→7).
 _fetchCfGuardIPs() {
     local tmp
     tmp=$(mktemp) || return 1
@@ -284,17 +268,17 @@ toggleCfGuard() {
         read -r confirm
         if [[ "$confirm" == "y" ]]; then
             rm -f /etc/nginx/conf.d/cf_guard.conf
-            sed -i '/cloudflare_ip.*!=.*1/d' "$nginxPath" 2>/dev/null || true
+            sed -i '/if.*cloudflare_ip.*!=.*1.*{.*return 444;.*}/d' "$nginxPath"
             nginx -t && systemctl reload nginx
             echo "${green}$(msg cfguard_disabled)${reset}"
         fi
     else
         _fetchCfGuardIPs || return 1
         local wsPath xhttpPath grpcService
-        wsPath=$(jq -r '.inbounds[] | select(.tag=="ws-inbound") | .streamSettings.wsSettings.path // empty' "$configPath" 2>/dev/null | head -1)
-        [ -z "$wsPath" ] && wsPath=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // ""' "$configPath" 2>/dev/null)
-        xhttpPath=$(grep '^XHTTP_PATH=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
-        grpcService=$(grep '^GRPC_SERVICE=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
+        wsPath=$(get_ws_path)
+        [ -z "$wsPath" ] && wsPath=$(jq -r '.inbounds[] | select(.tag=="ws-inbound") | .streamSettings.wsSettings.path // ""' "$configPath" 2>/dev/null | head -1)
+        xhttpPath=$(get_xhttp_path)
+        grpcService=$(get_grpc_service)
         if [ -n "$wsPath" ] && [ "$wsPath" != "null" ]; then
             if ! grep -q "cloudflare_ip" "$nginxPath" 2>/dev/null; then
                 python3 - "$nginxPath" "$wsPath" "$xhttpPath" "$grpcService" << 'PYEOF'
@@ -314,7 +298,6 @@ PYEOF
         echo "${green}$(msg cfguard_enabled)${reset}"
     fi
 }
-
 
 openPort80() {
     ufw status | grep -q inactive && return
@@ -341,12 +324,10 @@ configCert() {
 
     installPackage "socat" || true
 
-
     if [ ! -f ~/.acme.sh/acme.sh ]; then
         curl -fsSL https://get.acme.sh | sh -s email="acme@${userDomain}"
     fi
 
-    # Проверяем что acme.sh установился
     if [ ! -f ~/.acme.sh/acme.sh ]; then
         echo "${red}$(msg acme_install_fail)${reset}"; return 1
     fi
@@ -379,14 +360,17 @@ configCert() {
         --fullchain-file /etc/nginx/cert/cert.pem \
         --reloadcmd "systemctl restart xray"
 
+    # Права на ключ
+    chown root:ssl-cert /etc/nginx/cert/cert.key
+    chmod 640 /etc/nginx/cert/cert.key
+    chmod 755 /etc/nginx/cert
+
     echo "${green}$(msg ssl_success) $userDomain${reset}"
 }
 
-# Добавляет location /sub/ в первый server блок (nginx.sock — HTTP/1.1) если ещё нет
 applyNginxSub() {
     [ ! -f "$nginxPath" ] && return 1
 
-    # Обновляем/создаём sub_map.conf с актуальным кодом страны
     local server_ip country_code
     server_ip=$(getServerIP 2>/dev/null || curl -s --connect-timeout 5 ifconfig.me)
     country_code=$(_getCountryCode "$server_ip")
@@ -397,13 +381,11 @@ map \$uri \$sub_label {
 }
 MAPEOF
 
-    # Добавляем /sub/ locations если ещё нет (для старых конфигов)
     if ! grep -q 'location /sub/' "$nginxPath"; then
         python3 - "$nginxPath" << 'PYEOF'
 import sys, re
 path = sys.argv[1]
 with open(path) as f: c = f.read()
-# HTML location (без Content-Disposition)
 html_block = (
     "\n    location ~ ^/sub/.*\\.html$ {\n"
     "        alias /usr/local/etc/xray/sub/;\n"
@@ -411,7 +393,6 @@ html_block = (
     "        add_header Cache-Control 'no-cache, no-store, must-revalidate';\n"
     "    }\n"
 )
-# TXT location (со скачиванием)
 txt_block = (
     "\n    location /sub/ {\n"
     "        alias /usr/local/etc/xray/sub/;\n"
@@ -422,7 +403,6 @@ txt_block = (
     "        add_header Cache-Control 'no-cache, no-store, must-revalidate';\n"
     "    }\n"
 )
-# Вставляем перед location / в первом server блоке
 c = re.sub(r'(\n    location / \{)', html_block + txt_block + r'\1', c, count=1)
 with open(path, 'w') as f: f.write(c)
 PYEOF

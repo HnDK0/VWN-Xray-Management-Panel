@@ -26,6 +26,9 @@ psiphonConfigFile='/usr/local/etc/xray/psiphon.json'
 psiphonBin='/usr/local/bin/psiphon-tunnel-core'
 torDomainsFile='/usr/local/etc/xray/tor_domains.txt'
 
+USERS_FILE="/usr/local/etc/xray/users.conf"
+export USERS_FILE
+
 # ============================================================
 # СИСТЕМА
 # ============================================================
@@ -195,7 +198,18 @@ _getTunnelMode() {
 
 getWarpStatusRaw() {
     if command -v warp-cli &>/dev/null; then
-        warp-cli --accept-tos status 2>/dev/null | grep -q "Connected" && echo "ACTIVE" || echo "OFF"
+        local out
+        out=$(warp-cli --accept-tos status 2>/dev/null)
+        if echo "$out" | grep -qi "connected"; then
+            echo "ACTIVE"
+            return
+        fi
+        # Fallback: проверим через curl (быстро)
+        if curl -s --connect-timeout 2 -x socks5://127.0.0.1:40000 https://api.ipify.org &>/dev/null; then
+            echo "ACTIVE"
+            return
+        fi
+        echo "OFF"
     else
         echo "NOT_INSTALLED"
     fi
@@ -260,8 +274,6 @@ checkCertExpiry() {
 
 # ============================================================
 # УТИЛИТА: выравнивание текста по ширине колонки
-# Использование: _pad "строка" ширина
-# Корректно работает со строками содержащими ANSI escape коды
 # ============================================================
 _pad() {
     local v="$1" w="$2" vis
@@ -271,7 +283,6 @@ _pad() {
 
 # ============================================================
 # УТИЛИТА: конвертация файла доменов в JSON-массив для Xray
-# Убирает префикс domain:, ведущую точку, конвертирует IDN
 # ============================================================
 domainsToJson() {
     local file="$1"
@@ -283,10 +294,51 @@ domainsToJson() {
         line=$(echo "$line" | tr -d '[:space:]')
         [ -z "$line" ] && continue
         if echo "$line" | grep -qP '[^\x00-\x7F]' 2>/dev/null; then
-            line=$(python3 -c "import encodings.idna; parts=\'$line\'.split(\'.\'); print(\'.\'.join(encodings.idna.ToASCII(p).decode() for p in parts))" 2>/dev/null || echo "$line")
+            if command -v python3 &>/dev/null; then
+                line=$(python3 -c "import encodings.idna; parts='$line'.split('.'); print('.'.join(encodings.idna.ToASCII(p).decode() for p in parts))" 2>/dev/null || echo "$line")
+            fi
         fi
         [ -n "$result" ] && result="$result,"
         result="$result\"domain:$line\""
     done < "$file"
     echo "$result"
+}
+
+# ============================================================
+# УТИЛИТЫ: создание пользователя Xray и настройка логов
+# ============================================================
+
+create_xray_user() {
+    if ! getent group ssl-cert >/dev/null; then
+        groupadd -r ssl-cert
+    fi
+    if ! id xray &>/dev/null; then
+        useradd -r -s /sbin/nologin -d /usr/local/etc/xray -G ssl-cert xray
+        echo "info: user xray created."
+    fi
+}
+
+setup_xray_logs() {
+    mkdir -p /var/log/xray
+    chown -R xray:xray /var/log/xray
+    chmod 750 /var/log/xray
+    touch /var/log/xray/error.log /var/log/xray/access.log
+    chown xray:xray /var/log/xray/*.log
+}
+
+# ============================================================
+# УТИЛИТА: унифицированный просмотр логов
+# ============================================================
+view_log() {
+    local file="$1"
+    local service="$2"
+    if [ -f "$file" ]; then
+        tail -n 50 "$file"
+    else
+        if [ -n "$service" ]; then
+            journalctl -u "$service" -n 50 --no-pager 2>/dev/null || echo "$(msg no_logs)"
+        else
+            echo "$(msg no_logs)"
+        fi
+    fi
 }

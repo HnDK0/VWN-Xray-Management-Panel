@@ -5,7 +5,6 @@
 # Sub URL: https://<domain>/sub/<label>_<token>.txt
 # =================================================================
 
-USERS_FILE="/usr/local/etc/xray/users.conf"
 SUB_DIR="/usr/local/etc/xray/sub"
 
 # ── Утилиты ───────────────────────────────────────────────────────
@@ -23,7 +22,6 @@ _subFilename() {
     echo "${safe}_${token}.txt"
 }
 
-# Получает флаг страны (с кэшем в переменной окружения)
 _getCachedFlag() {
     if [ -z "${_VWN_FLAG_CACHE:-}" ]; then
         local ip
@@ -32,14 +30,6 @@ _getCachedFlag() {
         export _VWN_FLAG_CACHE
     fi
     echo "$_VWN_FLAG_CACHE"
-}
-
-# Домен из wsSettings.host (с fallback на xhttpSettings для обратной совместимости)
-_getDomain() {
-    local d=""
-    [ -f "$configPath" ] && \
-        d=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // .inbounds[0].streamSettings.xhttpSettings.host // ""' "$configPath" 2>/dev/null)
-    echo "$d"
 }
 
 # ── Применить users.conf в оба конфига Xray ───────────────────────
@@ -60,7 +50,6 @@ _applyUsersToConfigs() {
     clients_r+="]"; clients_x+="]"
 
     if [ -f "$configPath" ]; then
-        # Применяем clients ко всем inbound'ам (ws, xhttp, grpc) в config.json
         jq --argjson c "$clients_x" '
             .inbounds = [.inbounds[] | .settings.clients = $c]
         ' "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
@@ -82,9 +71,8 @@ _initUsersFile() {
 
     local existing_uuid=""
     if [ -f "$configPath" ]; then
-        existing_uuid=$(jq -r '.inbounds[0].settings.clients[0].id // ""' "$configPath" 2>/dev/null)
+        existing_uuid=$(get_uuid)
     fi
-    # Если в WS нет UUID — берём из Reality
     if [ -z "$existing_uuid" ] || [ "$existing_uuid" = "null" ]; then
         if [ -f "$realityConfigPath" ]; then
             existing_uuid=$(jq -r '.inbounds[0].settings.clients[0].id // ""' "$realityConfigPath" 2>/dev/null)
@@ -96,7 +84,6 @@ _initUsersFile() {
         token=$(_genToken)
         echo "${existing_uuid}|default|${token}" > "$USERS_FILE"
         echo "${green}$(msg users_migrated): $existing_uuid${reset}"
-        # Синхронизируем UUID в оба конфига
         _applyUsersToConfigs 2>/dev/null || true
         buildUserSubFile "$existing_uuid" "default" "$token" 2>/dev/null || true
     fi
@@ -110,13 +97,13 @@ buildUserSubFile() {
     applyNginxSub 2>/dev/null || true
 
     local domain lines="" server_ip flag
-    domain=$(_getDomain)
+    domain=$(get_domain)
     server_ip=$(getServerIP)
-    flag=$(_getCountryFlag "$server_ip")
+    flag=$(_getCachedFlag)
 
     if [ -f "$configPath" ] && [ -n "$domain" ]; then
         local wp wep name encoded_name connect_host
-        wp=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // .inbounds[0].streamSettings.xhttpSettings.path // ""' "$configPath" 2>/dev/null)
+        wp=$(get_ws_path)
         wep=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$wp" 2>/dev/null || echo "$wp")
         connect_host=$(getConnectHost 2>/dev/null || echo "$domain")
         [ -z "$connect_host" ] && connect_host="$domain"
@@ -128,7 +115,7 @@ buildUserSubFile() {
 
         # XHTTP
         local xhttp_path xep xhttp_name xhttp_encoded_name
-        xhttp_path=$(grep '^XHTTP_PATH=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
+        xhttp_path=$(get_xhttp_path)
         [ -z "$xhttp_path" ] && xhttp_path="${wp}x"
         xep=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$xhttp_path" 2>/dev/null || echo "$xhttp_path")
         xhttp_name="${flag} VL-XHTTP-CDN | ${label} ${flag}"
@@ -137,7 +124,7 @@ buildUserSubFile() {
 
         # gRPC
         local grpc_service grpc_name grpc_encoded_name
-        grpc_service=$(grep '^GRPC_SERVICE=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
+        grpc_service=$(get_grpc_service)
         [ -z "$grpc_service" ] && grpc_service="${wp#/}g"
         grpc_name="${flag} VL-gRPC-CDN | ${label} ${flag}"
         grpc_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$grpc_name" 2>/dev/null || echo "$grpc_name")
@@ -159,27 +146,22 @@ buildUserSubFile() {
     local filename safe
     safe=$(_safeLabel "$label")
     filename=$(_subFilename "$label" "$token")
-    # Удаляем старые файлы этого label (любой токен) перед записью нового
     rm -f "${SUB_DIR}/${safe}_"*.txt "${SUB_DIR}/${safe}_"*.html
     printf '%s' "$lines" | base64 -w 0 > "${SUB_DIR}/${filename}"
     chmod 644 "${SUB_DIR}/${filename}"
 
-    # Генерируем HTML-страницу с конфигами (защита — токен в URL)
     buildUserHtmlPage "$uuid" "$label" "$token" "$lines" 2>/dev/null || true
 }
 
-# Генерирует HTML-страницу /sub/<label>_<token>.html
-# Доступна только по прямой ссылке — токен из 24 случайных символов защищает от перебора
 buildUserHtmlPage() {
     local uuid="$1" label="$2" token="$3" lines="$4"
     local domain safe htmlfile sub_url
-    domain=$(_getDomain)
+    domain=$(get_domain)
     [ -z "$domain" ] && return 0
     safe=$(_safeLabel "$label")
     htmlfile="${SUB_DIR}/${safe}_${token}.html"
     sub_url="https://${domain}/sub/${safe}_${token}.txt"
 
-    # Разбиваем lines на массив ссылок
     local configs=()
     while IFS= read -r line; do
         [ -n "$line" ] && configs+=("$line")
@@ -229,7 +211,6 @@ HTMLEOF
 
     local i=1
     for cfg in "${configs[@]}"; do
-        # Имя из фрагмента (#...) URL-декодированное
         local cname
         cname=$(python3 -c "import sys,urllib.parse; u=sys.argv[1]; print(urllib.parse.unquote(u.split('#')[-1]) if '#' in u else u[:30])" "$cfg" 2>/dev/null || echo "Config $i")
         cat >> "$htmlfile" << HTMLEOF
@@ -282,7 +263,7 @@ rebuildAllSubFiles() {
 getSubUrl() {
     local label="$1" token="$2"
     local domain
-    domain=$(_getDomain)
+    domain=$(get_domain)
     [ -z "$domain" ] && { echo ""; return 1; }
     echo "https://${domain}/sub/$(_subFilename "$label" "$token")"
 }
@@ -392,15 +373,15 @@ showUserQR() {
     command -v qrencode &>/dev/null || installPackage "qrencode"
 
     local domain
-    domain=$(_getDomain)
+    domain=$(get_domain)
 
     # WebSocket
     if [ -f "$configPath" ] && [ -n "$domain" ]; then
         local wp wep url_ws server_ip flag name encoded_name connect_host
-        wp=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // .inbounds[0].streamSettings.xhttpSettings.path // ""' "$configPath" 2>/dev/null)
+        wp=$(get_ws_path)
         wep=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$wp" 2>/dev/null || echo "$wp")
         server_ip=$(getServerIP)
-        flag=$(_getCountryFlag "$server_ip")
+        flag=$(_getCachedFlag)
         connect_host=$(getConnectHost 2>/dev/null || echo "$domain")
         [ -z "$connect_host" ] && connect_host="$domain"
         name="${flag} VL-WS-CDN | ${label} ${flag}"
@@ -434,7 +415,7 @@ showUserQR() {
 
         # XHTTP
         local xhttp_path xep url_xhttp xhttp_name xhttp_encoded
-        xhttp_path=$(grep '^XHTTP_PATH=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
+        xhttp_path=$(get_xhttp_path)
         [ -z "$xhttp_path" ] && xhttp_path="${wp}x"
         xep=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$xhttp_path" 2>/dev/null || echo "$xhttp_path")
         xhttp_name="${flag} VL-XHTTP-CDN | ${label} ${flag}"
@@ -446,7 +427,7 @@ showUserQR() {
 
         # gRPC
         local grpc_service url_grpc grpc_name grpc_encoded
-        grpc_service=$(grep '^GRPC_SERVICE=' /usr/local/etc/xray/vwn.conf 2>/dev/null | cut -d= -f2-)
+        grpc_service=$(get_grpc_service)
         [ -z "$grpc_service" ] && grpc_service="${wp#/}g"
         grpc_name="${flag} VL-gRPC-CDN | ${label} ${flag}"
         grpc_encoded=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$grpc_name" 2>/dev/null || echo "$grpc_name")
@@ -465,7 +446,7 @@ showUserQR() {
         r_destHost=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0]' "$realityConfigPath" 2>/dev/null)
         r_pubKey=$(grep "PublicKey:" /usr/local/etc/xray/reality_client.txt 2>/dev/null | awk '{print $NF}')
         r_serverIP=$(getServerIP)
-        r_flag=$(_getCountryFlag "$r_serverIP")
+        r_flag=$(_getCachedFlag)
         r_name="${r_flag} VL-Reality | ${label} ${r_flag}"
         r_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$r_name" 2>/dev/null || echo "$r_name")
         url_reality="vless://${r_uuid}@${r_serverIP}:${r_port}?encryption=none&security=reality&sni=${r_destHost}&fp=chrome&pbk=${r_pubKey}&sid=${r_shortId}&type=tcp&flow=xtls-rprx-vision#${r_encoded_name}"

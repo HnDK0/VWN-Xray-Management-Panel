@@ -3,11 +3,13 @@
 # reality.sh — VLESS + Reality: конфиг, сервис, управление
 # =================================================================
 
+source "${VWN_LIB}/core.sh"  # для общих функций и переменных
+
 getRealityStatus() {
     if [ -f "$realityConfigPath" ]; then
         local port
         port=$(jq -r '.inbounds[0].port' "$realityConfigPath" 2>/dev/null)
-        echo "${green}ON ($(msg reality_port) $port)${reset}"
+        echo "${green}ON ($(msg lbl_port) $port)${reset}"
     else
         echo "${red}OFF${reset}"
     fi
@@ -28,7 +30,6 @@ writeRealityConfig() {
     [ -z "$privKey" ] || [ -z "$pubKey" ] && { echo "${red}$(msg reality_keys_err)${reset}"; return 1; }
 
     shortId=$(cat /proc/sys/kernel/random/uuid | tr -d '-' | cut -c1-16)
-    # Если users.conf уже есть — берём UUID первого пользователя
     if [ -f "$USERS_FILE" ] && [ -s "$USERS_FILE" ]; then
         new_uuid=$(cut -d'|' -f1 "$USERS_FILE" | head -1)
     fi
@@ -124,30 +125,17 @@ EOF
 }
 
 setupRealityService() {
-    # Создаём пользователя xray если не существует
-    id xray &>/dev/null || useradd -r -s /sbin/nologin -d /usr/local/etc/xray xray
+    # Убедимся, что пользователь xray и логи существуют
+    create_xray_user
+    setup_xray_logs
 
-    # Создаём директорию логов и передаём под пользователя xray
-    mkdir -p /var/log/xray
-    chown -R xray:xray /var/log/xray
-    chmod 750 /var/log/xray
-
-    # Создаём файл лога заранее с нужным владельцем
+    # Создаём файл лога Reality
     touch /var/log/xray/reality-error.log
     chown xray:xray /var/log/xray/reality-error.log
 
-    # Переводим основной xray-сервис тоже на пользователя xray
-    # чтобы оба сервиса работали под одним пользователем
-    local xray_svc
-    for f in /etc/systemd/system/xray.service /usr/lib/systemd/system/xray.service /lib/systemd/system/xray.service; do
-        [ -f "$f" ] && xray_svc="$f" && break
-    done
-    if [ -n "$xray_svc" ]; then
-        sed -i 's/User=nobody/User=xray/' "$xray_svc"
-        sed -i 's/Group=nogroup/Group=xray/' "$xray_svc"
-        systemctl daemon-reload
-        systemctl restart xray 2>/dev/null || true
-    fi
+    # Переводим основной xray-сервис тоже на пользователя xray (если ещё не сделано)
+    fix_xray_service
+
     cat > /etc/systemd/system/xray-reality.service << 'EOF'
 [Unit]
 Description=Xray Reality Service
@@ -239,9 +227,6 @@ installReality() {
     showRealityQR
 }
 
-
-# Возвращает публичный IP — если автоопределение дало приватный/неизвестный адрес,
-# спрашивает у пользователя
 _getPublicIP() {
     local ip
     ip=$(getServerIP)
@@ -267,7 +252,7 @@ showRealityInfo() {
     echo "--------------------------------------------------"
     echo "UUID:        $uuid"
     echo "IP:          $serverIP"
-    echo "$(msg reality_port): $port"
+    echo "$(msg lbl_port): $port"
     echo "PublicKey:   $pubKey"
     echo "ShortId:     $shortId"
     echo "ServerName:  $destHost"
@@ -296,8 +281,6 @@ showRealityQR() {
 }
 
 modifyRealityUUID() {
-    # UUID управляется централизованно через users.conf
-    # Используем общую функцию которая обновляет оба конфига
     modifyXrayUUID
 }
 
@@ -305,7 +288,7 @@ modifyRealityPort() {
     [ ! -f "$realityConfigPath" ] && { echo "${red}$(msg reality_not_installed)${reset}"; return 1; }
     local oldPort
     oldPort=$(jq '.inbounds[0].port' "$realityConfigPath")
-    read -rp "$(msg reality_port) [$oldPort]: " newPort
+    read -rp "$(msg lbl_port) [$oldPort]: " newPort
     [ -z "$newPort" ] && return
     if ! [[ "$newPort" =~ ^[0-9]+$ ]] || [ "$newPort" -lt 1024 ] || [ "$newPort" -gt 65535 ]; then
         echo "${red}$(msg invalid_port)${reset}"; return 1
@@ -392,9 +375,7 @@ manageReality() {
             5) modifyRealityPort ;;
             6) modifyRealityDest ;;
             7) systemctl restart xray-reality && echo "${green}$(msg restarted)${reset}" ;;
-            8) journalctl -u xray-reality -n 50 --no-pager
-               echo "---"
-               tail -n 30 /var/log/xray/reality-error.log 2>/dev/null || true ;;
+            8) view_log "/var/log/xray/reality-error.log" "xray-reality" ;;
             9) removeReality ;;
             0) break ;;
         esac
