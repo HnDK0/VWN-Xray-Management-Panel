@@ -14,6 +14,12 @@ writeNginxConfig() {
     local proxy_host
     proxy_host=$(echo "$proxyUrl" | sed 's|https://||;s|http://||;s|/.*||')
 
+    local server_ip country_code
+    server_ip=$(getServerIP 2>/dev/null || curl -s --connect-timeout 5 ifconfig.me)
+    country_code=$(_getCountryCode "$server_ip")
+
+    mkdir -p /usr/local/etc/xray/sub
+
     # Основной nginx.conf
     cat > /etc/nginx/nginx.conf << 'NGINXMAIN'
 user www-data;
@@ -46,30 +52,39 @@ http {
 }
 NGINXMAIN
 
-    # Nginx слушает только на localhost:8080 — только заглушка и /sub/
-    cat > "$nginxPath" << EOF
+    # sub_map и server конфиг в одном файле
+    cat > "$nginxPath" << NGINXEOF
+map \$uri \$sub_label {
+    ~^/sub/(?<label>[A-Za-z0-9_-]+)_[A-Za-z0-9]+\\.txt\$  "${country_code} VLESS | \$label";
+    default                                                    "${country_code} VLESS";
+}
+
 server {
     listen 127.0.0.1:8080;
     server_name $domain;
 
-    # ── Подписки ──────────────────────────────────────────────
-    location ~ ^/sub/.*\\.html\$ {
-        alias /usr/local/etc/xray/sub/;
+    # root указывает на родительскую папку — файлы лежат в sub/
+    root /usr/local/etc/xray;
+
+    # ── HTML подписки ──────────────────────────────────────────────
+    # Используем root+try_files вместо alias+regex (alias ломает путь)
+    location ~ ^/sub/[A-Za-z0-9_-]+_[A-Za-z0-9]+\\.html\$ {
         types { text/html html; }
         add_header Cache-Control 'no-cache, no-store, must-revalidate';
-    }
-
-    location /sub/ {
-        alias /usr/local/etc/xray/sub/;
         try_files \$uri =404;
-        types { text/plain txt; }
-        default_type text/plain;
-        add_header Content-Disposition "attachment; filename=\"\$sub_label.txt\"";
-        add_header profile-title "\$sub_label";
-        add_header Cache-Control 'no-cache, no-store, must-revalidate';
     }
 
-    # ── Заглушка ───────────────────────────────────────────────
+    # ── TXT подписки ───────────────────────────────────────────────
+    location ~ ^/sub/[A-Za-z0-9_-]+_[A-Za-z0-9]+\\.txt\$ {
+        types { }
+        default_type text/plain;
+        add_header Content-Disposition "attachment; filename=\"\${sub_label}.txt\"";
+        add_header profile-title "\${sub_label}";
+        add_header Cache-Control 'no-cache, no-store, must-revalidate';
+        try_files \$uri =404;
+    }
+
+    # ── Заглушка ───────────────────────────────────────────────────
     location / {
         proxy_pass $proxyUrl;
         proxy_http_version 1.1;
@@ -83,18 +98,7 @@ server {
     access_log off;
     error_log  /var/log/nginx/error.log;
 }
-EOF
-
-    # sub_map для подписок
-    local server_ip country_code
-    server_ip=$(getServerIP 2>/dev/null || curl -s --connect-timeout 5 ifconfig.me)
-    country_code=$(_getCountryCode "$server_ip")
-    cat > /etc/nginx/conf.d/sub_map.conf << MAPEOF
-map \$uri \$sub_label {
-    ~^/sub/(?<label>[A-Za-z0-9_-]+)_[A-Za-z0-9]+\\.txt\$  "${country_code} VLESS | \$label";
-    default                                                    "${country_code} VLESS";
-}
-MAPEOF
+NGINXEOF
 }
 
 _getCountryCode() {
@@ -378,19 +382,8 @@ toggleCfGuard() {
 # ============================================================
 
 applyNginxSub() {
+    # sub_map теперь встроен в writeNginxConfig — отдельный файл не нужен.
+    # Просто проверяем и перезапускаем nginx.
     [ ! -f "$nginxPath" ] && return 1
-
-    # Обновляем sub_map если нужно
-    local server_ip country_code
-    server_ip=$(getServerIP 2>/dev/null || curl -s --connect-timeout 5 ifconfig.me)
-    country_code=$(_getCountryCode "$server_ip")
-    cat > /etc/nginx/conf.d/sub_map.conf << MAPEOF
-map \$uri \$sub_label {
-    ~^/sub/(?<label>[A-Za-z0-9_-]+)_[A-Za-z0-9]+\\.txt\$  "${country_code} VLESS | \$label";
-    default                                                    "${country_code} VLESS";
-}
-MAPEOF
-
     nginx -t &>/dev/null && systemctl reload nginx || true
 }
-
