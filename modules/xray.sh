@@ -138,7 +138,8 @@ writeXrayConfig() {
             "sockopt": {
                 "tcpKeepAliveIdle": 100,
                 "tcpKeepAliveInterval": 10,
-                "tcpKeepAliveRetry": 3
+                "tcpKeepAliveRetry": 3,
+                "acceptProxyProtocol": false
             }
         },
         "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}
@@ -173,6 +174,12 @@ writeXrayConfig() {
                         "hKeepAlivePeriod": 0
                     }
                 }
+            },
+            "sockopt": {
+                "tcpKeepAliveIdle": 100,
+                "tcpKeepAliveInterval": 10,
+                "tcpKeepAliveRetry": 3,
+                "acceptProxyProtocol": false
             }
         },
         "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}
@@ -191,6 +198,12 @@ writeXrayConfig() {
             "grpcSettings": {
                 "serviceName": "$grpcService",
                 "multiMode": false
+            },
+            "sockopt": {
+                "tcpKeepAliveIdle": 100,
+                "tcpKeepAliveInterval": 10,
+                "tcpKeepAliveRetry": 3,
+                "acceptProxyProtocol": false
             }
         },
         "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}
