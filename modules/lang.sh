@@ -194,7 +194,7 @@ _initLang() {
     MSG[haproxy_syntax_err]=$([ "$VWN_LANG" = en ] && echo "HAProxy config error!"     || echo "Ошибка конфига HAProxy!")
     MSG[reality_haproxy_update]=$( [ "$VWN_LANG" = en ] && echo "Updating HAProxy SNI routing for Reality..." || echo "Обновление SNI роутинга HAProxy для Reality...")
     MSG[install_reality_prompt]=$( [ "$VWN_LANG" = en ] && echo "Install VLESS + Reality as well?" || echo "Установить VLESS + Reality тоже?")
-    MSG[install_reality_yes]=$(    [ "$VWN_LANG" = en ] && echo "Yes — install Reality on port 443 (recommended)" || echo "Да — установить Reality на порту 443 (рекомендуется)")
+    MSG[install_reality_yes]=$(    [ "$VWN_LANG" = en ] && echo "Yes — also install VLESS Reality" || echo "Да — установить Reality тоже")
     MSG[install_reality_no]=$(     [ "$VWN_LANG" = en ] && echo "No — WS/XHTTP/gRPC only" || echo "Нет — только WS/XHTTP/gRPC")
     MSG[cdn_host_prompt]=$(   [ "$VWN_LANG" = en ] && echo "Enter CDN domain for connection (Enter = reset to main domain): " || echo "Введите CDN домен для подключения (Enter = сбросить на основной домен): ")
     MSG[cdn_host_reset]=$(    [ "$VWN_LANG" = en ] && echo "Connection address reset to main domain." || echo "Адрес подключения сброшен на основной домен.")
