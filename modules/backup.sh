@@ -5,12 +5,12 @@
 
 BACKUP_DIR="/root/vwn-backups"
 
-# Список того что бэкапим
 _BACKUP_PATHS=(
     /usr/local/etc/xray
     /etc/nginx/conf.d
-    /etc/nginx/cert
+    /etc/haproxy
     /root/.cloudflare_api
+    /root/.acme.sh
     /etc/cron.d/acme-renew
     /etc/cron.d/clear-logs
     /etc/cron.d/warp-watchdog
@@ -19,6 +19,9 @@ _BACKUP_PATHS=(
     /etc/sysctl.d/99-xray.conf
     /etc/fail2ban/jail.local
     /etc/fail2ban/filter.d/nginx-probe.conf
+    /etc/systemd/system/psiphon.service
+    /var/lib/psiphon
+    /etc/tor/torrc
 )
 
 createBackup() {
@@ -29,7 +32,6 @@ createBackup() {
 
     echo -e "${cyan}$(msg backup_creating)...${reset}"
 
-    # Собираем только существующие пути
     local existing_paths=()
     for p in "${_BACKUP_PATHS[@]}"; do
         [ -e "$p" ] && existing_paths+=("$p")
@@ -91,16 +93,29 @@ restoreBackup() {
 
     echo -e "${cyan}$(msg backup_restoring)...${reset}"
 
-    # Останавливаем сервисы перед восстановлением
-    systemctl stop xray xray-reality nginx 2>/dev/null || true
+    systemctl stop xray xray-reality nginx haproxy 2>/dev/null || true
 
     if tar -xzf "$archive" -C / 2>/dev/null; then
+        [ -f /root/.acme.sh/acme.sh ] && chmod +x /root/.acme.sh/acme.sh
+        # Права на сертификат HAProxy
+        if [ -f /etc/haproxy/cert/cert.key ]; then
+            chmod 600 /etc/haproxy/cert/cert.key 2>/dev/null || true
+        fi
+        if [ -f /etc/haproxy/cert/server.pem ]; then
+            chmod 600 /etc/haproxy/cert/server.pem 2>/dev/null || true
+        fi
+        # Пересобираем server.pem если нужно
+        if [ -f /etc/haproxy/cert/cert.pem ] && [ -f /etc/haproxy/cert/cert.key ]; then
+            cat /etc/haproxy/cert/cert.pem /etc/haproxy/cert/cert.key \
+                > /etc/haproxy/cert/server.pem
+            chmod 600 /etc/haproxy/cert/server.pem
+        fi
         systemctl daemon-reload
-        systemctl restart xray xray-reality nginx 2>/dev/null || true
+        systemctl restart xray xray-reality nginx haproxy 2>/dev/null || true
         echo "${green}$(msg backup_restored)${reset}"
     else
         echo "${red}$(msg backup_restore_fail)${reset}"
-        systemctl start xray xray-reality nginx 2>/dev/null || true
+        systemctl start xray xray-reality nginx haproxy 2>/dev/null || true
         return 1
     fi
 }
@@ -135,7 +150,6 @@ manageBackup() {
         clear
         echo -e "${cyan}$(msg backup_title)${reset}"
         echo ""
-        # Показываем сколько бэкапов есть
         local count=0
         [ -d "$BACKUP_DIR" ] && count=$(ls "$BACKUP_DIR"/vwn-backup-*.tar.gz 2>/dev/null | wc -l)
         echo -e "  $(msg backup_dir): ${green}$BACKUP_DIR${reset}"

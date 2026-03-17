@@ -20,14 +20,23 @@ prepareSoftware() {
 
 prepareSoftwareWs() {
     prepareSoftware
-    run_task "Установка Nginx" "installPackage nginx" || true
+    run_task "Установка Nginx"   "installPackage nginx"   || true
+    run_task "Установка HAProxy" "installPackage haproxy" || true
 
     echo "--- [3/3] $(msg menu_sep_sec) ---"
-    run_task "Настройка UFW" "ufw allow 22/tcp && ufw allow 443/tcp && ufw allow 443/udp && echo 'y' | ufw enable"
+    run_task "Настройка UFW" "ufw allow 22/tcp && ufw allow 443/tcp && echo 'y' | ufw enable"
     run_task "Системные параметры" applySysctl
 }
 
-# Установка VLESS + WebSocket + TLS + Nginx + WARP + CDN
+
+installRealityOnly() {
+    isRoot
+    clear
+    identifyOS
+    echo "${green}$(msg install_type_reality_title)${reset}"
+    installReality
+}
+
 installWsTls() {
     isRoot
     clear
@@ -63,8 +72,8 @@ installWsTls() {
         break
     done
 
-    local xhttpPath
-    xhttpPath=$(generateRandomPath)
+    local wsBasePath
+    wsBasePath=$(generateRandomPath)
 
     # URL заглушки
     local proxyUrl validated_url
@@ -78,32 +87,74 @@ installWsTls() {
         break
     done
 
-    echo -e "\n${green}---${reset}"
-    run_task "Создание конфига Xray"   "writeXrayConfig '$xrayPort' '$xhttpPath' '$userDomain'"
-    run_task "Создание конфига Nginx"  "writeNginxConfig '$xrayPort' '$userDomain' '$proxyUrl' '$xhttpPath'"
-    run_task "Настройка WARP"          configWarp
-    run_task "Выпуск SSL"              "userDomain='$userDomain' configCert"
-    run_task "Применение правил WARP"  applyWarpDomains
-    run_task "Ротация логов"           setupLogrotate
-    run_task "Автоочистка логов"       setupLogClearCron
-    run_task "Автообновление SSL"      setupSslCron
-    run_task "WARP Watchdog"           setupWarpWatchdog
+    # Спрашиваем про Reality
+    local install_reality=false
+    local realityDest=""
+    local realityPort=8443
+    echo ""
+    echo -e "${cyan}$(msg install_reality_prompt)${reset}"
+    echo -e "${green}1.${reset} $(msg install_reality_yes)"
+    echo -e "${green}2.${reset} $(msg install_reality_no)"
+    read -rp "$(msg choose)" reality_choice
+    if [ "${reality_choice:-1}" = "1" ]; then
+        install_reality=true
+        echo -e "${cyan}$(msg reality_dest_title)${reset}"
+        echo "1) microsoft.com:443"
+        echo "2) www.apple.com:443"
+        echo "3) www.amazon.com:443"
+        echo "$(msg reality_dest_custom)"
+        read -rp "Выбор [1]: " dest_choice
+        case "${dest_choice:-1}" in
+            1) realityDest="microsoft.com:443" ;;
+            2) realityDest="www.apple.com:443" ;;
+            3) realityDest="www.amazon.com:443" ;;
+            4) read -rp "$(msg reality_dest_prompt)" realityDest
+               [ -z "$realityDest" ] && realityDest="microsoft.com:443" ;;
+            *) realityDest="microsoft.com:443" ;;
+        esac
+        read -rp "$(msg reality_port_prompt)" realityPort
+        [ -z "$realityPort" ] && realityPort=8443
+        if ! [[ "$realityPort" =~ ^[0-9]+$ ]] || [ "$realityPort" -lt 1024 ] || [ "$realityPort" -gt 65535 ]; then
+            echo "${yellow}$(msg invalid_port) — использую 8443${reset}"
+            realityPort=8443
+        fi
+    fi
 
-    systemctl enable --now xray nginx
-    systemctl restart xray nginx
+    echo -e "\n${green}---${reset}"
+    run_task "Создание конфига Xray"     "writeXrayConfig '$xrayPort' '$wsBasePath' '$userDomain'"
+    run_task "Создание конфига Nginx"    "writeNginxConfig '$userDomain' '$proxyUrl'"
+    run_task "Настройка WARP"            configWarp
+    run_task "Выпуск SSL"                "userDomain='$userDomain' configCert"
+    run_task "Создание конфига HAProxy"  "writeHaproxyConfig '$xrayPort' '$userDomain' '$wsBasePath'"
+    run_task "Восстановление реального IP" setupRealIpRestore
+    run_task "Применение правил WARP"    applyWarpDomains
+    run_task "Ротация логов"             setupLogrotate
+    run_task "Автоочистка логов"         setupLogClearCron
+    run_task "Автообновление SSL"        setupSslCron
+    run_task "WARP Watchdog"             setupWarpWatchdog
+
+    systemctl enable --now nginx
+    systemctl restart nginx
+    systemctl enable --now haproxy
+    systemctl restart haproxy
+    systemctl enable --now xray
+    systemctl restart xray
+
+    # Устанавливаем Reality если выбрано
+    if $install_reality; then
+        echo -e "\n${cyan}--- Reality ---${reset}"
+        # Устанавливаем порт перед вызовом writeRealityConfig
+        REALITY_INTERNAL_PORT=$realityPort
+        run_task "Конфиг Reality"   "writeRealityConfig '$realityDest'"
+        run_task "Сервис Reality"   setupRealityService
+        ufw allow "$realityPort"/tcp comment 'Xray Reality' 2>/dev/null || true
+        [ -f "$warpDomainsFile" ] && applyWarpDomains
+        [ -f "$relayConfigFile" ]  && applyRelayDomains
+    fi
 
     echo -e "\n${green}$(msg install_complete)${reset}"
-    getQrCode
-}
-
-# Установка VLESS + Reality + WARP
-installRealityOnly() {
-    isRoot
-    clear
-    identifyOS
-    echo "${green}$(msg install_type_reality_title)${reset}"
-    # Все зависимости, WARP, логи — installReality() сделает сам
-    installReality
+    _initUsersFile
+    showUserQR
 }
 
 install() {
@@ -124,14 +175,16 @@ install() {
     esac
 }
 
+
 fullRemove() {
     echo -e "${red}$(msg remove_confirm) $(msg yes_no)${reset}"
     read -r confirm
     if [[ "$confirm" == "y" ]]; then
-        systemctl stop nginx xray xray-reality warp-svc psiphon tor 2>/dev/null || true
+        systemctl stop nginx haproxy xray xray-reality warp-svc psiphon tor 2>/dev/null || true
         warp-cli disconnect 2>/dev/null || true
         [ -z "${PACKAGE_MANAGEMENT_REMOVE:-}" ] && identifyOS
         uninstallPackage 'nginx*' || true
+        uninstallPackage 'haproxy' || true
         uninstallPackage 'cloudflare-warp' || true
         bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove || true
         systemctl disable xray-reality psiphon 2>/dev/null || true
@@ -139,7 +192,7 @@ fullRemove() {
         rm -f /etc/systemd/system/psiphon.service
         rm -f "$torDomainsFile"
         rm -f "$psiphonBin"
-        rm -rf /etc/nginx /usr/local/etc/xray /root/.cloudflare_api \
+        rm -rf /etc/nginx /etc/haproxy /usr/local/etc/xray /root/.cloudflare_api \
                /var/lib/psiphon /var/log/psiphon \
                /etc/cron.d/acme-renew /etc/cron.d/clear-logs /etc/cron.d/warp-watchdog \
                /usr/local/bin/warp-watchdog.sh /usr/local/bin/clear-logs.sh \
@@ -153,12 +206,13 @@ removeWs() {
     echo -e "${red}$(msg remove_confirm) $(msg yes_no)${reset}"
     read -r confirm
     [[ "$confirm" != "y" ]] && return 0
-    systemctl stop nginx xray 2>/dev/null || true
-    systemctl disable nginx xray 2>/dev/null || true
+    systemctl stop nginx haproxy xray 2>/dev/null || true
+    systemctl disable nginx haproxy xray 2>/dev/null || true
     [ -z "${PACKAGE_MANAGEMENT_REMOVE:-}" ] && identifyOS
     uninstallPackage 'nginx*' || true
+    uninstallPackage 'haproxy' || true
     bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove || true
-    rm -rf /etc/nginx /usr/local/etc/xray/config.json \
+    rm -rf /etc/nginx /etc/haproxy /usr/local/etc/xray/config.json \
            /usr/local/etc/xray/sub /usr/local/etc/xray/users.conf \
            /etc/cron.d/acme-renew /etc/cron.d/clear-logs \
            /usr/local/bin/clear-logs.sh /etc/sysctl.d/99-xray.conf
@@ -166,47 +220,81 @@ removeWs() {
     echo "${green}$(msg remove_done)${reset}"
 }
 
+_portSt() {
+    local port="$1"
+    if ss -tlnp 2>/dev/null | grep -q ":${port}"; then
+        echo -e "${green}● LISTEN${reset}"
+    else
+        echo -e "${red}○ DOWN  ${reset}"
+    fi
+}
+
 manageWs() {
     set +e
     while true; do
         clear
-        local s_nginx s_ws s_ssl s_cfguard s_domain s_connect s_warp s_port s_path
+        local s_nginx s_haproxy s_ws s_ssl s_domain s_connect s_warp
+        local s_ws_port s_xhttp_port s_grpc_port
+        local s_ws_path s_xhttp_path s_grpc_svc
+
         s_nginx=$(getServiceStatus nginx)
+        s_haproxy=$(getServiceStatus haproxy)
         s_ws=$(getServiceStatus xray)
         s_ssl=$(checkCertExpiry)
-        s_cfguard=$(getCfGuardStatus)
         s_warp=$(getWarpStatus)
-        s_domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // .inbounds[0].streamSettings.xhttpSettings.host // "—"' "$configPath" 2>/dev/null)
+
+        s_domain=$(get_domain)
         s_connect=$(cat "$CONNECT_HOST_FILE" 2>/dev/null | tr -d '[:space:]')
-        s_port=$(jq -r '.inbounds[0].port // "—"' "$configPath" 2>/dev/null)
-        s_path=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // .inbounds[0].streamSettings.xhttpSettings.path // "—"' "$configPath" 2>/dev/null)
-        # Обрезаем длинные значения
-        [ ${#s_connect} -gt 35 ] && s_connect="${s_connect:0:32}..."
-        [ ${#s_domain} -gt 30 ]  && s_domain="${s_domain:0:27}..."
+        [ ${#s_connect} -gt 40 ] && s_connect="${s_connect:0:37}..."
+        [ ${#s_domain}  -gt 35 ] && s_domain="${s_domain:0:32}..."
+
+        if [ -f "$configPath" ]; then
+            s_ws_port=$(jq -r '.inbounds[] | select(.tag=="ws-inbound") | .port' "$configPath" 2>/dev/null | head -1)
+            s_xhttp_port=$(jq -r '.inbounds[] | select(.tag=="xhttp-inbound") | .port' "$configPath" 2>/dev/null | head -1)
+            s_grpc_port=$(jq -r '.inbounds[] | select(.tag=="grpc-inbound") | .port' "$configPath" 2>/dev/null | head -1)
+            s_ws_path=$(get_ws_path)
+        fi
+        s_xhttp_path=$(get_xhttp_path)
+        s_grpc_svc=$(get_grpc_service)
 
         echo -e "${cyan}================================================================${reset}"
+        printf "   ${red}$(msg menu_ws_title)${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
         echo -e "${cyan}================================================================${reset}"
-        printf "   ${red}WebSocket + TLS + Nginx${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
+        echo -e "  HAProxy: $s_haproxy,  Nginx: $s_nginx,  SSL: $s_ssl"
+        echo -e "  WARP:  $s_warp"
+        [ -n "$s_connect" ] && echo -e "  CDN:   ${green}${s_connect}${reset}"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
-        echo -e "  $(printf "%-7s" "Nginx:")$s_nginx,  SSL: ${green}$s_ssl_plain${reset},  CF Guard: $s_cfguard"
-        echo -e "  $(printf "%-7s" "Xray:")$s_ws,  $(msg lbl_port): ${green}$s_port${reset},  $(msg lbl_path): ${green}$s_path${reset}"
-        echo -e "  $(printf "%-7s" "WARP:")$s_warp,  $(msg lbl_domain): ${green}$s_domain${reset}"
-        [ -n "$s_connect" ] && echo -e "  $(printf "%-7s" "CDN:")${green}${s_connect}${reset}"
-        echo -e "${cyan}----------------------------------------------------------------${reset}"
+        if [ -f "$configPath" ]; then
+            echo -e "  $(printf "%-7s" "WS:")$s_ws  $(_portSt "$s_ws_port") ${green}${s_ws_path:-—}${reset}  :${s_ws_port:-—}"
+            echo -e "  $(printf "%-7s" "XHTTP:")$s_ws  $(_portSt "$s_xhttp_port") ${green}${s_xhttp_path:-—}${reset}  :${s_xhttp_port:-—}"
+            echo -e "  $(printf "%-7s" "gRPC:")$s_ws  $(_portSt "$s_grpc_port") ${green}${s_grpc_svc:-—}${reset}  :${s_grpc_port:-—}"
+            echo -e "  $(msg lbl_domain): ${green}${s_domain}${reset}"
+        else
+            echo -e "  $(printf "%-7s" "WS:")${yellow}NOT INSTALLED${reset}"
+            echo -e "  $(printf "%-7s" "XHTTP:")${yellow}NOT INSTALLED${reset}"
+            echo -e "  $(printf "%-7s" "gRPC:")${yellow}NOT INSTALLED${reset}"
+        fi
+        echo -e "${cyan}================================================================${reset}"
+        echo -e "  ${cyan}$(msg menu_sep_config)${reset}"
         echo -e "  ${green}1.${reset}  $(msg menu_port)"
         echo -e "  ${green}2.${reset}  $(msg menu_wspath)"
         echo -e "  ${green}3.${reset}  $(msg menu_domain)"
         echo -e "  ${green}4.${reset}  $(msg menu_cdn_host)"
-        echo -e "  ${green}5.${reset}  $(msg menu_ssl)"
-        echo -e "  ${green}6.${reset}  $(msg menu_stub)"
-        echo -e "  ${green}7.${reset}  $(msg menu_cfguard)"
-        echo -e "  ${green}8.${reset}  $(msg menu_cf_update_ip)"
-        echo -e "  ${green}9.${reset}  $(msg menu_ssl_cron)"
-        echo -e "  ${green}10.${reset} $(msg menu_log_cron)"
-        echo -e "  ${green}11.${reset} $(msg menu_uuid)"
-        echo -e "${cyan}----------------------------------------------------------------${reset}"
-        echo -e "  ${green}12.${reset} $(msg menu_install)"
-        echo -e "  ${green}13.${reset} $(msg menu_remove)"
+        echo -e "  ${green}5.${reset}  $(msg menu_stub)"
+        echo -e "  ${green}6.${reset}  $(msg menu_uuid)"
+        echo -e "  ${cyan}$(msg menu_sep_sec)${reset}"
+        echo -e "  ${green}7.${reset}  $(msg menu_ssl)"
+        echo -e "  ${green}8.${reset}  $(msg menu_ssl_cron)"
+        echo -e "  ${cyan}$(msg menu_sep_logs)${reset}"
+        echo -e "  ${green}9.${reset}  $(msg menu_log_cron)"
+        echo -e "  ${green}10.${reset} $(msg menu_xray_acc)"
+        echo -e "  ${green}11.${reset} $(msg menu_xray_err)"
+        echo -e "  ${green}12.${reset} $(msg menu_nginx_acc)"
+        echo -e "  ${green}13.${reset} $(msg menu_nginx_err)"
+        echo -e "  ${cyan}$(msg menu_sep_svc)${reset}"
+        echo -e "  ${green}14.${reset} $(msg menu_restart)"
+        echo -e "  ${green}15.${reset} $(msg menu_install)"
+        echo -e "  ${green}16.${reset} $(msg menu_remove)"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
         echo -e "  ${green}0.${reset}  $(msg back)"
         echo -e "${cyan}================================================================${reset}"
@@ -216,15 +304,18 @@ manageWs() {
             2)  modifyWsPath ;;
             3)  modifyDomain ;;
             4)  modifyConnectHost ;;
-            5)  getConfigInfo && userDomain="$xray_userDomain" && configCert ;;
-            6)  modifyProxyPassUrl ;;
-            7)  toggleCfGuard ;;
-            8)  setupRealIpRestore && { [ -f /etc/nginx/conf.d/cf_guard.conf ] && _fetchCfGuardIPs; } && nginx -t && systemctl reload nginx ;;
-            9)  manageSslCron ;;
-            10) manageLogClearCron ;;
-            11) modifyXrayUUID ;;
-            12) install ;;
-            13) removeWs ;;
+            5)  modifyProxyPassUrl ;;
+            6)  modifyXrayUUID ;;
+            7)  getConfigInfo && userDomain="$xray_userDomain" && configCert ;;
+            8)  manageSslCron ;;
+            9)  manageLogClearCron ;;
+            10) view_log "/var/log/xray/access.log" "xray" ;;
+            11) view_log "/var/log/xray/error.log" "xray" ;;
+            12) view_log "/var/log/nginx/access.log" "nginx" ;;
+            13) view_log "/var/log/nginx/error.log" "nginx" ;;
+            14) systemctl restart haproxy && systemctl restart nginx && systemctl restart xray && echo "${green}$(msg restarted)${reset}" ;;
+            15) install ;;
+            16) removeWs ;;
             0)  break ;;
         esac
         [ "$choice" = "0" ] && continue
@@ -235,12 +326,12 @@ manageWs() {
 
 menu() {
     set +e
-    # Первичная очистка экрана
     clear
     while true; do
-        local s_nginx s_ws s_reality s_warp s_ssl s_bbr s_f2b s_jail s_cfguard s_relay s_psiphon s_tor s_connect
+        local s_nginx s_haproxy s_ws s_reality s_warp s_ssl s_bbr s_f2b s_jail s_relay s_psiphon s_tor s_connect
         clear
         s_nginx=$(getServiceStatus nginx)
+        s_haproxy=$(getServiceStatus haproxy)
         s_ws=$(getServiceStatus xray)
         s_reality=$(getServiceStatus xray-reality)
         s_warp=$(getWarpStatus)
@@ -248,13 +339,11 @@ menu() {
         s_bbr=$(getBbrStatus)
         s_f2b=$(getF2BStatus)
         s_jail=$(getWebJailStatus)
-        s_cfguard=$(getCfGuardStatus)
         s_relay=$(getRelayStatus)
         s_psiphon=$(getPsiphonStatus)
         s_tor=$(getTorStatus)
         s_connect=$(cat "$CONNECT_HOST_FILE" 2>/dev/null | tr -d '[:space:]')
         [ ${#s_connect} -gt 35 ] && s_connect="${s_connect:0:32}..."
-        # Чистые версии (без ANSI) для printf %-Ns выравнивания
         _strip() { printf '%s' "$1" | sed 's/\[[0-9;]*[mABCDJKHf]//g; s/(B//g'; }
         _pval() {
             local val="$1" w="$2" clean
@@ -264,26 +353,41 @@ menu() {
         s_ws_c=$(_pval "$s_ws" 7)
         s_reality_c=$(_pval "$s_reality" 7)
         s_nginx_c=$(_pval "$s_nginx" 7)
-        # Чистые значения для правой колонки и туннелей (без ANSI — printf %-Ns не считает escape)
-        _plain() { printf '%s' "$1" | sed 's/\[[0-9;]*[mABCDJKHf]//g; s/(B//g'; }
-        s_warp_plain=$(_plain "$s_warp")
-        s_ssl_plain=$(_plain "$s_ssl")
-        s_cfguard_plain=$(_plain "$s_cfguard")
-        s_relay_plain=$(_plain "$s_relay")
-        s_psiphon_plain=$(_plain "$s_psiphon")
-        s_tor_plain=$(_plain "$s_tor")
-        s_bbr_plain=$(_plain "$s_bbr")
-        s_f2b_plain=$(_plain "$s_f2b")
-        s_jail_plain=$(_plain "$s_jail")
+        s_haproxy_c=$(_pval "$s_haproxy" 7)
 
         echo -e "${cyan}================================================================${reset}"
         printf "   ${red}VWN — Xray Management Panel${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
         echo -e "${cyan}================================================================${reset}"
         echo -e "  ${cyan}── $(msg menu_sep_proto_short) ──────────────────────────────────────────${reset}"
-        echo -e "  $(printf "%-9s" "WS:")$s_ws_c,  WARP: $s_warp"
-        echo -e "  $(printf "%-9s" "Reality:")$s_reality_c,  SSL: $s_ssl"
-        echo -e "  $(printf "%-9s" "Nginx:")$s_nginx_c,  CF Guard: $s_cfguard"
-        [ -n "$s_connect" ] && echo -e "  CDN: ${green}${s_connect}${reset}"
+        _pst() { [ -n "$1" ] && ss -tlnp 2>/dev/null | grep -q ":${1}" && echo "${green}●${reset}" || echo "${red}○${reset}"; }
+        if [ -f "$configPath" ]; then
+            local _ws_path _xhttp_path _grpc_svc _ws_port _xhttp_port _grpc_port
+            _ws_path=$(get_ws_path)
+            _xhttp_path=$(get_xhttp_path)
+            _grpc_svc=$(get_grpc_service)
+            _ws_port=$(jq -r '.inbounds[] | select(.tag=="ws-inbound") | .port' "$configPath" 2>/dev/null | head -1)
+            _xhttp_port=$(jq -r '.inbounds[] | select(.tag=="xhttp-inbound") | .port' "$configPath" 2>/dev/null | head -1)
+            _grpc_port=$(jq -r '.inbounds[] | select(.tag=="grpc-inbound") | .port' "$configPath" 2>/dev/null | head -1)
+            echo -e "  $(printf "%-8s" "WS:")$s_ws_c  $(_pst "$_ws_port") ${green}${_ws_path}${reset}  :${_ws_port}"
+            echo -e "  $(printf "%-8s" "XHTTP:")$s_ws_c  $(_pst "$_xhttp_port") ${green}${_xhttp_path:-—}${reset}  :${_xhttp_port:-—}"
+            echo -e "  $(printf "%-8s" "gRPC:")$s_ws_c  $(_pst "$_grpc_port") ${green}${_grpc_svc:-—}${reset}  :${_grpc_port:-—}"
+        else
+            echo -e "  $(printf "%-8s" "WS:")${yellow}NOT INSTALLED${reset}"
+            echo -e "  $(printf "%-8s" "XHTTP:")${yellow}NOT INSTALLED${reset}"
+            echo -e "  $(printf "%-8s" "gRPC:")${yellow}NOT INSTALLED${reset}"
+        fi
+        if [ -f "$realityConfigPath" ]; then
+            local _r_port _r_dest
+            _r_port=$(jq -r '.inbounds[0].port' "$realityConfigPath" 2>/dev/null)
+            _r_dest=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0] // "—"' "$realityConfigPath" 2>/dev/null)
+            echo -e "  $(printf "%-8s" "Reality:")$s_reality_c  $(_pst "$_r_port") ${green}${_r_dest}${reset}  :${_r_port}"
+        else
+            echo -e "  $(printf "%-8s" "Reality:")${yellow}NOT INSTALLED${reset}"
+        fi
+        echo -e "  $(printf "%-8s" "HAProxy:")$s_haproxy_c  SSL: $s_ssl"
+        echo -e "  $(printf "%-8s" "Nginx:") $s_nginx_c"
+        echo -e "  $(printf "%-8s" "WARP:")$s_warp"
+        [ -n "$s_connect" ] && echo -e "  $(printf "%-8s" "CDN:")${green}${s_connect}${reset}"
         echo -e "  ${cyan}── $(msg menu_sep_tun_short) ───────────────────────────────────────────${reset}"
         echo -e "  Relay: $s_relay,  Psiphon: $s_psiphon,  Tor: $s_tor"
         echo -e "  ${cyan}── $(msg menu_sep_sec_short) ────────────────────────────────────────────${reset}"
@@ -349,12 +453,12 @@ menu() {
             16) setupWebJail ;;
             17) changeSshPort ;;
             18) manageUFW ;;
-            19) tail -n 80 /var/log/xray/access.log 2>/dev/null || echo "$(msg no_logs)" ;;
-            20) tail -n 80 /var/log/xray/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
-            21) tail -n 80 /var/log/nginx/access.log 2>/dev/null || echo "$(msg no_logs)" ;;
-            22) tail -n 80 /var/log/nginx/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
+            19) view_log "/var/log/xray/access.log" "xray" ;;
+            20) view_log "/var/log/xray/error.log" "xray" ;;
+            21) view_log "/var/log/nginx/access.log" "nginx" ;;
+            22) view_log "/var/log/nginx/error.log" "nginx" ;;
             23) clearLogs ;;
-            24) systemctl restart xray xray-reality nginx warp-svc psiphon tor 2>/dev/null || true
+            24) systemctl restart haproxy nginx 2>/dev/null || true; systemctl restart xray xray-reality warp-svc psiphon tor 2>/dev/null || true
                 echo "${green}$(msg all_services_restarted)${reset}" ;;
             25) updateXrayCore ;;
             26) manageDiag ;;

@@ -3,7 +3,7 @@
 # core.sh — Общие переменные, утилиты, статус-функции
 # =================================================================
 
-VWN_VERSION="3.1"
+VWN_VERSION="4.0"
 VWN_LIB="/usr/local/lib/vwn"
 
 # Цвета
@@ -16,7 +16,7 @@ reset=$(tput sgr0)
 # Пути конфигов
 configPath='/usr/local/etc/xray/config.json'
 realityConfigPath='/usr/local/etc/xray/reality.json'
-nginxPath='/etc/nginx/conf.d/xray.conf'
+VWN_CONF='/usr/local/etc/xray/vwn.conf'
 cf_key_file="/root/.cloudflare_api"
 warpDomainsFile='/usr/local/etc/xray/warp_domains.txt'
 relayDomainsFile='/usr/local/etc/xray/relay_domains.txt'
@@ -25,6 +25,42 @@ psiphonDomainsFile='/usr/local/etc/xray/psiphon_domains.txt'
 psiphonConfigFile='/usr/local/etc/xray/psiphon.json'
 psiphonBin='/usr/local/bin/psiphon-tunnel-core'
 torDomainsFile='/usr/local/etc/xray/tor_domains.txt'
+
+# HAProxy пути (вариант B — HAProxy как TLS-терминатор)
+haproxyPath='/etc/haproxy/haproxy.cfg'
+haproxyCertDir='/etc/haproxy/cert'
+haproxyCert='/etc/haproxy/cert/server.pem'
+
+# nginx остаётся только для заглушки на 127.0.0.1:8080
+nginxPath='/etc/nginx/conf.d/xray.conf'
+
+USERS_FILE="/usr/local/etc/xray/users.conf"
+export USERS_FILE
+
+# ============================================================
+# УТИЛИТЫ: vwn.conf get/set
+# ============================================================
+
+vwn_conf_get() {
+    local key="$1"
+    grep "^${key}=" "$VWN_CONF" 2>/dev/null | cut -d= -f2-
+}
+
+vwn_conf_set() {
+    local key="$1" val="$2"
+    mkdir -p "$(dirname "$VWN_CONF")"
+    touch "$VWN_CONF"
+    if grep -q "^${key}=" "$VWN_CONF" 2>/dev/null; then
+        sed -i "s|^${key}=.*|${key}=${val}|" "$VWN_CONF"
+    else
+        echo "${key}=${val}" >> "$VWN_CONF"
+    fi
+}
+
+vwn_conf_del() {
+    local key="$1"
+    sed -i "/^${key}=/d" "$VWN_CONF" 2>/dev/null || true
+}
 
 # ============================================================
 # СИСТЕМА
@@ -98,7 +134,6 @@ setupAlias() {
 }
 
 setupSwap() {
-    # Если swap уже есть — не трогаем
     local swap_total
     swap_total=$(free -m | awk '/^Swap:/{print $2}')
     if [ "${swap_total:-0}" -gt 256 ]; then
@@ -106,7 +141,6 @@ setupSwap() {
         return 0
     fi
 
-    # Определяем размер swap в зависимости от RAM
     local ram_mb swap_mb
     ram_mb=$(free -m | awk '/^Mem:/{print $2}')
     if   [ "$ram_mb" -le 512 ];  then swap_mb=1024
@@ -117,18 +151,15 @@ setupSwap() {
 
     echo -e "${cyan}$(msg swap_creating) ${swap_mb}MB...${reset}"
 
-    # Создаём swap-файл
     local swapfile="/swapfile"
     if fallocate -l "${swap_mb}M" "$swapfile" 2>/dev/null || \
        dd if=/dev/zero of="$swapfile" bs=1M count="$swap_mb" status=none; then
         chmod 600 "$swapfile"
         mkswap "$swapfile" &>/dev/null
         swapon "$swapfile"
-        # Прописываем в fstab чтобы swap выжил после перезагрузки
         if ! grep -q "$swapfile" /etc/fstab; then
             echo "$swapfile none swap sw 0 0" >> /etc/fstab
         fi
-        # Настраиваем swappiness — не злоупотреблять swap
         sysctl -w vm.swappiness=10 &>/dev/null
         grep -q "vm.swappiness" /etc/sysctl.conf || echo "vm.swappiness=10" >> /etc/sysctl.conf
         echo "${green}$(msg swap_created) ${swap_mb}MB${reset}"
@@ -155,13 +186,11 @@ getServerIP() {
         "https://ipv4.wtfismyip.com/text"; do
         ip=$(curl -s --connect-timeout 5 "$url" 2>/dev/null | tr -d '[:space:]')
         if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            # Проверяем что это не приватный адрес
             if ! [[ "$ip" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
                 echo "$ip"; return
             fi
         fi
     done
-    # Fallback: локальный маршрут — может вернуть приватный IP
     ip=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')
     echo "${ip:-UNKNOWN}"
 }
@@ -195,7 +224,17 @@ _getTunnelMode() {
 
 getWarpStatusRaw() {
     if command -v warp-cli &>/dev/null; then
-        warp-cli --accept-tos status 2>/dev/null | grep -q "Connected" && echo "ACTIVE" || echo "OFF"
+        local out
+        out=$(warp-cli --accept-tos status 2>/dev/null)
+        if echo "$out" | grep -qi "connected"; then
+            echo "ACTIVE"
+            return
+        fi
+        if curl -s --connect-timeout 2 -x socks5://127.0.0.1:40000 https://api.ipify.org &>/dev/null; then
+            echo "ACTIVE"
+            return
+        fi
+        echo "OFF"
     else
         echo "NOT_INSTALLED"
     fi
@@ -238,15 +277,21 @@ getWebJailStatus() {
     fi
 }
 
+# CF Guard теперь реализован через HAProxy ACL-файл
 getCfGuardStatus() {
-    [ -f /etc/nginx/conf.d/cf_guard.conf ] \
+    [ -f /etc/haproxy/conf.d/cf_guard.cfg ] \
         && echo "${green}ON${reset}" || echo "${red}OFF${reset}"
 }
 
 checkCertExpiry() {
-    if [ -f /etc/nginx/cert/cert.pem ]; then
+    # Сертификат теперь хранится в HAProxy формате (fullchain+key)
+    # Для проверки срока используем только цепочку
+    local cert_file="/etc/haproxy/cert/cert.pem"
+    # Fallback для старых установок
+    [ ! -f "$cert_file" ] && cert_file="/etc/nginx/cert/cert.pem"
+    if [ -f "$cert_file" ]; then
         local expire_date expire_epoch now_epoch days_left
-        expire_date=$(openssl x509 -enddate -noout -in /etc/nginx/cert/cert.pem | cut -d= -f2)
+        expire_date=$(openssl x509 -enddate -noout -in "$cert_file" | cut -d= -f2)
         expire_epoch=$(date -d "$expire_date" +%s)
         now_epoch=$(date +%s)
         days_left=$(( (expire_epoch - now_epoch) / 86400 ))
@@ -260,8 +305,6 @@ checkCertExpiry() {
 
 # ============================================================
 # УТИЛИТА: выравнивание текста по ширине колонки
-# Использование: _pad "строка" ширина
-# Корректно работает со строками содержащими ANSI escape коды
 # ============================================================
 _pad() {
     local v="$1" w="$2" vis
@@ -271,7 +314,6 @@ _pad() {
 
 # ============================================================
 # УТИЛИТА: конвертация файла доменов в JSON-массив для Xray
-# Убирает префикс domain:, ведущую точку, конвертирует IDN
 # ============================================================
 domainsToJson() {
     local file="$1"
@@ -283,10 +325,50 @@ domainsToJson() {
         line=$(echo "$line" | tr -d '[:space:]')
         [ -z "$line" ] && continue
         if echo "$line" | grep -qP '[^\x00-\x7F]' 2>/dev/null; then
-            line=$(python3 -c "import encodings.idna; parts=\'$line\'.split(\'.\'); print(\'.\'.join(encodings.idna.ToASCII(p).decode() for p in parts))" 2>/dev/null || echo "$line")
+            if command -v python3 &>/dev/null; then
+                line=$(python3 -c "import encodings.idna; parts='$line'.split('.'); print('.'.join(encodings.idna.ToASCII(p).decode() for p in parts))" 2>/dev/null || echo "$line")
+            fi
         fi
         [ -n "$result" ] && result="$result,"
         result="$result\"domain:$line\""
     done < "$file"
     echo "$result"
+}
+
+# ============================================================
+# УТИЛИТЫ: создание пользователя Xray и настройка логов
+# ============================================================
+
+create_xray_user() {
+    # xray больше не читает TLS-сертификаты напрямую,
+    # поэтому группа ssl-cert не нужна
+    if ! id xray &>/dev/null; then
+        useradd -r -s /sbin/nologin -d /usr/local/etc/xray xray
+        echo "info: user xray created."
+    fi
+}
+
+setup_xray_logs() {
+    mkdir -p /var/log/xray
+    chown -R xray:xray /var/log/xray
+    chmod 750 /var/log/xray
+    touch /var/log/xray/error.log /var/log/xray/access.log
+    chown xray:xray /var/log/xray/*.log
+}
+
+# ============================================================
+# УТИЛИТА: унифицированный просмотр логов
+# ============================================================
+view_log() {
+    local file="$1"
+    local service="$2"
+    if [ -f "$file" ]; then
+        tail -n 50 "$file"
+    else
+        if [ -n "$service" ]; then
+            journalctl -u "$service" -n 50 --no-pager 2>/dev/null || echo "$(msg no_logs)"
+        else
+            echo "$(msg no_logs)"
+        fi
+    fi
 }

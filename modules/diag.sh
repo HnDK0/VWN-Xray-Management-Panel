@@ -92,13 +92,45 @@ _diagXray() {
             _fail "$(msg diag_xhttp_stopped)"
         fi
 
-        # Порт слушается
-        local xray_port
-        xray_port=$(jq -r '.inbounds[0].port' "$configPath" 2>/dev/null)
-        if ss -tlnp 2>/dev/null | grep -q ":${xray_port}"; then
-            _pass "$(msg diag_port_listen): $xray_port"
+        # Проверяем все три порта (WS, XHTTP, gRPC)
+        local ws_port xhttp_port grpc_port
+        ws_port=$(jq -r '.inbounds[] | select(.tag=="ws-inbound") | .port // .port' "$configPath" 2>/dev/null | head -1)
+        # Fallback для старых конфигов без тегов
+        [ -z "$ws_port" ] && ws_port=$(jq -r '.inbounds[0].port' "$configPath" 2>/dev/null)
+        xhttp_port=$(jq -r '.inbounds[] | select(.tag=="xhttp-inbound") | .port' "$configPath" 2>/dev/null)
+        grpc_port=$(jq -r '.inbounds[] | select(.tag=="grpc-inbound") | .port' "$configPath" 2>/dev/null)
+
+        if ss -tlnp 2>/dev/null | grep -q ":${ws_port}"; then
+            _pass "$(msg diag_port_listen): WS $ws_port"
         else
-            _fail "$(msg diag_port_not_listen): $xray_port"
+            _fail "$(msg diag_port_not_listen): WS $ws_port"
+        fi
+        if [ -n "$xhttp_port" ]; then
+            if ss -tlnp 2>/dev/null | grep -q ":${xhttp_port}"; then
+                _pass "$(msg diag_port_listen): XHTTP $xhttp_port"
+            else
+                _fail "$(msg diag_port_not_listen): XHTTP $xhttp_port"
+            fi
+        fi
+        if [ -n "$grpc_port" ]; then
+            if ss -tlnp 2>/dev/null | grep -q ":${grpc_port}"; then
+                _pass "$(msg diag_port_listen): gRPC $grpc_port"
+            else
+                _fail "$(msg diag_port_not_listen): gRPC $grpc_port"
+            fi
+        fi
+
+        # Проверяем синхронизацию users.conf с конфигом
+        local users_file="/usr/local/etc/xray/users.conf"
+        if [ -f "$users_file" ]; then
+            local conf_count users_count
+            conf_count=$(jq '.inbounds[] | select(.tag=="ws-inbound" or (.tag == null and .streamSettings.network == "ws")) | .settings.clients | length' "$configPath" 2>/dev/null | head -1)
+            users_count=$(grep -c '.' "$users_file" 2>/dev/null || echo 0)
+            if [ "${conf_count:-0}" -eq "$users_count" ]; then
+                _pass "users.conf: $users_count $(msg users_list | tr '[:upper:]' '[:lower:]') OK"
+            else
+                _warn "users.conf ($users_count) ≠ config ($conf_count) — $(msg menu_sub)"
+            fi
         fi
     else
         _skip "WebSocket $(msg diag_not_installed)"
@@ -122,12 +154,94 @@ _diagXray() {
         local reality_port
         reality_port=$(jq -r '.inbounds[0].port' "$realityConfigPath" 2>/dev/null)
         if ss -tlnp 2>/dev/null | grep -q ":${reality_port}"; then
-            _pass "$(msg diag_port_listen): $reality_port"
+            _pass "$(msg diag_port_listen): $reality_port (Reality)"
         else
-            _fail "$(msg diag_port_not_listen): $reality_port"
+            _fail "$(msg diag_port_not_listen): $reality_port (Reality)"
         fi
     else
         _skip "Reality $(msg diag_not_installed)"
+    fi
+    echo ""
+}
+
+_diagHaproxy() {
+    echo -e "${cyan}[ $(msg diag_section_haproxy) ]${reset}"
+
+    if ! command -v haproxy &>/dev/null; then
+        _fail "$(msg diag_haproxy_missing)"
+        echo ""
+        return
+    fi
+    _pass "$(msg diag_haproxy_installed): $(haproxy -v 2>&1 | head -1 | grep -oP 'HAProxy \S+')"
+
+    if haproxy -c -f "$haproxyPath" &>/dev/null; then
+        _pass "$(msg diag_haproxy_config_ok)"
+    else
+        _fail "$(msg diag_haproxy_config_bad)"
+        haproxy -c -f "$haproxyPath" 2>&1 | head -5 | sed 's/^/      /'
+    fi
+
+    if systemctl is-active --quiet haproxy 2>/dev/null; then
+        _pass "$(msg diag_haproxy_running)"
+    else
+        _fail "$(msg diag_haproxy_stopped)"
+    fi
+
+    # Порт 443 должен быть у HAProxy
+    if ss -tlnp 2>/dev/null | grep -q ':443'; then
+        _pass "$(msg diag_port_listen): 443 (haproxy)"
+    else
+        _fail "$(msg diag_port_not_listen): 443"
+    fi
+
+    # SSL сертификат
+    local cert_file="${haproxyCertDir}/cert.pem"
+    [ ! -f "$cert_file" ] && cert_file="/etc/nginx/cert/cert.pem"
+    if [ -f "$cert_file" ]; then
+        local expire_date expire_epoch now_epoch days_left
+        expire_date=$(openssl x509 -enddate -noout -in "$cert_file" 2>/dev/null | cut -d= -f2)
+        expire_epoch=$(date -d "$expire_date" +%s 2>/dev/null)
+        now_epoch=$(date +%s)
+        days_left=$(( (expire_epoch - now_epoch) / 86400 ))
+        if [ "$days_left" -le 0 ]; then
+            _fail "$(msg diag_ssl_expired)"
+        elif [ "$days_left" -lt 15 ]; then
+            _warn "$(msg diag_ssl_expiring): $days_left $(msg diag_days)"
+        else
+            _pass "$(msg diag_ssl_ok): $days_left $(msg diag_days)"
+        fi
+
+        # Домен в сертификате совпадает с vwn.conf
+        local domain_in_cert domain_in_conf
+        domain_in_cert=$(openssl x509 -noout -text -in "$cert_file" 2>/dev/null \
+            | grep -oP '(?<=DNS:)[^,\s]+' | head -1)
+        domain_in_conf=$(vwn_conf_get VWN_DOMAIN)
+        if [ -n "$domain_in_cert" ] && [ -n "$domain_in_conf" ]; then
+            if [ "$domain_in_cert" = "$domain_in_conf" ] \
+               || [[ "$domain_in_cert" == *"${domain_in_conf}"* ]]; then
+                _pass "$(msg diag_ssl_domain_match): $domain_in_conf"
+            else
+                _warn "$(msg diag_ssl_domain_mismatch): cert=$domain_in_cert conf=$domain_in_conf"
+            fi
+        fi
+    else
+        _fail "$(msg diag_ssl_missing)"
+    fi
+
+    # DNS проверка
+    local domain_in_conf
+    domain_in_conf=$(vwn_conf_get VWN_DOMAIN)
+    if [ -n "$domain_in_conf" ]; then
+        local resolved_ip server_ip
+        resolved_ip=$(getent hosts "$domain_in_conf" 2>/dev/null | awk '{print $1}' | head -1)
+        server_ip=$(getServerIP)
+        if [ -z "$resolved_ip" ]; then
+            _fail "$(msg diag_dns_fail): $domain_in_conf"
+        elif [ "$resolved_ip" = "$server_ip" ]; then
+            _pass "$(msg diag_dns_ok): $domain_in_conf → $resolved_ip"
+        else
+            _warn "$(msg diag_dns_mismatch): $domain_in_conf → $resolved_ip ($(msg diag_server_ip): $server_ip)"
+        fi
     fi
     echo ""
 }
@@ -154,58 +268,11 @@ _diagNginx() {
         _fail "$(msg diag_nginx_stopped)"
     fi
 
-    # Порт 443 слушается
-    if ss -tlnp 2>/dev/null | grep -q ':443'; then
-        _pass "$(msg diag_port_listen): 443"
+    # Nginx слушает на 127.0.0.1:8080 (только заглушка)
+    if ss -tlnp 2>/dev/null | grep -q '127.0.0.1:8080'; then
+        _pass "$(msg diag_port_listen): 127.0.0.1:8080 (nginx stub)"
     else
-        _fail "$(msg diag_port_not_listen): 443"
-    fi
-
-    # SSL сертификат
-    if [ -f /etc/nginx/cert/cert.pem ]; then
-        local expire_date expire_epoch now_epoch days_left
-        expire_date=$(openssl x509 -enddate -noout -in /etc/nginx/cert/cert.pem 2>/dev/null | cut -d= -f2)
-        expire_epoch=$(date -d "$expire_date" +%s 2>/dev/null)
-        now_epoch=$(date +%s)
-        days_left=$(( (expire_epoch - now_epoch) / 86400 ))
-        if [ "$days_left" -le 0 ]; then
-            _fail "$(msg diag_ssl_expired)"
-        elif [ "$days_left" -lt 15 ]; then
-            _warn "$(msg diag_ssl_expiring): $days_left $(msg diag_days)"
-        else
-            _pass "$(msg diag_ssl_ok): $days_left $(msg diag_days)"
-        fi
-
-        # Домен совпадает с сертификатом
-        local domain_in_cert
-        domain_in_cert=$(openssl x509 -noout -text -in /etc/nginx/cert/cert.pem 2>/dev/null | grep -oP '(?<=DNS:)[^,\s]+' | head -1)
-        local domain_in_nginx
-        domain_in_nginx=$(grep -E '^\s*server_name\s+' "$nginxPath" 2>/dev/null | grep -v '_' | awk '{print $2}' | tr -d ';' | head -1)
-        if [ -n "$domain_in_cert" ] && [ -n "$domain_in_nginx" ]; then
-            if [ "$domain_in_cert" = "$domain_in_nginx" ] || [[ "$domain_in_cert" == *"${domain_in_nginx}"* ]]; then
-                _pass "$(msg diag_ssl_domain_match): $domain_in_nginx"
-            else
-                _warn "$(msg diag_ssl_domain_mismatch): cert=$domain_in_cert nginx=$domain_in_nginx"
-            fi
-        fi
-    else
-        _fail "$(msg diag_ssl_missing)"
-    fi
-
-    # DNS резолвинг домена
-    local domain_in_nginx
-    domain_in_nginx=$(grep -E '^\s*server_name\s+' "$nginxPath" 2>/dev/null | grep -v '_' | awk '{print $2}' | tr -d ';' | head -1)
-    if [ -n "$domain_in_nginx" ]; then
-        local resolved_ip server_ip
-        resolved_ip=$(getent hosts "$domain_in_nginx" 2>/dev/null | awk '{print $1}' | head -1)
-        server_ip=$(getServerIP)
-        if [ -z "$resolved_ip" ]; then
-            _fail "$(msg diag_dns_fail): $domain_in_nginx"
-        elif [ "$resolved_ip" = "$server_ip" ]; then
-            _pass "$(msg diag_dns_ok): $domain_in_nginx → $resolved_ip"
-        else
-            _warn "$(msg diag_dns_mismatch): $domain_in_nginx → $resolved_ip ($(msg diag_server_ip): $server_ip)"
-        fi
+        _fail "$(msg diag_port_not_listen): 127.0.0.1:8080 (nginx)"
     fi
     echo ""
 }
@@ -296,18 +363,19 @@ _diagConnectivity() {
         _fail "$(msg diag_internet_fail)"
     fi
 
-    # Доступность домена снаружи (если есть nginx и домен)
-    local domain_in_nginx
-    domain_in_nginx=$(grep -E '^\s*server_name\s+' "$nginxPath" 2>/dev/null | grep -v '_' | awk '{print $2}' | tr -d ';' | head -1)
-    if [ -n "$domain_in_nginx" ] && command -v nginx &>/dev/null; then
+    # Доступность домена снаружи
+    local domain_in_conf
+    domain_in_conf=$(vwn_conf_get VWN_DOMAIN)
+    if [ -n "$domain_in_conf" ]; then
         local http_code
-        http_code=$(curl -s --connect-timeout 8 -o /dev/null -w "%{http_code}" "https://${domain_in_nginx}/" 2>/dev/null)
+        http_code=$(curl -s --connect-timeout 8 -o /dev/null -w "%{http_code}" \
+            "https://${domain_in_conf}/" 2>/dev/null)
         if [ "$http_code" = "200" ] || [ "$http_code" = "301" ] || [ "$http_code" = "302" ]; then
-            _pass "$(msg diag_domain_reachable): $domain_in_nginx ($http_code)"
+            _pass "$(msg diag_domain_reachable): $domain_in_conf ($http_code)"
         elif [ "$http_code" = "000" ]; then
-            _fail "$(msg diag_domain_unreachable): $domain_in_nginx"
+            _fail "$(msg diag_domain_unreachable): $domain_in_conf"
         else
-            _warn "$(msg diag_domain_code): $domain_in_nginx → HTTP $http_code"
+            _warn "$(msg diag_domain_code): $domain_in_conf → HTTP $http_code"
         fi
     fi
     echo ""
@@ -325,6 +393,7 @@ runFullDiag() {
 
     _diagSystem
     _diagXray
+    _diagHaproxy
     _diagNginx
     _diagWarp
     _diagTunnels
@@ -354,10 +423,11 @@ manageDiag() {
         echo -e "${green}1.${reset} $(msg diag_run_full)"
         echo -e "${green}2.${reset} $(msg diag_run_system)"
         echo -e "${green}3.${reset} $(msg diag_run_xray)"
-        echo -e "${green}4.${reset} $(msg diag_run_nginx)"
-        echo -e "${green}5.${reset} $(msg diag_run_warp)"
-        echo -e "${green}6.${reset} $(msg diag_run_tunnels)"
-        echo -e "${green}7.${reset} $(msg diag_run_connect)"
+        echo -e "${green}4.${reset} $(msg diag_run_haproxy)"
+        echo -e "${green}5.${reset} $(msg diag_run_nginx)"
+        echo -e "${green}6.${reset} $(msg diag_run_warp)"
+        echo -e "${green}7.${reset} $(msg diag_run_tunnels)"
+        echo -e "${green}8.${reset} $(msg diag_run_connect)"
         echo -e "${green}0.${reset} $(msg back)"
         echo ""
         read -rp "$(msg choose)" choice
@@ -365,10 +435,11 @@ manageDiag() {
             1) runFullDiag ;;
             2) clear; _DIAG_ISSUES=(); _diagSystem ;;
             3) clear; _DIAG_ISSUES=(); _diagXray ;;
-            4) clear; _DIAG_ISSUES=(); _diagNginx ;;
-            5) clear; _DIAG_ISSUES=(); _diagWarp ;;
-            6) clear; _DIAG_ISSUES=(); _diagTunnels ;;
-            7) clear; _DIAG_ISSUES=(); _diagConnectivity ;;
+            4) clear; _DIAG_ISSUES=(); _diagHaproxy ;;
+            5) clear; _DIAG_ISSUES=(); _diagNginx ;;
+            6) clear; _DIAG_ISSUES=(); _diagWarp ;;
+            7) clear; _DIAG_ISSUES=(); _diagTunnels ;;
+            8) clear; _DIAG_ISSUES=(); _diagConnectivity ;;
             0) break ;;
         esac
         [ "$choice" = "0" ] && continue

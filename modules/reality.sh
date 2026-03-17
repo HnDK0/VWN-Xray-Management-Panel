@@ -1,34 +1,44 @@
 #!/bin/bash
 # =================================================================
 # reality.sh — VLESS + Reality: конфиг, сервис, управление
+# Reality слушает на 0.0.0.0:REALITY_INTERNAL_PORT (по умолчанию 8443)
 # =================================================================
+
+source "${VWN_LIB}/core.sh"
+
+# Публичный порт xray-reality (слушает на 0.0.0.0, открыт через UFW)
+REALITY_INTERNAL_PORT=8443
 
 getRealityStatus() {
     if [ -f "$realityConfigPath" ]; then
-        local port
-        port=$(jq -r '.inbounds[0].port' "$realityConfigPath" 2>/dev/null)
-        echo "${green}ON ($(msg reality_port) $port)${reset}"
+        local port dest
+        port=$(jq -r '.inbounds[0].port // "—"' "$realityConfigPath" 2>/dev/null)
+        dest=$(jq -r '.inbounds[0].streamSettings.realitySettings.dest // "—"' \
+            "$realityConfigPath" 2>/dev/null)
+        echo "${green}ON ($(msg lbl_port) $port, SNI: $dest)${reset}"
     else
         echo "${red}OFF${reset}"
     fi
 }
 
 writeRealityConfig() {
-    local realityPort="$1"
-    local dest="$2"
+    local dest="$1"          # microsoft.com:443
     local destHost="${dest%%:*}"
 
     echo -e "${cyan}$(msg reality_keygen)${reset}"
     local keys privKey pubKey shortId new_uuid
-    local USERS_FILE="${USERS_FILE:-/usr/local/etc/xray/users.conf}"
 
-    keys=$(/usr/local/bin/xray x25519 2>/dev/null) || { echo "${red}$(msg reality_keys_fail)${reset}"; return 1; }
-    privKey=$(echo "$keys" | tr -d '\r' | awk '/PrivateKey:/{print $2}')
-    pubKey=$(echo "$keys"  | tr -d '\r' | awk '/Password:/{print $2}')
-    [ -z "$privKey" ] || [ -z "$pubKey" ] && { echo "${red}$(msg reality_keys_err)${reset}"; return 1; }
+    keys=$(/usr/local/bin/xray x25519 2>/dev/null) || {
+        echo "${red}$(msg reality_keys_fail)${reset}"; return 1
+    }
+    privKey=$(echo "$keys" | tr -d '\r' | awk '/Private key:/{print $3}')
+    pubKey=$(echo "$keys"  | tr -d '\r' | awk '/Public key:/{print $3}')
+    [ -z "$privKey" ] || [ -z "$pubKey" ] && {
+        echo "${red}$(msg reality_keys_err)${reset}"; return 1
+    }
 
     shortId=$(cat /proc/sys/kernel/random/uuid | tr -d '-' | cut -c1-16)
-    # Если users.conf уже есть — берём UUID первого пользователя
+
     if [ -f "$USERS_FILE" ] && [ -s "$USERS_FILE" ]; then
         new_uuid=$(cut -d'|' -f1 "$USERS_FILE" | head -1)
     fi
@@ -43,12 +53,15 @@ writeRealityConfig() {
         "error": "/var/log/xray/reality-error.log",
         "loglevel": "error"
     },
+    "dns": {
+        "servers": ["tcp+local://1.1.1.1", "tcp+local://1.0.0.1"]
+    },
     "inbounds": [{
-        "port": $realityPort,
+        "port": ${REALITY_INTERNAL_PORT},
         "listen": "0.0.0.0",
         "protocol": "vless",
         "settings": {
-            "clients": [{"id": "$new_uuid", "flow": "xtls-rprx-vision"}],
+            "clients": [{"id": "$new_uuid", "flow": "xtls-rprx-vision", "email": "default"}],
             "decryption": "none"
         },
         "streamSettings": {
@@ -57,9 +70,11 @@ writeRealityConfig() {
             "realitySettings": {
                 "show": false,
                 "dest": "$dest",
+                "xver": 0,
                 "serverNames": ["$destHost"],
                 "privateKey": "$privKey",
-                "shortIds": ["$shortId"]
+                "shortIds": ["$shortId"],
+                "maxTimeDiff": 60000
             }
         },
         "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}
@@ -81,12 +96,33 @@ writeRealityConfig() {
         }
     ],
     "routing": {
-        "domainStrategy": "AsIs",
+        "domainStrategy": "IPIfNonMatch",
         "rules": [
             {
                 "type": "field",
                 "ip": ["geoip:private"],
                 "outboundTag": "block"
+            },
+            {
+                "type": "field",
+                "port": "25, 587, 465, 2525",
+                "network": "tcp",
+                "outboundTag": "block"
+            },
+            {
+                "type": "field",
+                "protocol": ["bittorrent"],
+                "outboundTag": "block"
+            },
+            {
+                "type": "field",
+                "outboundTag": "block",
+                "domain": [
+                    "geosite:category-ads-all",
+                    "domain:pushnotificationws.com",
+                    "domain:sunlight-leds.com",
+                    "domain:icecyber.org"
+                ]
             },
             {
                 "type": "field",
@@ -105,17 +141,31 @@ writeRealityConfig() {
                 "outboundTag": "free"
             }
         ]
+    },
+    "policy": {
+        "levels": {
+            "0": {
+                "handshake": 2,
+                "connIdle": 120
+            }
+        }
     }
 }
 EOF
 
+    # Сохраняем pubKey в vwn.conf — единственный надёжный источник
+    vwn_conf_set REALITY_PUBKEY   "$pubKey"
+    vwn_conf_set REALITY_DEST     "$dest"
+    vwn_conf_set REALITY_SHORT_ID "$shortId"
+
+    # Оставляем txt для совместимости
     cat > /usr/local/etc/xray/reality_client.txt << EOF
 === Reality параметры для клиента ===
 UUID:       $new_uuid
 PublicKey:  $pubKey
 ShortId:    $shortId
 ServerName: $destHost
-Port:       $realityPort
+Port:       443 (через HAProxy)
 Flow:       xtls-rprx-vision
 EOF
 
@@ -123,31 +173,26 @@ EOF
     cat /usr/local/etc/xray/reality_client.txt
 }
 
+get_reality_pubkey() {
+    # Основной источник — vwn.conf
+    local pk
+    pk=$(vwn_conf_get REALITY_PUBKEY)
+    if [ -n "$pk" ]; then
+        echo "$pk"; return
+    fi
+    # Fallback — старый txt файл
+    grep "PublicKey:" /usr/local/etc/xray/reality_client.txt 2>/dev/null | awk '{print $NF}'
+}
+
 setupRealityService() {
-    # Создаём пользователя xray если не существует
-    id xray &>/dev/null || useradd -r -s /sbin/nologin -d /usr/local/etc/xray xray
+    create_xray_user
+    setup_xray_logs
 
-    # Создаём директорию логов и передаём под пользователя xray
-    mkdir -p /var/log/xray
-    chown -R xray:xray /var/log/xray
-    chmod 750 /var/log/xray
-
-    # Создаём файл лога заранее с нужным владельцем
     touch /var/log/xray/reality-error.log
     chown xray:xray /var/log/xray/reality-error.log
 
-    # Переводим основной xray-сервис тоже на пользователя xray
-    # чтобы оба сервиса работали под одним пользователем
-    local xray_svc
-    for f in /etc/systemd/system/xray.service /usr/lib/systemd/system/xray.service /lib/systemd/system/xray.service; do
-        [ -f "$f" ] && xray_svc="$f" && break
-    done
-    if [ -n "$xray_svc" ]; then
-        sed -i 's/User=nobody/User=xray/' "$xray_svc"
-        sed -i 's/Group=nogroup/Group=xray/' "$xray_svc"
-        systemctl daemon-reload
-        systemctl restart xray 2>/dev/null || true
-    fi
+    fix_xray_service
+
     cat > /etc/systemd/system/xray-reality.service << 'EOF'
 [Unit]
 Description=Xray Reality Service
@@ -194,7 +239,8 @@ installReality() {
     fi
 
     echo "--- [3/3] $(msg menu_sep_sec) ---"
-    run_task "Настройка UFW" "ufw allow 22/tcp && echo 'y' | ufw enable"
+    # Reality использует порт 443 через HAProxy — отдельный UFW порт не нужен
+    run_task "Настройка UFW" "ufw allow 22/tcp && ufw allow 443/tcp && echo 'y' | ufw enable"
     run_task "Системные параметры" applySysctl
     if ! systemctl is-active --quiet warp-svc 2>/dev/null; then
         run_task "Настройка WARP" configWarp
@@ -203,11 +249,13 @@ installReality() {
     run_task "Ротация логов" setupLogrotate
     run_task "Автоочистка логов" setupLogClearCron
 
+    local realityPort
     read -rp "$(msg reality_port_prompt)" realityPort
     [ -z "$realityPort" ] && realityPort=8443
     if ! [[ "$realityPort" =~ ^[0-9]+$ ]] || [ "$realityPort" -lt 1024 ] || [ "$realityPort" -gt 65535 ]; then
         echo "${red}$(msg invalid_port)${reset}"; return 1
     fi
+    REALITY_INTERNAL_PORT=$realityPort
 
     echo -e "${cyan}$(msg reality_dest_title)${reset}"
     echo "1) microsoft.com:443"
@@ -224,11 +272,33 @@ installReality() {
         *) dest="microsoft.com:443" ;;
     esac
 
-    echo -e "${cyan}$(msg reality_open_port) $realityPort $(msg reality_ufw)${reset}"
-    ufw allow "$realityPort"/tcp comment 'Xray Reality' 2>/dev/null || true
+    local destHost="${dest%%:*}"
 
-    writeRealityConfig "$realityPort" "$dest" || return 1
+    writeRealityConfig "$dest" || return 1
     setupRealityService || return 1
+
+    # Открываем порт Reality в UFW
+    ufw allow "$REALITY_INTERNAL_PORT"/tcp comment 'Xray Reality' 2>/dev/null || true
+
+    # nginx и HAProxy нужны для WS/XHTTP/gRPC — устанавливаем если нет
+    if ! command -v nginx &>/dev/null; then
+        run_task "Установка Nginx"   "installPackage nginx"
+    fi
+    if ! command -v haproxy &>/dev/null; then
+        run_task "Установка HAProxy" "installPackage haproxy"
+    fi
+
+    local stubUrl
+    stubUrl=$(vwn_conf_get STUB_URL)
+    [ -z "$stubUrl" ] && stubUrl="https://httpbin.org/"
+
+    if [ ! -f "$nginxPath" ]; then
+        local stub_domain
+        stub_domain=$(get_domain 2>/dev/null || getServerIP)
+        writeNginxConfig "$stub_domain" "$stubUrl"
+        systemctl enable --now nginx
+        systemctl restart nginx
+    fi
 
     # Синхронизируем WARP и Relay домены в новый конфиг
     [ -f "$warpDomainsFile" ] && applyWarpDomains
@@ -239,9 +309,6 @@ installReality() {
     showRealityQR
 }
 
-
-# Возвращает публичный IP — если автоопределение дало приватный/неизвестный адрес,
-# спрашивает у пользователя
 _getPublicIP() {
     local ip
     ip=$(getServerIP)
@@ -261,13 +328,13 @@ showRealityInfo() {
     port=$(jq -r '.inbounds[0].port' "$realityConfigPath")
     shortId=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0]' "$realityConfigPath")
     destHost=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0]' "$realityConfigPath")
-    pubKey=$(grep "PublicKey:" /usr/local/etc/xray/reality_client.txt 2>/dev/null | awk '{print $2}')
+    pubKey=$(get_reality_pubkey)
     serverIP=$(_getPublicIP)
 
     echo "--------------------------------------------------"
     echo "UUID:        $uuid"
     echo "IP:          $serverIP"
-    echo "$(msg reality_port): $port"
+    echo "$(msg lbl_port): $port"
     echo "PublicKey:   $pubKey"
     echo "ShortId:     $shortId"
     echo "ServerName:  $destHost"
@@ -286,7 +353,7 @@ showRealityQR() {
     port=$(jq -r '.inbounds[0].port' "$realityConfigPath")
     shortId=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0]' "$realityConfigPath")
     destHost=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0]' "$realityConfigPath")
-    pubKey=$(grep "PublicKey:" /usr/local/etc/xray/reality_client.txt 2>/dev/null | awk '{print $2}')
+    pubKey=$(get_reality_pubkey)
     serverIP=$(_getPublicIP)
 
     local url="vless://${uuid}@${serverIP}:${port}?encryption=none&security=reality&sni=${destHost}&fp=chrome&pbk=${pubKey}&sid=${shortId}&type=tcp&flow=xtls-rprx-vision#Reality-${serverIP}"
@@ -296,24 +363,24 @@ showRealityQR() {
 }
 
 modifyRealityUUID() {
-    # UUID управляется централизованно через users.conf
-    # Используем общую функцию которая обновляет оба конфига
     modifyXrayUUID
 }
 
 modifyRealityPort() {
     [ ! -f "$realityConfigPath" ] && { echo "${red}$(msg reality_not_installed)${reset}"; return 1; }
     local oldPort
-    oldPort=$(jq '.inbounds[0].port' "$realityConfigPath")
-    read -rp "$(msg reality_port) [$oldPort]: " newPort
+    oldPort=$(jq -r '.inbounds[0].port' "$realityConfigPath" 2>/dev/null)
+    read -rp "$(msg lbl_port) [$oldPort]: " newPort
     [ -z "$newPort" ] && return
     if ! [[ "$newPort" =~ ^[0-9]+$ ]] || [ "$newPort" -lt 1024 ] || [ "$newPort" -gt 65535 ]; then
         echo "${red}$(msg invalid_port)${reset}"; return 1
     fi
+    # UFW: открываем новый, закрываем старый
     ufw allow "$newPort"/tcp comment 'Xray Reality' 2>/dev/null || true
     ufw delete allow "$oldPort"/tcp 2>/dev/null || true
     jq ".inbounds[0].port = $newPort" \
-        "$realityConfigPath" > "${realityConfigPath}.tmp" && mv "${realityConfigPath}.tmp" "$realityConfigPath"
+        "$realityConfigPath" > "${realityConfigPath}.tmp" \
+        && mv "${realityConfigPath}.tmp" "$realityConfigPath"
     systemctl restart xray-reality
     echo "${green}$(msg reality_port_changed) $newPort${reset}"
 }
@@ -338,7 +405,15 @@ modifyRealityDest() {
     local newHost="${newDest%%:*}"
     jq ".inbounds[0].streamSettings.realitySettings.dest = \"$newDest\" |
         .inbounds[0].streamSettings.realitySettings.serverNames = [\"$newHost\"]" \
-        "$realityConfigPath" > "${realityConfigPath}.tmp" && mv "${realityConfigPath}.tmp" "$realityConfigPath"
+        "$realityConfigPath" > "${realityConfigPath}.tmp" \
+        && mv "${realityConfigPath}.tmp" "$realityConfigPath"
+
+    # Обновляем SNI в HAProxy
+    _haproxyUpdateReality "$newHost"
+
+    # Обновляем vwn.conf
+    vwn_conf_set REALITY_DEST "$newDest"
+
     systemctl restart xray-reality
     echo "${green}$(msg reality_dest_changed) $newDest${reset}"
 }
@@ -347,11 +422,22 @@ removeReality() {
     echo -e "${red}$(msg reality_remove_confirm) $(msg yes_no)${reset}"
     read -r confirm
     if [[ "$confirm" == "y" ]]; then
+        # Закрываем UFW порт Reality
+        local old_port
+        old_port=$(jq -r '.inbounds[0].port // empty' "$realityConfigPath" 2>/dev/null)
+        [ -n "$old_port" ] && ufw delete allow "$old_port"/tcp 2>/dev/null || true
+
         systemctl stop xray-reality 2>/dev/null || true
         systemctl disable xray-reality 2>/dev/null || true
         rm -f /etc/systemd/system/xray-reality.service
         rm -f "$realityConfigPath" /usr/local/etc/xray/reality_client.txt
         systemctl daemon-reload
+
+        # Убираем из vwn.conf
+        vwn_conf_del REALITY_PUBKEY
+        vwn_conf_del REALITY_DEST
+        vwn_conf_del REALITY_SHORT_ID
+
         echo "${green}$(msg removed)${reset}"
     fi
 }
@@ -364,11 +450,14 @@ manageReality() {
         s_reality=$(getServiceStatus xray-reality)
         s_warp=$(getWarpStatus)
         s_port=$(jq -r '.inbounds[0].port // "—"' "$realityConfigPath" 2>/dev/null)
-        s_dest=$(jq -r '.inbounds[0].streamSettings.realitySettings.dest // "—"' "$realityConfigPath" 2>/dev/null)
+        s_dest=$(jq -r '.inbounds[0].streamSettings.realitySettings.dest // "—"' \
+            "$realityConfigPath" 2>/dev/null)
         echo -e "${cyan}================================================================${reset}"
         printf "   ${red}VLESS + Reality${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
-        echo -e "  $(printf "%-6s" "Xray:")$s_reality,  $(msg lbl_port): ${green}$s_port${reset},  $(msg lbl_dest): ${green}$s_dest${reset}"
+        echo -e "  $(printf "%-6s" "Xray:")$s_reality"
+        echo -e "  $(printf "%-6s" "Port:")${green}$s_port${reset}"
+        echo -e "  $(printf "%-6s" "Dest:")${green}$s_dest${reset}"
         echo -e "  $(printf "%-6s" "WARP:")$s_warp"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
         echo ""
@@ -392,9 +481,7 @@ manageReality() {
             5) modifyRealityPort ;;
             6) modifyRealityDest ;;
             7) systemctl restart xray-reality && echo "${green}$(msg restarted)${reset}" ;;
-            8) journalctl -u xray-reality -n 50 --no-pager
-               echo "---"
-               tail -n 30 /var/log/xray/reality-error.log 2>/dev/null || true ;;
+            8) view_log "/var/log/xray/reality-error.log" "xray-reality" ;;
             9) removeReality ;;
             0) break ;;
         esac
