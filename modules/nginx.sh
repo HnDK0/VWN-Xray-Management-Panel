@@ -147,7 +147,6 @@ global
     tune.ssl.default-dh-param 2048
 
 defaults
-    option http-server-close
     timeout connect 5s
     timeout client  50s
     timeout server  50s
@@ -163,6 +162,9 @@ frontend https
     # Восстановление реального IP из Cloudflare
     http-request set-header X-Real-IP %[req.hdr(CF-Connecting-IP)] if { req.hdr(CF-Connecting-IP) -m found }
     http-request set-header X-Real-IP %[src] unless { req.hdr(CF-Connecting-IP) -m found }
+
+    # Сбрасываем Connection заголовок — xhttp сам управляет keep-alive
+    http-request del-header Connection
 
     # Роутинг по path
     # Важен порядок: /sub/, gRPC и XHTTP — до WS (ws path является префиксом xhttp/grpc путей)
@@ -185,18 +187,24 @@ backend xray_ws
 
 backend xray_xhttp
     mode http
-    server xray 127.0.0.1:${xhttpPort} check proto h2
+    # HTTP/1.1 к xray (без proto h2) — xhttp mode=auto сам договорится
+    server xray 127.0.0.1:${xhttpPort} check
 
 backend xray_grpc
     mode http
+    # gRPC требует HTTP/2 и долгих соединений
+    timeout server 1h
+    timeout tunnel 1h
     server xray 127.0.0.1:${grpcPort} check proto h2
 
 backend nginx_sub
     mode http
+    option http-server-close
     server nginx 127.0.0.1:8080 check
 
 backend nginx_stub
     mode http
+    option http-server-close
     server nginx 127.0.0.1:8080 check
 EOF
 

@@ -129,10 +129,7 @@ writeXrayConfig() {
             "security": "none",
             "xhttpSettings": {
                 "path": "$xhttpPath",
-                "mode": "auto",
-                "extra": {
-                    "xPaddingBytes": "400-800"
-                }
+                "mode": "auto"
             },
             "sockopt": {
                 "tcpKeepAliveIdle": 100,
