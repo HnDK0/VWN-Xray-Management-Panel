@@ -39,8 +39,21 @@ writeRealityConfig() {
     keys=$("$xray_bin" x25519 2>&1) || {
         echo "${red}$(msg reality_keys_fail): $keys${reset}"; return 1
     }
-    privKey=$(echo "$keys" | tr -d '\r' | awk '/Private key:/{print $3}')
-    pubKey=$(echo "$keys"  | tr -d '\r' | awk '/Public key:/{print $3}')
+
+    # Поддержка двух форматов вывода xray x25519:
+    # Старый: "Private key: ..."  "Public key: ..."
+    # Новый:  "PrivateKey: ..."   "Password: ..."
+    privKey=$(echo "$keys" | tr -d '\r' | awk '/^Private key:/{print $3}')
+    pubKey=$(echo "$keys"  | tr -d '\r' | awk '/^Public key:/{print $3}')
+
+    # Новый формат
+    if [ -z "$privKey" ]; then
+        privKey=$(echo "$keys" | tr -d '\r' | awk '/^PrivateKey:/{print $2}')
+    fi
+    if [ -z "$pubKey" ]; then
+        pubKey=$(echo "$keys" | tr -d '\r' | awk '/^Password:/{print $2}')
+    fi
+
     if [ -z "$privKey" ] || [ -z "$pubKey" ]; then
         echo "${red}$(msg reality_keys_err): $keys${reset}"; return 1
     fi
