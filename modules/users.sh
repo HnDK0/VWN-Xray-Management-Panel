@@ -146,6 +146,65 @@ buildUserSubFile() {
     buildUserHtmlPage "$uuid" "$label" "$token" "$lines" 2>/dev/null || true
 }
 
+# Конвертирует vless:// URL в Clash YAML блок
+_vless_to_clash() {
+    local url="$1"
+    python3 -c "
+import sys, urllib.parse
+url = sys.argv[1]
+try:
+    without_scheme = url[len('vless://'):]
+    at = without_scheme.index('@')
+    uuid = without_scheme[:at]
+    rest = without_scheme[at+1:]
+    hash_pos = rest.find('#')
+    name = urllib.parse.unquote(rest[hash_pos+1:]) if hash_pos >= 0 else ''
+    rest = rest[:hash_pos] if hash_pos >= 0 else rest
+    q = rest.find('?')
+    hostport = rest[:q] if q >= 0 else rest
+    params_str = rest[q+1:] if q >= 0 else ''
+    host, port = hostport.rsplit(':', 1) if ':' in hostport else (hostport, '443')
+    params = dict(urllib.parse.parse_qsl(params_str))
+    net = params.get('type', 'tcp')
+    security = params.get('security', 'none')
+    if net == 'ws':
+        path = urllib.parse.unquote(params.get('path', '/'))
+        sni = params.get('sni', host)
+        ws_host = params.get('host', sni)
+        print(f'- name: \"{name}\"')
+        print(f'  type: vless')
+        print(f'  server: {host}')
+        print(f'  port: {port}')
+        print(f'  uuid: {uuid}')
+        print(f'  tls: true')
+        print(f'  servername: {sni}')
+        print(f'  client-fingerprint: chrome')
+        print(f'  network: ws')
+        print(f'  ws-opts:')
+        print(f'    path: {path}')
+        print(f'    headers:')
+        print(f'      Host: {ws_host}')
+    elif security == 'reality':
+        sni = params.get('sni', '')
+        pbk = params.get('pbk', '')
+        sid = params.get('sid', '')
+        print(f'- name: \"{name}\"')
+        print(f'  type: vless')
+        print(f'  server: {host}')
+        print(f'  port: {port}')
+        print(f'  uuid: {uuid}')
+        print(f'  tls: true')
+        print(f'  servername: {sni}')
+        print(f'  client-fingerprint: chrome')
+        print(f'  reality-opts:')
+        print(f'    public-key: {pbk}')
+        print(f'    short-id: {sid}')
+        print(f'  flow: xtls-rprx-vision')
+except Exception as e:
+    pass
+" "$url" 2>/dev/null
+}
+
 buildUserHtmlPage() {
     local uuid="$1" label="$2" token="$3" lines="$4"
     local domain safe htmlfile sub_url
@@ -160,90 +219,115 @@ buildUserHtmlPage() {
         [ -n "$line" ] && configs+=("$line")
     done <<< "$lines"
 
-    cat > "$htmlfile" << HTMLEOF
+    # Clash YAML — собираем из всех конфигов
+    local clash_yaml=""
+    for cfg in "${configs[@]}"; do
+        local block
+        block=$(_vless_to_clash "$cfg")
+        [ -n "$block" ] && clash_yaml="${clash_yaml}${block}"$'\n\n'
+    done
+    clash_yaml="${clash_yaml%$'\n\n'}"
+
+    cat > "$htmlfile" << 'HTMLEOF'
 <!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>VWN — ${label}</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:monospace;background:#0f0f0f;color:#d0d0d0;padding:16px;max-width:700px;margin:0 auto}
-h1{color:#89b4fa;font-size:15px;margin-bottom:16px;padding-bottom:8px;border-bottom:1px solid #2a2a2a}
+h2{color:#6c7086;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin:20px 0 8px}
 .card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:12px;margin-bottom:10px}
-.proto{display:inline-block;background:#252540;color:#89b4fa;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:700;margin-bottom:8px}
-.proto.ws{background:#253025;color:#a6e3a1}
-.proto.reality{background:#302520;color:#fab387}
-.proto.sub{background:#252540;color:#89dceb}
-.url{font-size:11px;word-break:break-all;color:#cdd6f4;line-height:1.5;margin-bottom:8px;padding:6px;background:#111;border-radius:4px}
+.proto{display:inline-block;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:700;margin-bottom:8px}
+.ws{background:#253025;color:#a6e3a1}
+.reality{background:#302520;color:#fab387}
+.sub{background:#252540;color:#89dceb}
+.clash{background:#2a2040;color:#cba6f7}
+.url{font-size:11px;word-break:break-all;color:#cdd6f4;line-height:1.5;margin-bottom:8px;padding:6px;background:#111;border-radius:4px;white-space:pre-wrap}
 .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .btn{background:#313244;color:#cdd6f4;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:11px}
 .btn:hover{background:#45475a}
-.btn.qr-btn{background:#1e3a5f;color:#89b4fa}
-.btn.qr-btn:hover{background:#264a6f}
+.qr-btn{background:#1e3a5f;color:#89b4fa}
+.qr-btn:hover{background:#264a6f}
 .qr-wrap{display:none;margin-top:10px;text-align:center}
 .qr-wrap.open{display:block}
 .qr-inner{display:inline-block;background:#fff;padding:8px;border-radius:6px}
 </style>
 </head>
 <body>
-<h1>📡 ${label}</h1>
 HTMLEOF
+
+    # Заголовок с именем пользователя
+    echo "<h1 style='color:#89b4fa;font-size:15px;margin-bottom:16px;padding-bottom:8px;border-bottom:1px solid #2a2a2a'>📡 ${label}</h1>" >> "$htmlfile"
 
     local i=0
     for cfg in "${configs[@]}"; do
-        local proto_label="VLESS" proto_class="vless"
-        echo "$cfg" | grep -q "type=ws"                           && proto_label="WS+TLS"  && proto_class="ws"
-        echo "$cfg" | grep -q "type=reality\|security=reality"    && proto_label="Reality" && proto_class="reality"
-        cat >> "$htmlfile" << HTMLEOF
+        local proto_label="VLESS" proto_class=""
+        echo "$cfg" | grep -q "type=ws"            && proto_label="WS+TLS"  && proto_class="ws"
+        echo "$cfg" | grep -q "security=reality"   && proto_label="Reality" && proto_class="reality"
+        cat >> "$htmlfile" << CARDEOF
 <div class="card">
   <span class="proto ${proto_class}">${proto_label}</span>
   <div class="url" id="u${i}">${cfg}</div>
   <div class="actions">
-    <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('u${i}').textContent).then(()=>{this.textContent='✓ Скопировано';setTimeout(()=>this.textContent='📋 Копировать',1500)})">📋 Копировать</button>
-    <button class="btn qr-btn" onclick="toggleQR(${i})">QR-код</button>
+    <button class="btn" onclick="cp('u${i}',this)">📋 Копировать</button>
+    <button class="btn qr-btn" onclick="tqr(${i})">QR-код</button>
   </div>
   <div class="qr-wrap" id="qr${i}"><div class="qr-inner" id="qrc${i}"></div></div>
 </div>
-HTMLEOF
+CARDEOF
         i=$((i+1))
     done
 
-    cat >> "$htmlfile" << HTMLEOF
+    # Clash блок
+    if [ -n "$clash_yaml" ]; then
+        cat >> "$htmlfile" << CLASHEOF
+<h2>Clash Meta / Mihomo</h2>
 <div class="card">
-  <span class="proto sub">Subscription</span>
+  <span class="proto clash">Clash</span>
+  <div class="url" id="uclash">${clash_yaml}</div>
+  <div class="actions">
+    <button class="btn" onclick="cp('uclash',this)">📋 Копировать</button>
+  </div>
+</div>
+CLASHEOF
+    fi
+
+    # Subscription
+    cat >> "$htmlfile" << SUBEOF
+<h2>Subscription URL</h2>
+<div class="card">
+  <span class="proto sub">SUB</span>
   <div class="url" id="usub">${sub_url}</div>
   <div class="actions">
-    <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('usub').textContent).then(()=>{this.textContent='✓ Скопировано';setTimeout(()=>this.textContent='📋 Копировать',1500)})">📋 Копировать</button>
-    <button class="btn qr-btn" onclick="toggleQR('sub')">QR-код</button>
+    <button class="btn" onclick="cp('usub',this)">📋 Копировать</button>
+    <button class="btn qr-btn" onclick="tqr('sub')">QR-код</button>
   </div>
   <div class="qr-wrap" id="qrsub"><div class="qr-inner" id="qrcsub"></div></div>
 </div>
-
 <p style="margin-top:16px;font-size:10px;color:#45475a;text-align:center">v2rayNG / Hiddify: + → Subscription group → URL</p>
-
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script>
-var _qrCache = {};
-function toggleQR(id) {
-  var wrap = document.getElementById('qr' + id);
-  var isOpen = wrap.classList.toggle('open');
-  if (isOpen && !_qrCache[id]) {
-    var urlEl = document.getElementById(id === 'sub' ? 'usub' : 'u' + id);
-    new QRCode(document.getElementById('qrc' + id), {
-      text: urlEl.textContent.trim(),
-      width: 200, height: 200,
-      correctLevel: QRCode.CorrectLevel.M
-    });
-    _qrCache[id] = true;
+var Q={};
+function cp(id,btn){
+  navigator.clipboard.writeText(document.getElementById(id).textContent.trim()).then(function(){
+    var o=btn.textContent;btn.textContent='✓ Скопировано';
+    setTimeout(function(){btn.textContent=o;},1500);
+  });
+}
+function tqr(id){
+  var w=document.getElementById('qr'+id);
+  var open=w.classList.toggle('open');
+  if(open&&!Q[id]){
+    var el=document.getElementById(id==='sub'?'usub':'u'+id);
+    new QRCode(document.getElementById('qrc'+id),{text:el.textContent.trim(),width:200,height:200,correctLevel:QRCode.CorrectLevel.M});
+    Q[id]=true;
   }
 }
-</script>
-</body>
-</html>
-HTMLEOF
+</script></body></html>
+SUBEOF
     chmod 644 "$htmlfile"
 }
 
@@ -369,88 +453,35 @@ showUserQR() {
     label=$(_labelByLine "$num")
     token=$(_tokenByLine "$num")
 
-    command -v qrencode &>/dev/null || installPackage "qrencode"
-
     local domain
     domain=$(_getDomain)
 
-    # WebSocket
-    if [ -f "$configPath" ] && [ -n "$domain" ]; then
-        local wp wep url_ws server_ip flag name encoded_name connect_host
-        wp=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // .inbounds[0].streamSettings.xhttpSettings.path // ""' "$configPath" 2>/dev/null)
-        wep=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$wp" 2>/dev/null || echo "$wp")
-        server_ip=$(getServerIP)
-        flag=$(_getCountryFlag "$server_ip")
-        connect_host=$(getConnectHost 2>/dev/null || echo "$domain")
-        [ -z "$connect_host" ] && connect_host="$domain"
-        name="${flag} VL-WS-CDN | ${label} ${flag}"
-        encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$name" 2>/dev/null || echo "$name")
-        url_ws="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=ws&host=${domain}&path=${wep}#${encoded_name}"
-
-        echo -e "${cyan}================================================================${reset}"
-        echo -e "   ${name}"
-        echo -e "${cyan}================================================================${reset}\n"
-
-        echo -e "${cyan}[ 1. URI ссылка (v2rayNG / Hiddify / Nekoray) ]${reset}"
-        qrencode -s 1 -m 1 -t ANSIUTF8 "$url_ws" 2>/dev/null || true
-        echo -e "\n${green}${url_ws}${reset}\n"
-
-        echo -e "${cyan}[ 2. Clash Meta / Mihomo ]${reset}"
-        echo -e "${yellow}- name: ${name}
-  type: vless
-  server: ${connect_host}
-  port: 443
-  uuid: ${uuid}
-  tls: true
-  servername: ${domain}
-  client-fingerprint: chrome
-  network: ws
-  ws-opts:
-    path: ${wp}
-    headers:
-      Host: ${domain}${reset}\n"
-
-        echo -e "${cyan}================================================================${reset}"
-    fi
-
-    # Reality
-    if [ -f "$realityConfigPath" ]; then
-        local r_uuid r_port r_shortId r_destHost r_pubKey r_serverIP r_flag r_name r_encoded_name url_reality
-        r_uuid=$(jq -r '.inbounds[0].settings.clients[0].id' "$realityConfigPath" 2>/dev/null)
-        r_port=$(jq -r '.inbounds[0].port' "$realityConfigPath" 2>/dev/null)
-        r_shortId=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0]' "$realityConfigPath" 2>/dev/null)
-        r_destHost=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0]' "$realityConfigPath" 2>/dev/null)
-        r_pubKey=$(vwn_conf_get REALITY_PUBKEY 2>/dev/null)
-        [ -z "$r_pubKey" ] && r_pubKey=$(grep "PublicKey:" /usr/local/etc/xray/reality_client.txt 2>/dev/null | awk '{print $NF}')
-        r_serverIP=$(getServerIP)
-        r_flag=$(_getCountryFlag "$r_serverIP")
-        r_name="${r_flag} VL-Reality | ${label} ${r_flag}"
-        r_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$r_name" 2>/dev/null || echo "$r_name")
-        url_reality="vless://${r_uuid}@${r_serverIP}:${r_port}?encryption=none&security=reality&sni=${r_destHost}&fp=chrome&pbk=${r_pubKey}&sid=${r_shortId}&type=tcp&flow=xtls-rprx-vision#${r_encoded_name}"
-
-        echo -e "\n${cyan}=== ${r_name} ===${reset}"
-        qrencode -s 1 -m 1 -t ANSIUTF8 "$url_reality" 2>/dev/null || true
-        echo -e "\n${green}${url_reality}${reset}\n"
-    fi
-
-    # Subscription URL
+    # Пересоздаём файлы подписки (txt + html)
     buildUserSubFile "$uuid" "$label" "$token" 2>/dev/null || true
+
     local sub_url safe html_url
     sub_url=$(getSubUrl "$label" "$token")
     safe=$(_safeLabel "$label")
     html_url="https://${domain}/sub/${safe}_${token}.html"
+
+    command -v qrencode &>/dev/null || installPackage "qrencode"
+
+    echo -e "${cyan}================================================================${reset}"
+    echo -e "   $(_getCachedFlag) ${label}"
+    echo -e "${cyan}================================================================${reset}"
+    echo ""
     if [ -n "$sub_url" ]; then
-        echo -e "${cyan}[ Subscription URL — все протоколы сразу ]${reset}"
+        echo -e "${cyan}[ Subscription URL ]${reset}"
         qrencode -s 1 -m 1 -t ANSIUTF8 "$sub_url" 2>/dev/null || true
         echo -e "\n${green}${sub_url}${reset}"
         echo -e "${yellow}v2rayNG: + → Subscription group → URL${reset}"
-        echo ""
-        echo -e "${cyan}[ $(msg users_html_hint) ]${reset}"
-        echo -e "${green}${html_url}${reset}"
     fi
-
-    echo -e "\n${cyan}================================================================${reset}"
+    echo ""
+    echo -e "${cyan}[ $(msg users_html_hint) ]${reset}"
+    echo -e "${green}${html_url}${reset}"
+    echo -e "${cyan}================================================================${reset}"
 }
+
 
 # ── Меню ──────────────────────────────────────────────────────────
 

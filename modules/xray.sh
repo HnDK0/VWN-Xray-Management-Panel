@@ -238,53 +238,56 @@ JSONEOF
 }
 
 getQrCode() {
-    command -v qrencode &>/dev/null || installPackage "qrencode"
-    local has_ws=false has_reality=false
+    # Всё показывается через HTML страницу подписки.
+    # В терминале — только ссылка подписки и HTML.
+    # Используется при установке (первый показ QR).
+    _initUsersFile 2>/dev/null || true
 
-    [ -f "$configPath" ] && has_ws=true
-    [ -f "$realityConfigPath" ] && has_reality=true
+    local domain uuid label token sub_url html_url safe
+    domain=$(get_domain 2>/dev/null || getServerIP)
 
-    if ! $has_ws && ! $has_reality; then
-        echo "${red}$(msg xray_not_installed)${reset}"
-        return 1
+    # Берём первого пользователя
+    if [ -f "$USERS_FILE" ] && [ -s "$USERS_FILE" ]; then
+        uuid=$(cut -d'|' -f1 "$USERS_FILE" | head -1)
+        label=$(cut -d'|' -f2 "$USERS_FILE" | head -1)
+        token=$(cut -d'|' -f3 "$USERS_FILE" | head -1)
     fi
 
-    if $has_ws; then
+    if [ -z "$uuid" ]; then
         getConfigInfo || return 1
-        local url name
-        name=$(_getConfigName "WS" "default")
-        url=$(getShareUrl "default")
-
-        echo -e "${cyan}================================================================${reset}"
-        echo -e "   WebSocket+TLS — форматы подключения"
-        echo -e "${cyan}================================================================${reset}\n"
-
-        echo -e "${cyan}[ 1. URI ссылка (v2rayNG / Hiddify / Nekoray) ]${reset}"
-        qrencode -s 1 -m 1 -t ANSIUTF8 "$url" 2>/dev/null || true
-        echo -e "\n${green}${url}${reset}\n"
-
-        echo -e "${cyan}[ 2. Clash Meta / Mihomo ]${reset}"
-        echo -e "${yellow}- name: ${name}
-  type: vless
-  server: ${xray_userDomain}
-  port: 443
-  uuid: ${xray_uuid}
-  tls: true
-  servername: ${xray_userDomain}
-  client-fingerprint: chrome
-  network: ws
-  ws-opts:
-    path: ${xray_path}
-    headers:
-      Host: ${xray_userDomain}${reset}\n"
-
-        echo -e "${cyan}================================================================${reset}"
+        uuid="$xray_uuid"
+        label="default"
+        token=""
     fi
 
-    if $has_reality; then
-        echo -e "\n${cyan}=== Vless Reality ===${reset}"
-        showRealityQR
+    safe=$(echo "$label" | tr -cd 'A-Za-z0-9_-')
+
+    if [ -n "$token" ]; then
+        sub_url="https://${domain}/sub/${safe}_${token}.txt"
+        html_url="https://${domain}/sub/${safe}_${token}.html"
     fi
+
+    command -v qrencode &>/dev/null || installPackage "qrencode"
+
+    echo -e "${cyan}================================================================${reset}"
+    echo -e "   VWN — готово к подключению"
+    echo -e "${cyan}================================================================${reset}"
+    echo ""
+
+    if [ -n "$sub_url" ]; then
+        echo -e "${cyan}[ Subscription URL ]${reset}"
+        qrencode -s 1 -m 1 -t ANSIUTF8 "$sub_url" 2>/dev/null || true
+        echo -e "\n${green}${sub_url}${reset}"
+        echo -e "${yellow}v2rayNG: + → Subscription group → URL${reset}"
+        echo ""
+    fi
+
+    if [ -n "$html_url" ]; then
+        echo -e "${cyan}[ HTML — все конфиги, QR, Clash ]${reset}"
+        echo -e "${green}${html_url}${reset}"
+    fi
+
+    echo -e "${cyan}================================================================${reset}"
 }
 
 # Валидация домена: только hostname без протокола и пути
