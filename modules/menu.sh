@@ -120,6 +120,11 @@ installWsTls() {
     echo -e "\n${green}---${reset}"
     run_task "Создание конфига Xray"   "writeXrayConfig '$xrayPort' '$wsPath' '$userDomain'"
     run_task "Создание конфига Nginx"  "writeNginxConfig '$xrayPort' '$userDomain' '$proxyUrl' '$wsPath'"
+
+    # Запускаем nginx ДО выпуска SSL — acme.sh делает reload по окончании
+    systemctl enable --now nginx
+    systemctl start nginx 2>/dev/null || true
+
     run_task "Настройка WARP"          configWarp
     run_task "Выпуск SSL"              "userDomain='$userDomain' configCert"
     run_task "Применение правил WARP"  applyWarpDomains
@@ -128,7 +133,7 @@ installWsTls() {
     run_task "Автообновление SSL"      setupSslCron
     run_task "WARP Watchdog"           setupWarpWatchdog
 
-    systemctl enable --now xray nginx
+    systemctl enable --now xray
     systemctl restart xray nginx
 
     echo -e "\n${green}$(msg install_complete)${reset}"
