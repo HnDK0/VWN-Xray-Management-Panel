@@ -1,26 +1,35 @@
 #!/bin/bash
 # =================================================================
-# nginx.sh — Nginx (заглушка), HAProxy (TLS+роутинг), SSL, CF Guard
+# nginx.sh — Nginx: TLS termination + gRPC/XHTTP/подписки/заглушка
+# Архитектура:
+#   Client:443 → Nginx (TLS, http2 on)
+#     ├── /$grpcService   → grpc_pass → xray grpc-inbound (plain)
+#     ├── /$xhttpPath/    → grpc_pass → xray xhttp-inbound (stream-one)
+#     ├── /sub/           → файлы подписок
+#     └── /               → proxy_pass → заглушка
+#   Client:$realityPort   → xray-reality (xray держит TLS сам)
 # =================================================================
-
-# ============================================================
-# Nginx — только заглушка на 127.0.0.1:8080
-# ============================================================
 
 writeNginxConfig() {
     local domain="$1"
     local proxyUrl="$2"
+    local xhttpPort="$3"
+    local grpcPort="$4"
+    local xhttpPath="$5"    # без leading slash
+    local grpcService="$6"  # без leading slash
 
     local proxy_host
     proxy_host=$(echo "$proxyUrl" | sed 's|https://||;s|http://||;s|/.*||')
+
+    local certFile="/etc/nginx/cert/cert.pem"
+    local keyFile="/etc/nginx/cert/cert.key"
 
     local server_ip country_code
     server_ip=$(getServerIP 2>/dev/null || curl -s --connect-timeout 5 ifconfig.me)
     country_code=$(_getCountryCode "$server_ip")
 
-    mkdir -p /usr/local/etc/xray/sub
+    mkdir -p /usr/local/etc/xray/sub /etc/nginx/cert
 
-    # Основной nginx.conf
     cat > /etc/nginx/nginx.conf << 'NGINXMAIN'
 user www-data;
 worker_processes auto;
@@ -40,19 +49,14 @@ http {
     sendfile on;
     tcp_nopush on;
     tcp_nodelay on;
-    keepalive_timeout 75s;
-    keepalive_requests 10000;
     server_tokens off;
     gzip on;
     gzip_vary on;
-    gzip_proxied any;
-    gzip_comp_level 6;
-    gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss;
+    gzip_types text/plain text/css application/json application/javascript text/xml;
     include /etc/nginx/conf.d/*.conf;
 }
 NGINXMAIN
 
-    # sub_map и server конфиг в одном файле
     cat > "$nginxPath" << NGINXEOF
 map \$uri \$sub_label {
     ~^/sub/(?<label>[A-Za-z0-9_-]+)_[A-Za-z0-9]+\\.txt\$  "${country_code} VLESS | \$label";
@@ -60,21 +64,65 @@ map \$uri \$sub_label {
 }
 
 server {
-    listen 127.0.0.1:8080;
+    listen 80;
+    listen [::]:80;
+    server_name $domain;
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl so_keepalive=on;
+    listen [::]:443 ssl so_keepalive=on;
+    http2 on;
     server_name $domain;
 
-    # root указывает на родительскую папку — файлы лежат в sub/
+    ssl_certificate     $certFile;
+    ssl_certificate_key $keyFile;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    client_header_timeout 1w;
+    keepalive_timeout     30m;
+
+    # ── gRPC inbound ───────────────────────────────────────────────
+    location /$grpcService {
+        if (\$content_type !~ "^application/grpc") {
+            return 404;
+        }
+        client_max_body_size    0;
+        client_body_buffer_size 512k;
+        client_body_timeout     1w;
+        grpc_read_timeout       1w;
+        grpc_send_timeout       1w;
+        grpc_set_header         X-Real-IP \$remote_addr;
+        grpc_set_header         Host \$host;
+        grpc_pass               grpc://127.0.0.1:$grpcPort;
+    }
+
+    # ── XHTTP inbound (stream-one, trailing slash обязателен) ───────
+    location /${xhttpPath}/ {
+        client_max_body_size 0;
+        client_body_timeout  1w;
+        grpc_read_timeout    315s;
+        grpc_send_timeout    5m;
+        grpc_set_header      X-Real-IP \$remote_addr;
+        grpc_set_header      Host \$host;
+        grpc_pass            grpc://127.0.0.1:$xhttpPort;
+    }
+
+    # ── Подписки ───────────────────────────────────────────────────
     root /usr/local/etc/xray;
 
-    # ── HTML подписки ──────────────────────────────────────────────
-    # Используем root+try_files вместо alias+regex (alias ломает путь)
     location ~ ^/sub/[A-Za-z0-9_-]+_[A-Za-z0-9]+\\.html\$ {
         types { text/html html; }
         add_header Cache-Control 'no-cache, no-store, must-revalidate';
         try_files \$uri =404;
     }
 
-    # ── TXT подписки ───────────────────────────────────────────────
     location ~ ^/sub/[A-Za-z0-9_-]+_[A-Za-z0-9]+\\.txt\$ {
         types { }
         default_type text/plain;
@@ -86,13 +134,13 @@ server {
 
     # ── Заглушка ───────────────────────────────────────────────────
     location / {
-        proxy_pass $proxyUrl;
-        proxy_http_version 1.1;
-        proxy_set_header Host $proxy_host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_pass            $proxyUrl;
+        proxy_http_version    1.1;
+        proxy_set_header      Host $proxy_host;
+        proxy_set_header      X-Real-IP \$remote_addr;
+        proxy_set_header      X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_ssl_server_name on;
-        proxy_read_timeout 60s;
+        proxy_read_timeout    60s;
     }
 
     access_log off;
@@ -105,124 +153,11 @@ _getCountryCode() {
     local ip="$1"
     local code
     code=$(curl -s --connect-timeout 5 "http://ip-api.com/line/${ip}?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
-    if [[ "$code" =~ ^[A-Z]{2}$ ]]; then
-        echo "[$code]"
-    else
-        echo "[??]"
-    fi
+    [[ "$code" =~ ^[A-Z]{2}$ ]] && echo "[$code]" || echo "[??]"
 }
 
 # ============================================================
-# HAProxy — TLS-терминатор + SNI роутинг для Reality
-# ============================================================
-
-writeHaproxyConfig() {
-    local xrayPort="$1"    # WS inbound port (напр. 16500)
-    local domain="$2"      # Домен для TLS (ваш домен)
-    local wsPath="$3"      # /abc123
-    local realityPort="${4:-8443}"  # публичный порт Reality (отдельный)
-
-    local xhttpPort grpcPort xhttpPath grpcService
-    xhttpPort=$(( xrayPort + 1 ))
-    grpcPort=$(( xrayPort + 2 ))
-    xhttpPath="${wsPath}x"
-    grpcService="${wsPath#/}g"
-
-    mkdir -p /etc/haproxy/conf.d
-
-    cat > "$haproxyPath" << EOF
-# =================================================================
-# HAProxy — VWN TLS-терминатор
-# Порт 443: WS + XHTTP + gRPC + заглушка (TLS termination)
-# Порт ${realityPort}: Reality (отдельный, xray-reality держит TLS сам)
-# Автогенерация: $(date '+%Y-%m-%d %H:%M:%S')
-# =================================================================
-
-global
-    log /dev/log local0
-    log /dev/log local1 notice
-    maxconn 50000
-    ssl-default-bind-options ssl-min-ver TLSv1.2
-    ssl-default-bind-ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384
-    tune.ssl.default-dh-param 2048
-
-defaults
-    timeout connect 5s
-    timeout client  50s
-    timeout server  50s
-    timeout tunnel  1h
-    timeout client-fin 1s
-    timeout server-fin 1s
-
-# ── Порт 443: TLS termination → xray inbound'ы + nginx заглушка ───
-frontend https
-    bind :::443 v4v6 ssl crt ${haproxyCert} alpn h2,http/1.1
-    mode http
-
-    # Восстановление реального IP из Cloudflare
-    http-request set-header X-Real-IP %[req.hdr(CF-Connecting-IP)] if { req.hdr(CF-Connecting-IP) -m found }
-    http-request set-header X-Real-IP %[src] unless { req.hdr(CF-Connecting-IP) -m found }
-
-    # Сбрасываем Connection заголовок — xhttp сам управляет keep-alive
-    http-request del-header Connection
-
-    # Роутинг по path
-    # Важен порядок: /sub/, gRPC и XHTTP — до WS (ws path является префиксом xhttp/grpc путей)
-    acl is_sub   path_beg /sub/
-    acl is_grpc  path_beg /${grpcService}
-    acl is_xhttp path_beg ${xhttpPath}
-    acl is_ws    path_beg ${wsPath}
-
-    use_backend nginx_sub  if is_sub
-    use_backend xray_grpc  if is_grpc
-    use_backend xray_xhttp if is_xhttp
-    use_backend xray_ws    if is_ws
-    default_backend nginx_stub
-
-# ── Backends ───────────────────────────────────────────────────────
-
-backend xray_ws
-    mode http
-    server xray 127.0.0.1:${xrayPort} check
-
-backend xray_xhttp
-    mode http
-    # HTTP/1.1 к xray (без proto h2) — xhttp mode=auto сам договорится
-    server xray 127.0.0.1:${xhttpPort} check
-
-backend xray_grpc
-    mode http
-    # gRPC требует HTTP/2 и долгих соединений
-    timeout server 1h
-    timeout tunnel 1h
-    server xray 127.0.0.1:${grpcPort} check proto h2
-
-backend nginx_sub
-    mode http
-    option http-server-close
-    server nginx 127.0.0.1:8080 check
-
-backend nginx_stub
-    mode http
-    option http-server-close
-    server nginx 127.0.0.1:8080 check
-EOF
-
-    echo "${green}$(msg haproxy_config_ok)${reset}"
-}
-
-# Обновить Reality-секцию в HAProxy (не нужна — Reality на отдельном порту)
-# Функция оставлена для совместимости, ничего не делает
-_haproxyUpdateReality() {
-    local realityDest="$1"
-    # Reality теперь на отдельном порту, HAProxy не управляет им
-    # UFW правило для Reality порта обновляется в reality.sh
-    return 0
-}
-
-
-# ============================================================
-# SSL сертификаты (acme.sh)
+# SSL сертификаты (acme.sh) — сертификат в /etc/nginx/cert/
 # ============================================================
 
 openPort80() {
@@ -233,7 +168,7 @@ openPort80() {
 closePort80() {
     ufw status | grep -q inactive && return
     ufw status numbered | grep 'ACME temp' | awk -F"[][]" '{print $2}' | sort -rn | while read -r n; do
-        echo "y" | ufw delete "$n"
+        echo "y" | ufw delete "$n" &>/dev/null
     done
 }
 
@@ -253,10 +188,7 @@ configCert() {
     if [ ! -f ~/.acme.sh/acme.sh ]; then
         curl -fsSL https://get.acme.sh | sh -s email="acme@${userDomain}"
     fi
-
-    if [ ! -f ~/.acme.sh/acme.sh ]; then
-        echo "${red}$(msg acme_install_fail)${reset}"; return 1
-    fi
+    [ ! -f ~/.acme.sh/acme.sh ] && { echo "${red}$(msg acme_install_fail)${reset}"; return 1; }
 
     ~/.acme.sh/acme.sh --upgrade --auto-upgrade
     ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
@@ -274,49 +206,32 @@ configCert() {
     else
         openPort80
         ~/.acme.sh/acme.sh --issue --standalone -d "$userDomain" \
-            --pre-hook "/usr/local/bin/vwn open-80" \
+            --pre-hook  "/usr/local/bin/vwn open-80" \
             --post-hook "/usr/local/bin/vwn close-80" \
             --force
         closePort80
     fi
 
-    # Устанавливаем сертификат в HAProxy формате
-    # HAProxy нужен один файл: fullchain + key
-    mkdir -p "$haproxyCertDir"
+    mkdir -p /etc/nginx/cert
     ~/.acme.sh/acme.sh --install-cert -d "$userDomain" \
-        --fullchain-file "${haproxyCertDir}/cert.pem" \
-        --key-file       "${haproxyCertDir}/cert.key" \
-        --reloadcmd      "cat ${haproxyCertDir}/cert.pem ${haproxyCertDir}/cert.key > ${haproxyCert} && chmod 600 ${haproxyCert} && systemctl reload haproxy"
+        --fullchain-file /etc/nginx/cert/cert.pem \
+        --key-file       /etc/nginx/cert/cert.key \
+        --reloadcmd      "systemctl reload nginx"
 
-    # Собираем server.pem сразу после установки
-    _buildHaproxyCert
-    chmod 700 "$haproxyCertDir"
-    chmod 600 "${haproxyCertDir}/cert.key" "${haproxyCert}"
-
+    chmod 700 /etc/nginx/cert
+    chmod 600 /etc/nginx/cert/cert.key
     echo "${green}$(msg ssl_success) $userDomain${reset}"
 }
 
-# Собирает server.pem из fullchain + key (нужен HAProxy)
-_buildHaproxyCert() {
-    if [ -f "${haproxyCertDir}/cert.pem" ] && [ -f "${haproxyCertDir}/cert.key" ]; then
-        cat "${haproxyCertDir}/cert.pem" "${haproxyCertDir}/cert.key" > "$haproxyCert"
-        chmod 600 "$haproxyCert"
-    fi
-}
-
 # ============================================================
-# CF Guard — через HAProxy ACL (только Cloudflare IP)
+# CF Guard — nginx geo блок (только Cloudflare IP)
 # ============================================================
 
-# Файл с CF IP для HAProxy
-CF_GUARD_FILE="/etc/haproxy/conf.d/cf_guard.cfg"
+CF_GUARD_FILE="/etc/nginx/conf.d/cf_guard.conf"
 
 setupRealIpRestore() {
-    # В HAProxy real IP восстанавливается через http-request set-header
-    # который уже прописан в writeHaproxyConfig.
-    # Эта функция обновляет список CF IP в отдельном файле для CF Guard.
     echo -e "${cyan}$(msg cf_ips_setup)${reset}"
-    mkdir -p /etc/haproxy/conf.d
+    mkdir -p /etc/nginx/conf.d
 
     local tmp
     tmp=$(mktemp) || return 1
@@ -328,15 +243,17 @@ setupRealIpRestore() {
         result=$(curl -fsSL --connect-timeout 10 "https://www.cloudflare.com/ips-$t" 2>/dev/null) || continue
         while IFS= read -r ip; do
             [ -z "$ip" ] && continue
-            echo "$ip" >> "$tmp"
+            echo "set_real_ip_from $ip;" >> "$tmp"
             ok=1
         done < <(echo "$result" | grep -E '^[0-9a-fA-F:.]+(/[0-9]+)?$')
     done
 
     [ "$ok" -eq 0 ] && { echo "${red}$(msg cf_ips_fail)${reset}"; return 1; }
+    echo "real_ip_header CF-Connecting-IP;" >> "$tmp"
+    echo "real_ip_recursive on;" >> "$tmp"
 
-    # Сохраняем список IP для использования в CF Guard
-    mv -f "$tmp" /etc/haproxy/cf_ips.txt
+    mv -f "$tmp" /etc/nginx/conf.d/real_ip.conf
+    nginx -t &>/dev/null && systemctl reload nginx
     echo "${green}$(msg cf_ips_ok)${reset}"
 }
 
@@ -344,55 +261,39 @@ toggleCfGuard() {
     if [ -f "$CF_GUARD_FILE" ]; then
         echo -e "${yellow}$(msg cfguard_disable_confirm) $(msg yes_no)${reset}"
         read -r confirm
-        if [[ "$confirm" == "y" ]]; then
-            rm -f "$CF_GUARD_FILE"
-            # Убираем ACL правило из haproxy.cfg
-            if [ -f "$haproxyPath" ]; then
-                sed -i '/# CF Guard: блокируем не-Cloudflare IP/d' "$haproxyPath"
-                sed -i '/acl cf_guard src -f \/etc\/haproxy\/cf_ips\.txt/d' "$haproxyPath"
-                sed -i '/http-request deny if !cf_guard/d' "$haproxyPath"
-            fi
-            haproxy -c -f "$haproxyPath" &>/dev/null && systemctl reload haproxy
-            echo "${green}$(msg cfguard_disabled)${reset}"
-        fi
+        [[ "$confirm" == "y" ]] || return
+        rm -f "$CF_GUARD_FILE"
+        nginx -t &>/dev/null && systemctl reload nginx
+        echo "${green}$(msg cfguard_disabled)${reset}"
     else
-        # Обновляем список IP и создаём ACL файл
         setupRealIpRestore || return 1
 
-        if [ ! -f /etc/haproxy/cf_ips.txt ]; then
-            echo "${red}$(msg cf_ips_fail)${reset}"; return 1
-        fi
+        local cf_ips_v4 cf_ips_v6
+        cf_ips_v4=$(curl -fsSL --connect-timeout 10 https://www.cloudflare.com/ips-v4 2>/dev/null)
+        cf_ips_v6=$(curl -fsSL --connect-timeout 10 https://www.cloudflare.com/ips-v6 2>/dev/null)
+        [ -z "$cf_ips_v4" ] && { echo "${red}$(msg cf_ips_fail)${reset}"; return 1; }
 
-        # Генерируем HAProxy ACL конфиг для CF Guard
-        # Встраивается через include в основной конфиг
         {
             echo "# CF Guard — allow only Cloudflare IPs"
             echo "# Auto-generated: $(date '+%Y-%m-%d %H:%M:%S')"
+            echo "geo \$cloudflare_ip {"
+            echo "    default 0;"
+            while IFS= read -r ip; do [ -n "$ip" ] && echo "    $ip 1;"; done <<< "$cf_ips_v4"
+            while IFS= read -r ip; do [ -n "$ip" ] && echo "    $ip 1;"; done <<< "$cf_ips_v6"
+            echo "}"
         } > "$CF_GUARD_FILE"
 
-        # Добавляем правило в frontend https если его нет
-        if [ -f "$haproxyPath" ] && ! grep -q "cf_guard" "$haproxyPath"; then
-            # Вставляем после строки bind :::443
-            local cf_rule="    # CF Guard: блокируем не-Cloudflare IP\n    acl cf_guard src -f /etc/haproxy/cf_ips.txt\n    http-request deny if !cf_guard"
-            sed -i "/bind :::443/a\\${cf_rule}" "$haproxyPath"
-        fi
-
-        haproxy -c -f "$haproxyPath" &>/dev/null \
-            && { systemctl reload haproxy; echo "${green}$(msg cfguard_enabled)${reset}"; } \
-            || { echo "${red}$(msg nginx_syntax_err)${reset}"; return 1; }
+        nginx -t &>/dev/null \
+            && { systemctl reload nginx; echo "${green}$(msg cfguard_enabled)${reset}"; } \
+            || { rm -f "$CF_GUARD_FILE"; echo "${red}$(msg nginx_syntax_err)${reset}"; return 1; }
     fi
 }
 
-# ============================================================
-# applyNginxSub — nginx конфиг теперь статический,
-# /sub/ location прописан в writeNginxConfig изначально.
-# Функция оставлена для совместимости, делает только reload.
-# ============================================================
+getCfGuardStatus() {
+    [ -f "$CF_GUARD_FILE" ] && echo "${green}ON${reset}" || echo "${red}OFF${reset}"
+}
 
 applyNginxSub() {
-    # sub_map теперь встроен в writeNginxConfig — отдельный файл не нужен.
-    # Просто проверяем и перезапускаем nginx.
     [ ! -f "$nginxPath" ] && return 1
     nginx -t &>/dev/null && systemctl reload nginx || true
 }
-

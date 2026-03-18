@@ -26,12 +26,13 @@ psiphonConfigFile='/usr/local/etc/xray/psiphon.json'
 psiphonBin='/usr/local/bin/psiphon-tunnel-core'
 torDomainsFile='/usr/local/etc/xray/tor_domains.txt'
 
-# HAProxy пути (вариант B — HAProxy как TLS-терминатор)
-haproxyPath='/etc/haproxy/haproxy.cfg'
-haproxyCertDir='/etc/haproxy/cert'
-haproxyCert='/etc/haproxy/cert/server.pem'
+# HAProxy убран — nginx держит TLS напрямую
+# Путь к сертификату
+nginxCertDir='/etc/nginx/cert'
+nginxCert='/etc/nginx/cert/cert.pem'
+nginxCertKey='/etc/nginx/cert/cert.key'
 
-# nginx остаётся только для заглушки на 127.0.0.1:8080
+# nginx конфиг
 nginxPath='/etc/nginx/conf.d/xray.conf'
 
 USERS_FILE="/usr/local/etc/xray/users.conf"
@@ -277,18 +278,13 @@ getWebJailStatus() {
     fi
 }
 
-# CF Guard теперь реализован через HAProxy ACL-файл
 getCfGuardStatus() {
-    [ -f /etc/haproxy/conf.d/cf_guard.cfg ] \
+    [ -f /etc/nginx/conf.d/cf_guard.conf ] \
         && echo "${green}ON${reset}" || echo "${red}OFF${reset}"
 }
 
 checkCertExpiry() {
-    # Сертификат теперь хранится в HAProxy формате (fullchain+key)
-    # Для проверки срока используем только цепочку
-    local cert_file="/etc/haproxy/cert/cert.pem"
-    # Fallback для старых установок
-    [ ! -f "$cert_file" ] && cert_file="/etc/nginx/cert/cert.pem"
+    local cert_file="/etc/nginx/cert/cert.pem"
     if [ -f "$cert_file" ]; then
         local expire_date expire_epoch now_epoch days_left
         expire_date=$(openssl x509 -enddate -noout -in "$cert_file" | cut -d= -f2)

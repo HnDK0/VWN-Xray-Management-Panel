@@ -8,8 +8,8 @@ BACKUP_DIR="/root/vwn-backups"
 _BACKUP_PATHS=(
     /usr/local/etc/xray
     /etc/nginx/conf.d
-    /etc/haproxy
-    /root/.cloudflare_api
+    /etc/nginx/cert
+        /root/.cloudflare_api
     /root/.acme.sh
     /etc/cron.d/acme-renew
     /etc/cron.d/clear-logs
@@ -93,29 +93,20 @@ restoreBackup() {
 
     echo -e "${cyan}$(msg backup_restoring)...${reset}"
 
-    systemctl stop xray xray-reality nginx haproxy 2>/dev/null || true
+    systemctl stop xray xray-reality nginx 2>/dev/null || true
 
     if tar -xzf "$archive" -C / 2>/dev/null; then
         [ -f /root/.acme.sh/acme.sh ] && chmod +x /root/.acme.sh/acme.sh
-        # Права на сертификат HAProxy
-        if [ -f /etc/haproxy/cert/cert.key ]; then
-            chmod 600 /etc/haproxy/cert/cert.key 2>/dev/null || true
-        fi
-        if [ -f /etc/haproxy/cert/server.pem ]; then
-            chmod 600 /etc/haproxy/cert/server.pem 2>/dev/null || true
-        fi
-        # Пересобираем server.pem если нужно
-        if [ -f /etc/haproxy/cert/cert.pem ] && [ -f /etc/haproxy/cert/cert.key ]; then
-            cat /etc/haproxy/cert/cert.pem /etc/haproxy/cert/cert.key \
-                > /etc/haproxy/cert/server.pem
-            chmod 600 /etc/haproxy/cert/server.pem
+        # Права на сертификат nginx
+        if [ -f /etc/nginx/cert/cert.key ]; then
+            chmod 600 /etc/nginx/cert/cert.key 2>/dev/null || true
         fi
         systemctl daemon-reload
-        systemctl restart xray xray-reality nginx haproxy 2>/dev/null || true
+        systemctl restart xray xray-reality nginx 2>/dev/null || true
         echo "${green}$(msg backup_restored)${reset}"
     else
         echo "${red}$(msg backup_restore_fail)${reset}"
-        systemctl start xray xray-reality nginx haproxy 2>/dev/null || true
+        systemctl start xray xray-reality nginx 2>/dev/null || true
         return 1
     fi
 }

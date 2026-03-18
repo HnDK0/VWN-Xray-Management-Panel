@@ -175,3 +175,42 @@ SYSCTL
     sysctl -p /etc/sysctl.d/99-xray.conf &>/dev/null
     echo "${green}$(msg sysctl_ok)${reset}"
 }
+getIPv6Status() {
+    local val
+    val=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)
+    [ "$val" = "1" ] && echo "${red}OFF${reset}" || echo "${green}ON${reset}"
+}
+
+toggleIPv6() {
+    local current
+    current=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)
+
+    if [ "$current" = "1" ]; then
+        # Включаем IPv6
+        sysctl -w net.ipv6.conf.all.disable_ipv6=0 &>/dev/null
+        sysctl -w net.ipv6.conf.default.disable_ipv6=0 &>/dev/null
+        sysctl -w net.ipv6.conf.lo.disable_ipv6=0 &>/dev/null
+        sysctl -w net.ipv6.icmp.echo_ignore_all=0 &>/dev/null
+        # Убираем из постоянного конфига
+        sed -i '/disable_ipv6/d' /etc/sysctl.d/99-xray.conf 2>/dev/null || true
+        sed -i '/ipv6.*icmp.*ignore/d' /etc/sysctl.d/99-xray.conf 2>/dev/null || true
+        echo "${green}$(msg ipv6_enabled)${reset}"
+    else
+        # Отключаем IPv6
+        sysctl -w net.ipv6.conf.all.disable_ipv6=1 &>/dev/null
+        sysctl -w net.ipv6.conf.default.disable_ipv6=1 &>/dev/null
+        sysctl -w net.ipv6.conf.lo.disable_ipv6=1 &>/dev/null
+        sysctl -w net.ipv6.icmp.echo_ignore_all=1 &>/dev/null
+        # Добавляем в постоянный конфиг если нет
+        if ! grep -q "disable_ipv6" /etc/sysctl.d/99-xray.conf 2>/dev/null; then
+            cat >> /etc/sysctl.d/99-xray.conf << 'SYSCTL'
+# IPv6
+net.ipv6.icmp.echo_ignore_all = 1
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
+SYSCTL
+        fi
+        echo "${red}$(msg ipv6_disabled)${reset}"
+    fi
+}

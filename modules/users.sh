@@ -104,32 +104,26 @@ buildUserSubFile() {
     flag=$(_getCachedFlag)
 
     if [ -f "$configPath" ] && [ -n "$domain" ]; then
-        local wp wep name encoded_name connect_host
-        wp=$(get_ws_path)
-        wep=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$wp" 2>/dev/null || echo "$wp")
+        local connect_host
         connect_host=$(getConnectHost 2>/dev/null || echo "$domain")
         [ -z "$connect_host" ] && connect_host="$domain"
 
-        # WS
-        name="${flag} VL-WS-CDN | ${label} ${flag}"
-        encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$name" 2>/dev/null || echo "$name")
-        lines+="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=ws&host=${domain}&path=${wep}#${encoded_name}"$'\n'
-
-        # XHTTP
+        # XHTTP (stream-one, trailing slash обязателен)
         local xhttp_path xep xhttp_name xhttp_encoded_name
         xhttp_path=$(get_xhttp_path)
-        [ -z "$xhttp_path" ] && xhttp_path="${wp}x"
-        xep=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$xhttp_path" 2>/dev/null || echo "$xhttp_path")
-        xhttp_name="${flag} VL-XHTTP-CDN | ${label} ${flag}"
-        xhttp_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$xhttp_name" 2>/dev/null || echo "$xhttp_name")
-        lines+="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=xhttp&host=${domain}&path=${xep}&mode=auto#${xhttp_encoded_name}"$'\n'
+        xep=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" \
+            "/${xhttp_path}/" 2>/dev/null || echo "/${xhttp_path}/")
+        xhttp_name="${flag} VL-XHTTP | ${label} ${flag}"
+        xhttp_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" \
+            "$xhttp_name" 2>/dev/null || echo "$xhttp_name")
+        lines+="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=xhttp&host=${domain}&path=${xep}&mode=stream-one#${xhttp_encoded_name}"$'\n'
 
         # gRPC
         local grpc_service grpc_name grpc_encoded_name
         grpc_service=$(get_grpc_service)
-        [ -z "$grpc_service" ] && grpc_service="${wp#/}g"
-        grpc_name="${flag} VL-gRPC-CDN | ${label} ${flag}"
-        grpc_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$grpc_name" 2>/dev/null || echo "$grpc_name")
+        grpc_name="${flag} VL-gRPC | ${label} ${flag}"
+        grpc_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" \
+            "$grpc_name" 2>/dev/null || echo "$grpc_name")
         lines+="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=grpc&serviceName=${grpc_service}&mode=gun#${grpc_encoded_name}"$'\n'
     fi
 
@@ -378,66 +372,43 @@ showUserQR() {
     local domain
     domain=$(get_domain)
 
-    # WebSocket
+    # XHTTP + gRPC
     if [ -f "$configPath" ] && [ -n "$domain" ]; then
-        local wp wep url_ws server_ip flag name encoded_name connect_host
-        wp=$(get_ws_path)
-        wep=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$wp" 2>/dev/null || echo "$wp")
+        local server_ip flag connect_host
         server_ip=$(getServerIP)
         flag=$(_getCachedFlag)
         connect_host=$(getConnectHost 2>/dev/null || echo "$domain")
         [ -z "$connect_host" ] && connect_host="$domain"
-        name="${flag} VL-WS-CDN | ${label} ${flag}"
-        encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$name" 2>/dev/null || echo "$name")
-        url_ws="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=ws&host=${domain}&path=${wep}#${encoded_name}"
 
         echo -e "${cyan}================================================================${reset}"
-        echo -e "   ${name}"
+        echo -e "   ${flag} VLESS — ${label}"
         echo -e "${cyan}================================================================${reset}\n"
 
-        echo -e "${cyan}[ 1. URI ссылка (v2rayNG / Hiddify / Nekoray) ]${reset}"
-        qrencode -s 1 -m 1 -t ANSIUTF8 "$url_ws" 2>/dev/null || true
-        echo -e "\n${green}${url_ws}${reset}\n"
-
-        echo -e "${cyan}[ 2. Clash Meta / Mihomo ]${reset}"
-        echo -e "${yellow}- name: ${name}
-  type: vless
-  server: ${connect_host}
-  port: 443
-  uuid: ${uuid}
-  tls: true
-  servername: ${domain}
-  client-fingerprint: chrome
-  network: ws
-  ws-opts:
-    path: ${wp}
-    headers:
-      Host: ${domain}${reset}\n"
-
-        echo -e "${cyan}================================================================${reset}"
-
-        # XHTTP
+        # XHTTP (stream-one, trailing slash)
         local xhttp_path xep url_xhttp xhttp_name xhttp_encoded
         xhttp_path=$(get_xhttp_path)
-        [ -z "$xhttp_path" ] && xhttp_path="${wp}x"
-        xep=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$xhttp_path" 2>/dev/null || echo "$xhttp_path")
-        xhttp_name="${flag} VL-XHTTP-CDN | ${label} ${flag}"
-        xhttp_encoded=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$xhttp_name" 2>/dev/null || echo "$xhttp_name")
-        url_xhttp="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=xhttp&host=${domain}&path=${xep}&mode=auto#${xhttp_encoded}"
-        echo -e "\n${cyan}=== ${xhttp_name} ===${reset}"
+        xep=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" \
+            "/${xhttp_path}/" 2>/dev/null || echo "/${xhttp_path}/")
+        xhttp_name="${flag} VL-XHTTP | ${label} ${flag}"
+        xhttp_encoded=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" \
+            "$xhttp_name" 2>/dev/null || echo "$xhttp_name")
+        url_xhttp="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=xhttp&host=${domain}&path=${xep}&mode=stream-one#${xhttp_encoded}"
+        echo -e "${cyan}[ XHTTP ]${reset}"
         qrencode -s 1 -m 1 -t ANSIUTF8 "$url_xhttp" 2>/dev/null || true
         echo -e "\n${green}${url_xhttp}${reset}\n"
 
         # gRPC
         local grpc_service url_grpc grpc_name grpc_encoded
         grpc_service=$(get_grpc_service)
-        [ -z "$grpc_service" ] && grpc_service="${wp#/}g"
-        grpc_name="${flag} VL-gRPC-CDN | ${label} ${flag}"
-        grpc_encoded=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$grpc_name" 2>/dev/null || echo "$grpc_name")
+        grpc_name="${flag} VL-gRPC | ${label} ${flag}"
+        grpc_encoded=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" \
+            "$grpc_name" 2>/dev/null || echo "$grpc_name")
         url_grpc="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=grpc&serviceName=${grpc_service}&mode=gun#${grpc_encoded}"
-        echo -e "${cyan}=== ${grpc_name} ===${reset}"
+        echo -e "${cyan}[ gRPC ]${reset}"
         qrencode -s 1 -m 1 -t ANSIUTF8 "$url_grpc" 2>/dev/null || true
         echo -e "\n${green}${url_grpc}${reset}\n"
+
+        echo -e "${cyan}================================================================${reset}"
     fi
 
     # Reality

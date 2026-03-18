@@ -186,7 +186,7 @@ UUID:       $new_uuid
 PublicKey:  $pubKey
 ShortId:    $shortId
 ServerName: $destHost
-Port:       443 (через HAProxy)
+Port:       $port
 Flow:       xtls-rprx-vision
 EOF
 
@@ -260,7 +260,7 @@ installReality() {
     fi
 
     echo "--- [3/3] $(msg menu_sep_sec) ---"
-    # Reality использует порт 443 через HAProxy — отдельный UFW порт не нужен
+    # Reality на отдельном публичном порту
     run_task "Настройка UFW" "ufw allow 22/tcp && ufw allow 443/tcp && echo 'y' | ufw enable"
     run_task "Системные параметры" applySysctl
     if ! systemctl is-active --quiet warp-svc 2>/dev/null; then
@@ -301,12 +301,9 @@ installReality() {
     # Открываем порт Reality в UFW
     ufw allow "$REALITY_INTERNAL_PORT"/tcp comment 'Xray Reality' 2>/dev/null || true
 
-    # nginx и HAProxy нужны для WS/XHTTP/gRPC — устанавливаем если нет
+    # nginx нужен для XHTTP/gRPC — устанавливаем если нет
     if ! command -v nginx &>/dev/null; then
         run_task "Установка Nginx"   "installPackage nginx"
-    fi
-    if ! command -v haproxy &>/dev/null; then
-        run_task "Установка HAProxy" "installPackage haproxy"
     fi
 
     local stubUrl
@@ -316,7 +313,22 @@ installReality() {
     if [ ! -f "$nginxPath" ]; then
         local stub_domain
         stub_domain=$(get_domain 2>/dev/null || getServerIP)
-        writeNginxConfig "$stub_domain" "$stubUrl"
+        # Если WS/XHTTP/gRPC конфиг уже есть — создаём полный nginx конфиг
+        if [ -f "$configPath" ]; then
+            local xhttpPort grpcPort xhttpPath grpcService
+            xhttpPort=$(jq -r '.inbounds[] | select(.tag=="xhttp-inbound") | .port' "$configPath" 2>/dev/null)
+            grpcPort=$(jq -r '.inbounds[] | select(.tag=="grpc-inbound") | .port' "$configPath" 2>/dev/null)
+            xhttpPath=$(vwn_conf_get XHTTP_PATH)
+            grpcService=$(vwn_conf_get GRPC_SERVICE)
+            if [ -n "$xhttpPort" ] && [ -n "$xhttpPath" ]; then
+                writeNginxConfig "$stub_domain" "$stubUrl" "$xhttpPort" "$grpcPort" "$xhttpPath" "$grpcService"
+            else
+                writeNginxConfig "$stub_domain" "$stubUrl" "16500" "16501" "stub" "stubg"
+            fi
+        else
+            # Reality-only без XHTTP/gRPC — минимальный stub nginx
+            writeNginxConfig "$stub_domain" "$stubUrl" "16500" "16501" "stub" "stubg"
+        fi
         systemctl enable --now nginx
         systemctl restart nginx
     fi
@@ -428,9 +440,6 @@ modifyRealityDest() {
         .inbounds[0].streamSettings.realitySettings.serverNames = [\"$newHost\"]" \
         "$realityConfigPath" > "${realityConfigPath}.tmp" \
         && mv "${realityConfigPath}.tmp" "$realityConfigPath"
-
-    # Обновляем SNI в HAProxy
-    _haproxyUpdateReality "$newHost"
 
     # Обновляем vwn.conf
     vwn_conf_set REALITY_DEST "$newDest"

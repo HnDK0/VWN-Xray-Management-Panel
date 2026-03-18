@@ -1,6 +1,6 @@
 #!/bin/bash
 # =================================================================
-# install.sh — Установщик VWN (Xray VLESS + WARP + CDN + Reality)
+# install.sh — Установщик VWN (Xray VLESS + XHTTP + gRPC + TLS + Nginx + WARP + Reality)
 # Использование:
 #   bash install.sh          — первая установка
 #   bash install.sh --update — обновить модули (конфиги не трогает)
@@ -122,7 +122,7 @@ case "${1:-}" in
         bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh) --update
         exit 0 ;;
 esac
-for module in lang core xray nginx warp reality relay psiphon tor security logs menu; do
+for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag menu; do
     [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh" || { echo "ERROR: module $module not found"; exit 1; }
 done
 VWN_CONF="/usr/local/etc/xray/vwn.conf"

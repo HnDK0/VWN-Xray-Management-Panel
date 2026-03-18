@@ -1,6 +1,6 @@
 #!/bin/bash
 # =================================================================
-# xray.sh — Конфиг Xray VLESS+WS+XHTTP+gRPC (без TLS — HAProxy держит TLS)
+# xray.sh — Конфиг Xray VLESS+XHTTP+gRPC (без TLS — Nginx держит TLS)
 # =================================================================
 
 # =================================================================
@@ -28,7 +28,6 @@ _getConfigName() {
     local flag
     flag=$(_getCountryFlag "$ip")
     case "$type" in
-        WS)       echo "${flag} VL-WS-CDN | ${label} ${flag}" ;;
         Reality)  echo "${flag} VL-Reality | ${label} ${flag}" ;;
         *)        echo "${flag} VL-${type} | ${label} ${flag}" ;;
     esac
@@ -57,8 +56,8 @@ fix_xray_service() {
 }
 
 writeXrayConfig() {
-    local xrayPort="$1"
-    local wsPath="$2"
+    local basePort="$1"   # базовый порт: xhttp=basePort, grpc=basePort+1
+    local basePath="$2"   # базовый path: xhttp=/$basePath, grpc=$basePath\"g\" serviceName
     local domain="$3"
     local new_uuid
 
@@ -70,14 +69,14 @@ writeXrayConfig() {
     mkdir -p /usr/local/etc/xray /var/log/xray
 
     local xhttpPort grpcPort xhttpPath grpcService
-    xhttpPort=$(( xrayPort + 1 ))
-    grpcPort=$(( xrayPort + 2 ))
-    xhttpPath="${wsPath}x"
-    grpcService="${wsPath#/}g"
+    xhttpPort=$basePort
+    grpcPort=$(( basePort + 1 ))
+    # xhttpPath без leading slash — nginx добавит в location
+    xhttpPath="${basePath#/}"
+    grpcService="${basePath#/}g"
 
-    # Сохраняем домен и пути в vwn.conf — единственный источник правды
+    # Сохраняем в vwn.conf — единственный источник правды
     vwn_conf_set VWN_DOMAIN   "$domain"
-    vwn_conf_set WS_PATH      "$wsPath"
     vwn_conf_set XHTTP_PATH   "$xhttpPath"
     vwn_conf_set GRPC_SERVICE "$grpcService"
 
@@ -93,29 +92,6 @@ writeXrayConfig() {
     },
     "inbounds": [
     {
-        "tag": "ws-inbound",
-        "port": $xrayPort,
-        "listen": "127.0.0.1",
-        "protocol": "vless",
-        "settings": {
-            "clients": [{"id": "$new_uuid", "email": "default"}],
-            "decryption": "none"
-        },
-        "streamSettings": {
-            "network": "ws",
-            "security": "none",
-            "wsSettings": {
-                "path": "$wsPath",
-                "host": "$domain"
-            },
-            "sockopt": {
-                "tcpKeepAliveIdle": 100,
-                "tcpKeepAliveInterval": 10,
-                "tcpKeepAliveRetry": 3
-            }
-        }
-    },
-    {
         "tag": "xhttp-inbound",
         "port": $xhttpPort,
         "listen": "127.0.0.1",
@@ -128,13 +104,8 @@ writeXrayConfig() {
             "network": "xhttp",
             "security": "none",
             "xhttpSettings": {
-                "path": "$xhttpPath",
-                "mode": "auto"
-            },
-            "sockopt": {
-                "tcpKeepAliveIdle": 100,
-                "tcpKeepAliveInterval": 10,
-                "tcpKeepAliveRetry": 3
+                "path": "/$xhttpPath/",
+                "mode": "stream-one"
             }
         }
     },
@@ -153,11 +124,6 @@ writeXrayConfig() {
             "grpcSettings": {
                 "serviceName": "$grpcService",
                 "multiMode": false
-            },
-            "sockopt": {
-                "tcpKeepAliveIdle": 100,
-                "tcpKeepAliveInterval": 10,
-                "tcpKeepAliveRetry": 3
             }
         }
     }],
@@ -240,25 +206,20 @@ EOF
 # Геттеры — все читают из vwn.conf
 # ============================================================
 
-get_ws_path()      { vwn_conf_get WS_PATH; }
 get_xhttp_path()   { vwn_conf_get XHTTP_PATH; }
 get_grpc_service() { vwn_conf_get GRPC_SERVICE; }
 
 get_domain() {
-    # Основной источник — vwn.conf
     local d
     d=$(vwn_conf_get VWN_DOMAIN)
-    if [ -n "$d" ]; then
-        echo "$d"; return
-    fi
-    # Fallback для старых установок — читаем из config.json
-    jq -r '.inbounds[] | select(.tag=="ws-inbound") | .streamSettings.wsSettings.host // empty' \
+    if [ -n "$d" ]; then echo "$d"; return; fi
+    # Fallback для старых установок
+    jq -r '.inbounds[] | select(.tag=="xhttp-inbound") | .streamSettings.xhttpSettings.path // empty' \
         "$configPath" 2>/dev/null | head -1
 }
 
 get_uuid() {
-    jq -r '.inbounds[] | select(.tag=="ws-inbound") | .settings.clients[0].id' \
-        "$configPath" 2>/dev/null | head -1
+    jq -r '.inbounds[0].settings.clients[0].id' "$configPath" 2>/dev/null | head -1
 }
 
 CONNECT_HOST_FILE="/usr/local/etc/xray/connect_host"
@@ -283,8 +244,10 @@ getConfigInfo() {
         return 1
     fi
     xray_uuid=$(get_uuid)
-    xray_path=$(get_ws_path)
-    xray_port=$(jq -r '.inbounds[] | select(.tag=="ws-inbound") | .port' "$configPath" 2>/dev/null | head -1)
+    xray_xhttp_path=$(get_xhttp_path)
+    xray_grpc_service=$(get_grpc_service)
+    xray_xhttp_port=$(jq -r '.inbounds[] | select(.tag=="xhttp-inbound") | .port' "$configPath" 2>/dev/null | head -1)
+    xray_grpc_port=$(jq -r '.inbounds[] | select(.tag=="grpc-inbound") | .port' "$configPath" 2>/dev/null | head -1)
     xray_userDomain=$(get_domain)
     [ -z "$xray_userDomain" ] && xray_userDomain=$(getServerIP)
     if [ -z "$xray_uuid" ]; then
@@ -293,58 +256,59 @@ getConfigInfo() {
     fi
 }
 
-getShareUrl() {
+getShareUrlXhttp() {
     local label="${1:-default}"
     getConfigInfo || return 1
     local encoded_path name encoded_name
     encoded_path=$(python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe='/'))" \
-        "$xray_path" 2>/dev/null) || encoded_path="$xray_path"
-    name=$(_getConfigName "WS" "$label")
+        "/${xray_xhttp_path}/" 2>/dev/null) || encoded_path="/${xray_xhttp_path}/"
+    name=$(_getConfigName "XHTTP" "$label")
     encoded_name=$(python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))" \
         "$name" 2>/dev/null) || encoded_name="$name"
-    echo "vless://${xray_uuid}@${xray_userDomain}:443?encryption=none&security=tls&sni=${xray_userDomain}&fp=chrome&type=ws&host=${xray_userDomain}&path=${encoded_path}#${encoded_name}"
+    echo "vless://${xray_uuid}@${xray_userDomain}:443?encryption=none&security=tls&sni=${xray_userDomain}&fp=chrome&type=xhttp&host=${xray_userDomain}&path=${encoded_path}&mode=stream-one#${encoded_name}"
+}
+
+getShareUrlGrpc() {
+    local label="${1:-default}"
+    getConfigInfo || return 1
+    local name encoded_name
+    name=$(_getConfigName "gRPC" "$label")
+    encoded_name=$(python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))" \
+        "$name" 2>/dev/null) || encoded_name="$name"
+    echo "vless://${xray_uuid}@${xray_userDomain}:443?encryption=none&security=tls&sni=${xray_userDomain}&fp=chrome&type=grpc&serviceName=${xray_grpc_service}&mode=gun#${encoded_name}"
 }
 
 getQrCode() {
     command -v qrencode &>/dev/null || installPackage "qrencode"
-    local has_ws=false has_reality=false
+    local has_main=false has_reality=false
 
-    [ -f "$configPath" ] && has_ws=true
+    [ -f "$configPath" ] && has_main=true
     [ -f "$realityConfigPath" ] && has_reality=true
 
-    if ! $has_ws && ! $has_reality; then
+    if ! $has_main && ! $has_reality; then
         echo "${red}$(msg xray_not_installed)${reset}"
         return 1
     fi
 
-    if $has_ws; then
+    if $has_main; then
         getConfigInfo || return 1
-        local url name
-        name=$(_getConfigName "WS" "default")
-        url=$(getShareUrl "default")
+        local url_xhttp url_grpc
 
         echo -e "${cyan}================================================================${reset}"
-        echo -e "   WS+XHTTP+gRPC — форматы подключения"
+        echo -e "   XHTTP + gRPC — форматы подключения"
         echo -e "${cyan}================================================================${reset}\n"
 
-        echo -e "${cyan}[ 1. URI ссылка (v2rayNG / Hiddify / Nekoray) ]${reset}"
-        qrencode -s 1 -m 1 -t ANSIUTF8 "$url" 2>/dev/null || true
-        echo -e "\n${green}${url}${reset}\n"
+        # XHTTP
+        url_xhttp=$(getShareUrlXhttp "default")
+        echo -e "${cyan}[ XHTTP (stream-one) ]${reset}"
+        qrencode -s 1 -m 1 -t ANSIUTF8 "$url_xhttp" 2>/dev/null || true
+        echo -e "\n${green}${url_xhttp}${reset}\n"
 
-        echo -e "${cyan}[ 2. Clash Meta / Mihomo ]${reset}"
-        echo -e "${yellow}- name: ${name}
-  type: vless
-  server: ${xray_userDomain}
-  port: 443
-  uuid: ${xray_uuid}
-  tls: true
-  servername: ${xray_userDomain}
-  client-fingerprint: chrome
-  network: ws
-  ws-opts:
-    path: ${xray_path}
-    headers:
-      Host: ${xray_userDomain}${reset}\n"
+        # gRPC
+        url_grpc=$(getShareUrlGrpc "default")
+        echo -e "${cyan}[ gRPC ]${reset}"
+        qrencode -s 1 -m 1 -t ANSIUTF8 "$url_grpc" 2>/dev/null || true
+        echo -e "\n${green}${url_grpc}${reset}\n"
 
         echo -e "${cyan}================================================================${reset}"
     fi
@@ -428,102 +392,81 @@ modifyXrayUUID() {
 }
 
 # ============================================================
-# Изменение порта Xray — обновляем config.json и haproxy.cfg
+# Изменение порта — обновляем config.json и nginx конфиг
 # ============================================================
 
 modifyXrayPort() {
-    local oldPort
-    oldPort=$(jq -r '.inbounds[] | select(.tag=="ws-inbound") | .port' "$configPath" 2>/dev/null)
-    [ -z "$oldPort" ] && oldPort=16500
-    read -rp "$(msg enter_new_port) [$oldPort]: " xrayPort
-    [ -z "$xrayPort" ] && return
-    if ! _validatePort "$xrayPort" &>/dev/null; then
+    local oldXhttpPort
+    oldXhttpPort=$(jq -r '.inbounds[] | select(.tag=="xhttp-inbound") | .port' "$configPath" 2>/dev/null)
+    [ -z "$oldXhttpPort" ] && oldXhttpPort=16500
+    read -rp "$(msg enter_new_port) [$oldXhttpPort]: " xhttpPort
+    [ -z "$xhttpPort" ] && return
+    if ! _validatePort "$xhttpPort" &>/dev/null; then
         echo "${red}$(msg invalid_port)${reset}"; return 1
     fi
-    local oldXhttp oldGrpc newXhttp newGrpc
-    oldXhttp=$(( oldPort + 1 ))
-    oldGrpc=$(( oldPort + 2 ))
-    newXhttp=$(( xrayPort + 1 ))
-    newGrpc=$(( xrayPort + 2 ))
+    local newGrpcPort
+    newGrpcPort=$(( xhttpPort + 1 ))
+    local oldGrpcPort
+    oldGrpcPort=$(( oldXhttpPort + 1 ))
 
-    # Обновляем config.json
-    jq --argjson ws "$xrayPort" --argjson xh "$newXhttp" --argjson gr "$newGrpc" '
+    jq --argjson xh "$xhttpPort" --argjson gr "$newGrpcPort" '
         .inbounds = [.inbounds[] |
-            if .tag == "ws-inbound"      then .port = $ws
-            elif .tag == "xhttp-inbound" then .port = $xh
-            elif .tag == "grpc-inbound"  then .port = $gr
+            if .tag == "xhttp-inbound" then .port = $xh
+            elif .tag == "grpc-inbound" then .port = $gr
             else . end]
     ' "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
 
-    # Обновляем haproxy.cfg — заменяем порты в backend server строках
-    if [ -f "$haproxyPath" ]; then
-        sed -i \
-            "s|127\.0\.0\.1:${oldPort}\b|127.0.0.1:${xrayPort}|g;
-             s|127\.0\.0\.1:${oldXhttp}\b|127.0.0.1:${newXhttp}|g;
-             s|127\.0\.0\.1:${oldGrpc}\b|127.0.0.1:${newGrpc}|g" \
-            "$haproxyPath"
-        haproxy -c -f "$haproxyPath" &>/dev/null && systemctl reload haproxy || systemctl restart haproxy
-    fi
+    # Обновляем nginx конфиг
+    local xhttpPath grpcService domain proxyUrl
+    xhttpPath=$(get_xhttp_path)
+    grpcService=$(get_grpc_service)
+    domain=$(get_domain)
+    proxyUrl=$(vwn_conf_get STUB_URL)
+    [ -z "$proxyUrl" ] && proxyUrl="https://httpbin.org/"
+    writeNginxConfig "$domain" "$proxyUrl" "$xhttpPort" "$newGrpcPort" "$xhttpPath" "$grpcService"
 
     systemctl restart xray
-    echo "${green}$(msg port_changed) $xrayPort (xhttp: $newXhttp, grpc: $newGrpc)${reset}"
+    nginx -t &>/dev/null && systemctl reload nginx
+    echo "${green}$(msg port_changed) xhttp:$xhttpPort grpc:$newGrpcPort${reset}"
 }
 
 # ============================================================
-# Изменение путей WS/XHTTP/gRPC — обновляем config.json и haproxy.cfg
+# Изменение путей XHTTP/gRPC — обновляем config.json и nginx
 # ============================================================
 
-modifyWsPath() {
-    local oldPath
-    oldPath=$(get_ws_path)
-    read -rp "$(msg enter_new_path)" wsPath
-    [ -z "$wsPath" ] && wsPath=$(generateRandomPath)
-    wsPath=$(echo "$wsPath" | tr -cd 'A-Za-z0-9/_-')
-    [[ ! "$wsPath" =~ ^/ ]] && wsPath="/$wsPath"
+modifyPaths() {
+    local oldXhttpPath
+    oldXhttpPath=$(get_xhttp_path)
+    read -rp "$(msg enter_new_path)" newBasePath
+    [ -z "$newBasePath" ] && newBasePath=$(generateRandomPath)
+    newBasePath=$(echo "$newBasePath" | tr -cd 'A-Za-z0-9/_-')
+    newBasePath="${newBasePath#/}"  # без leading slash
 
-    local newXhttpPath newGrpcService
-    newXhttpPath="${wsPath}x"
-    newGrpcService="${wsPath#/}g"
+    local newGrpcService="${newBasePath}g"
 
-    # Обновляем config.json
-    jq --arg ws "$wsPath" --arg xh "$newXhttpPath" --arg gs "$newGrpcService" '
+    jq --arg xh "/${newBasePath}/" --arg gs "$newGrpcService" '
         .inbounds = [.inbounds[] |
-            if .tag == "ws-inbound"      then .streamSettings.wsSettings.path = $ws
-            elif .tag == "xhttp-inbound" then .streamSettings.xhttpSettings.path = $xh
-            elif .tag == "grpc-inbound"  then .streamSettings.grpcSettings.serviceName = $gs
+            if .tag == "xhttp-inbound" then .streamSettings.xhttpSettings.path = $xh
+            elif .tag == "grpc-inbound" then .streamSettings.grpcSettings.serviceName = $gs
             else . end]
     ' "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
 
-    # Обновляем haproxy.cfg — ACL path_beg
-    if [ -f "$haproxyPath" ]; then
-        local oldXhttpPath oldGrpcService
-        oldXhttpPath=$(get_xhttp_path)
-        oldGrpcService=$(get_grpc_service)
-
-        local oldEsc newEsc oldXEsc newXEsc oldGEsc newGEsc
-        oldEsc=$(printf '%s' "$oldPath"        | sed 's|[&/\]|\\&|g')
-        newEsc=$(printf '%s' "$wsPath"         | sed 's|[&/\]|\\&|g')
-        oldXEsc=$(printf '%s' "$oldXhttpPath"  | sed 's|[&/\]|\\&|g')
-        newXEsc=$(printf '%s' "$newXhttpPath"  | sed 's|[&/\]|\\&|g')
-        oldGEsc=$(printf '%s' "/$oldGrpcService" | sed 's|[&/\]|\\&|g')
-        newGEsc=$(printf '%s' "/$newGrpcService" | sed 's|[&/\]|\\&|g')
-
-        sed -i \
-            "s|path_beg ${oldEsc}$|path_beg ${newEsc}|g;
-             s|path_beg ${oldXEsc}$|path_beg ${newXEsc}|g;
-             s|path_beg ${oldGEsc}$|path_beg ${newGEsc}|g" \
-            "$haproxyPath"
-        haproxy -c -f "$haproxyPath" &>/dev/null && systemctl reload haproxy || systemctl restart haproxy
-    fi
-
-    # Сохраняем новые пути в vwn.conf
-    vwn_conf_set WS_PATH      "$wsPath"
-    vwn_conf_set XHTTP_PATH   "$newXhttpPath"
+    vwn_conf_set XHTTP_PATH   "$newBasePath"
     vwn_conf_set GRPC_SERVICE "$newGrpcService"
 
+    # Пересоздаём nginx конфиг
+    local xhttpPort grpcPort domain proxyUrl
+    xhttpPort=$(jq -r '.inbounds[] | select(.tag=="xhttp-inbound") | .port' "$configPath" 2>/dev/null)
+    grpcPort=$(jq -r '.inbounds[] | select(.tag=="grpc-inbound") | .port' "$configPath" 2>/dev/null)
+    domain=$(get_domain)
+    proxyUrl=$(vwn_conf_get STUB_URL)
+    [ -z "$proxyUrl" ] && proxyUrl="https://httpbin.org/"
+    writeNginxConfig "$domain" "$proxyUrl" "$xhttpPort" "$grpcPort" "$newBasePath" "$newGrpcService"
+
     systemctl restart xray
+    nginx -t &>/dev/null && systemctl reload nginx
     rebuildAllSubFiles 2>/dev/null || true
-    echo "${green}$(msg new_path): WS=$wsPath  XHTTP=$newXhttpPath  gRPC=$newGrpcService${reset}"
+    echo "${green}$(msg new_path): XHTTP=/${newBasePath}/  gRPC=$newGrpcService${reset}"
 }
 
 # ============================================================
@@ -552,7 +495,7 @@ modifyProxyPassUrl() {
 }
 
 # ============================================================
-# Изменение домена — обновляем config.json, haproxy.cfg, vwn.conf
+# Изменение домена — обновляем nginx конфиг и vwn.conf
 # ============================================================
 
 modifyDomain() {
@@ -566,31 +509,23 @@ modifyDomain() {
     fi
     new_domain="$validated"
 
-    # Обновляем config.json — host в ws/xhttp inbound
-    jq --arg d "$new_domain" '
-        .inbounds = [.inbounds[] |
-            if .tag == "ws-inbound"      then .streamSettings.wsSettings.host = $d
-            elif .tag == "xhttp-inbound" then .streamSettings.xhttpSettings.host = $d
-            else . end]
-    ' "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
-
-    # Обновляем haproxy.cfg — в новой архитектуре HAProxy делает TLS termination
-    # по сертификату haproxyCert. При смене домена сертификат перевыпускается ниже
-    # через configCert, после чего haproxy перезапускается автоматически.
-    # Дополнительных изменений в haproxy.cfg не требуется.
-
-    # Обновляем nginx server_name (для заглушки)
-    if [ -f "$nginxPath" ]; then
-        sed -i "s/server_name ${xray_userDomain};/server_name ${new_domain};/" "$nginxPath"
-        systemctl reload nginx
-    fi
-
     # Сохраняем новый домен
     vwn_conf_set VWN_DOMAIN "$new_domain"
+
+    # Пересоздаём nginx конфиг с новым доменом
+    local xhttpPort grpcPort proxyUrl
+    xhttpPort=$(jq -r '.inbounds[] | select(.tag=="xhttp-inbound") | .port' "$configPath" 2>/dev/null)
+    grpcPort=$(jq -r '.inbounds[] | select(.tag=="grpc-inbound") | .port' "$configPath" 2>/dev/null)
+    proxyUrl=$(vwn_conf_get STUB_URL)
+    [ -z "$proxyUrl" ] && proxyUrl="https://httpbin.org/"
+    writeNginxConfig "$new_domain" "$proxyUrl" "$xhttpPort" "$grpcPort" \
+        "$xray_xhttp_path" "$xray_grpc_service"
 
     # Перевыпускаем сертификат
     userDomain="$new_domain"
     configCert
+
+    nginx -t &>/dev/null && systemctl reload nginx
     systemctl restart xray
 }
 

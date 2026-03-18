@@ -12,7 +12,6 @@ _LOG_FILES=(
     /var/log/xray/reality-error.log
     /var/log/nginx/access.log
     /var/log/nginx/error.log
-    /var/log/haproxy/haproxy.log
     /var/log/psiphon/psiphon.log
     /var/log/tor/notices.log
     /var/log/acme_cron.log
@@ -72,18 +71,6 @@ setupLogrotate() {
     endscript
 }
 
-/var/log/haproxy/haproxy.log {
-    daily
-    rotate 7
-    missingok
-    notifempty
-    compress
-    delaycompress
-    dateext
-    postrotate
-        systemctl reload haproxy 2>/dev/null || true
-    endscript
-}
 
 /var/log/psiphon/*.log
 /var/log/tor/*.log {
@@ -106,7 +93,7 @@ EOF
 setupSslCron() {
     cat > /etc/cron.d/acme-renew << EOF
 # SSL автообновление — каждые 35 дней в 03:00
-0 3 */35 * * root /root/.acme.sh/acme.sh --cron --home /root/.acme.sh --pre-hook "/usr/local/bin/vwn open-80" --post-hook "/usr/local/bin/vwn close-80 && cat ${haproxyCertDir}/cert.pem ${haproxyCertDir}/cert.key > ${haproxyCert} && chmod 600 ${haproxyCert} && systemctl reload haproxy" >> /var/log/acme_cron.log 2>&1
+0 3 */35 * * root /root/.acme.sh/acme.sh --cron --home /root/.acme.sh --pre-hook "/usr/local/bin/vwn open-80" --post-hook "/usr/local/bin/vwn close-80 && systemctl reload nginx" >> /var/log/acme_cron.log 2>&1
 EOF
     chmod 644 /etc/cron.d/acme-renew
     echo "${green}$(msg ssl_cron_enabled)${reset}"
@@ -152,7 +139,6 @@ for f in \
     /var/log/xray/reality-error.log \
     /var/log/nginx/access.log \
     /var/log/nginx/error.log \
-    /var/log/haproxy/haproxy.log \
     /var/log/psiphon/psiphon.log \
     /var/log/tor/notices.log \
     /var/log/acme_cron.log; do
