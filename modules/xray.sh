@@ -125,7 +125,9 @@ writeXrayConfig() {
             "security": "none",
             "grpcSettings": {
                 "serviceName": "$grpcService",
-                "multiMode": false
+                "multiMode": false,
+                "idle_timeout": 30,
+                "initial_windows_size": 65536
             }
         }
     }],
@@ -267,7 +269,7 @@ getShareUrlXhttp() {
     name=$(_getConfigName "XHTTP" "$label")
     encoded_name=$(python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))" \
         "$name" 2>/dev/null) || encoded_name="$name"
-    echo "vless://${xray_uuid}@${xray_userDomain}:443?encryption=none&security=tls&sni=${xray_userDomain}&fp=chrome&type=xhttp&host=${xray_userDomain}&path=${encoded_path}&mode=auto#${encoded_name}"
+    echo "vless://${xray_uuid}@${xray_userDomain}:443?encryption=none&security=tls&sni=${xray_userDomain}&fp=chrome&type=xhttp&host=${xray_userDomain}&path=${encoded_path}&mode=stream-one#${encoded_name}"
 }
 
 getShareUrlGrpc() {
