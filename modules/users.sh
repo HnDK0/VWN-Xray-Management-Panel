@@ -168,57 +168,85 @@ buildUserHtmlPage() {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title>VWN — ${label}</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:monospace;background:#0f0f0f;color:#d0d0d0;padding:12px;max-width:860px;margin:0 auto}
-h2{color:#89b4fa;font-size:14px;margin:18px 0 8px;border-top:1px solid #222;padding-top:12px}
-h2:first-of-type{border-top:none;margin-top:0}
-.row{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;padding:6px 8px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:6px}
-.lbl{background:#252540;color:#89b4fa;padding:4px 8px;border-radius:4px;font-size:11px;font-weight:700;white-space:nowrap;min-width:80px;text-align:center}
-.url{font-size:11px;word-break:break-all;flex:1;color:#cdd6f4}
-.btn{background:#313244;color:#cdd6f4;border:none;padding:5px 10px;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap}
+body{font-family:monospace;background:#0f0f0f;color:#d0d0d0;padding:16px;max-width:700px;margin:0 auto}
+h1{color:#89b4fa;font-size:15px;margin-bottom:16px;padding-bottom:8px;border-bottom:1px solid #2a2a2a}
+.card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:12px;margin-bottom:10px}
+.proto{display:inline-block;background:#252540;color:#89b4fa;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:700;margin-bottom:8px}
+.proto.ws{background:#253025;color:#a6e3a1}
+.proto.reality{background:#302520;color:#fab387}
+.proto.sub{background:#252540;color:#89dceb}
+.url{font-size:11px;word-break:break-all;color:#cdd6f4;line-height:1.5;margin-bottom:8px;padding:6px;background:#111;border-radius:4px}
+.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.btn{background:#313244;color:#cdd6f4;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:11px}
 .btn:hover{background:#45475a}
-.qr{background:#fff;padding:6px;border-radius:4px;display:inline-block}
-.sub-row{background:#1a2a1a;border:1px solid #2a3a2a}
+.btn.qr-btn{background:#1e3a5f;color:#89b4fa}
+.btn.qr-btn:hover{background:#264a6f}
+.qr-wrap{display:none;margin-top:10px;text-align:center}
+.qr-wrap.open{display:block}
+.qr-inner{display:inline-block;background:#fff;padding:8px;border-radius:6px}
 </style>
 </head>
 <body>
-<h2>📋 ${label} — конфигурации подключения</h2>
+<h1>📡 ${label}</h1>
 HTMLEOF
 
     local i=0
     for cfg in "${configs[@]}"; do
-        local proto_label="VLESS"
-        echo "$cfg" | grep -q "type=ws"      && proto_label="WS+TLS"
-        echo "$cfg" | grep -q "type=reality\|security=reality" && proto_label="Reality"
+        local proto_label="VLESS" proto_class="vless"
+        echo "$cfg" | grep -q "type=ws"                           && proto_label="WS+TLS"  && proto_class="ws"
+        echo "$cfg" | grep -q "type=reality\|security=reality"    && proto_label="Reality" && proto_class="reality"
         cat >> "$htmlfile" << HTMLEOF
-<div class="row">
-  <span class="lbl">${proto_label}</span>
-  <span class="url" id="url${i}">${cfg}</span>
-  <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('url${i}').textContent)">📋 Копировать</button>
+<div class="card">
+  <span class="proto ${proto_class}">${proto_label}</span>
+  <div class="url" id="u${i}">${cfg}</div>
+  <div class="actions">
+    <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('u${i}').textContent).then(()=>{this.textContent='✓ Скопировано';setTimeout(()=>this.textContent='📋 Копировать',1500)})">📋 Копировать</button>
+    <button class="btn qr-btn" onclick="toggleQR(${i})">QR-код</button>
+  </div>
+  <div class="qr-wrap" id="qr${i}"><div class="qr-inner" id="qrc${i}"></div></div>
 </div>
-<div class="qr" id="qr${i}"></div>
-<script>new QRCode(document.getElementById('qr${i}'),{text:'${cfg}',width:160,height:160});</script>
 HTMLEOF
         i=$((i+1))
     done
 
     cat >> "$htmlfile" << HTMLEOF
-<h2>📦 Subscription URL</h2>
-<div class="row sub-row">
-  <span class="lbl">SUB</span>
-  <span class="url" id="suburl">${sub_url}</span>
-  <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('suburl').textContent)">📋 Копировать</button>
+<div class="card">
+  <span class="proto sub">Subscription</span>
+  <div class="url" id="usub">${sub_url}</div>
+  <div class="actions">
+    <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('usub').textContent).then(()=>{this.textContent='✓ Скопировано';setTimeout(()=>this.textContent='📋 Копировать',1500)})">📋 Копировать</button>
+    <button class="btn qr-btn" onclick="toggleQR('sub')">QR-код</button>
+  </div>
+  <div class="qr-wrap" id="qrsub"><div class="qr-inner" id="qrcsub"></div></div>
 </div>
-<div class="qr" id="qrsub"></div>
-<script>new QRCode(document.getElementById('qrsub'),{text:'${sub_url}',width:160,height:160});</script>
-<p style="margin-top:16px;font-size:11px;color:#585b70">v2rayNG: + → Subscription group → URL</p>
+
+<p style="margin-top:16px;font-size:10px;color:#45475a;text-align:center">v2rayNG / Hiddify: + → Subscription group → URL</p>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+var _qrCache = {};
+function toggleQR(id) {
+  var wrap = document.getElementById('qr' + id);
+  var isOpen = wrap.classList.toggle('open');
+  if (isOpen && !_qrCache[id]) {
+    var urlEl = document.getElementById(id === 'sub' ? 'usub' : 'u' + id);
+    new QRCode(document.getElementById('qrc' + id), {
+      text: urlEl.textContent.trim(),
+      width: 200, height: 200,
+      correctLevel: QRCode.CorrectLevel.M
+    });
+    _qrCache[id] = true;
+  }
+}
+</script>
 </body>
 </html>
 HTMLEOF
     chmod 644 "$htmlfile"
 }
+
 
 rebuildAllSubFiles() {
     [ ! -f "$USERS_FILE" ] && return 0
