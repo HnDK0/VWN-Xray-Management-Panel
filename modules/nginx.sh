@@ -131,8 +131,16 @@ server {
         proxy_socket_keepalive on;
     }
 
-    location /sub/ {
-        alias /usr/local/etc/xray/sub/;
+    location ~ ^/sub/[A-Za-z0-9_-]+_[A-Za-z0-9]+\.html$ {
+        root /usr/local/etc/xray;
+        try_files \$uri =404;
+        types { text/html html; }
+        add_header Cache-Control 'no-cache, no-store, must-revalidate';
+    }
+
+    location ~ ^/sub/[A-Za-z0-9_-]+_[A-Za-z0-9]+\.txt$ {
+        root /usr/local/etc/xray;
+        try_files \$uri =404;
         default_type text/plain;
         add_header Content-Disposition "attachment; filename=\"\$sub_label.txt\"";
         add_header profile-title "\$sub_label";
@@ -343,14 +351,21 @@ map \$uri \$sub_label {
 MAPEOF
 
     # Добавляем location /sub/ в xray.conf если его ещё нет
-    if ! grep -q 'location /sub/' "$nginxPath"; then
+    if ! grep -q 'location ~ \^/sub/' "$nginxPath"; then
         python3 - "$nginxPath" << 'PYEOF'
 import sys, re
 path = sys.argv[1]
 with open(path) as f: c = f.read()
 block = (
-    "\n    location /sub/ {\n"
-    "        alias /usr/local/etc/xray/sub/;\n"
+    "\n    location ~ ^/sub/[A-Za-z0-9_-]+_[A-Za-z0-9]+\\.html$ {\n"
+    "        root /usr/local/etc/xray;\n"
+    "        try_files $uri =404;\n"
+    "        types { text/html html; }\n"
+    "        add_header Cache-Control 'no-cache, no-store, must-revalidate';\n"
+    "    }\n"
+    "\n    location ~ ^/sub/[A-Za-z0-9_-]+_[A-Za-z0-9]+\\.txt$ {\n"
+    "        root /usr/local/etc/xray;\n"
+    "        try_files $uri =404;\n"
     "        default_type text/plain;\n"
     '        add_header Content-Disposition "attachment; filename=\\"$sub_label.txt\\"";\n'
     '        add_header profile-title "$sub_label";\n'

@@ -117,6 +117,38 @@ installWsTls() {
         break
     done
 
+    # Спрашиваем про Reality
+    local install_reality=false
+    local realityDest="" realityPort=8443
+    echo ""
+    echo -e "${cyan}$(msg install_reality_prompt)${reset}"
+    echo -e "${green}1.${reset} $(msg install_reality_yes)"
+    echo -e "${green}2.${reset} $(msg install_reality_no)"
+    read -rp "$(msg choose)" reality_choice
+    if [ "${reality_choice:-1}" = "1" ]; then
+        install_reality=true
+        echo -e "${cyan}$(msg reality_dest_title)${reset}"
+        echo "1) microsoft.com:443"
+        echo "2) www.apple.com:443"
+        echo "3) www.amazon.com:443"
+        echo "$(msg reality_dest_custom)"
+        read -rp "Выбор [1]: " dest_choice
+        case "${dest_choice:-1}" in
+            1) realityDest="microsoft.com:443" ;;
+            2) realityDest="www.apple.com:443" ;;
+            3) realityDest="www.amazon.com:443" ;;
+            4) read -rp "$(msg reality_dest_prompt)" realityDest
+               [ -z "$realityDest" ] && realityDest="microsoft.com:443" ;;
+            *) realityDest="microsoft.com:443" ;;
+        esac
+        read -rp "$(msg reality_port_prompt)" realityPort
+        [ -z "$realityPort" ] && realityPort=8443
+        if ! [[ "$realityPort" =~ ^[0-9]+$ ]] || [ "$realityPort" -lt 1024 ] || [ "$realityPort" -gt 65535 ]; then
+            echo "${yellow}$(msg invalid_port) — использую 8443${reset}"
+            realityPort=8443
+        fi
+    fi
+
     echo -e "\n${green}---${reset}"
     run_task "Создание конфига Xray"   "writeXrayConfig '$xrayPort' '$wsPath' '$userDomain'"
     run_task "Создание конфига Nginx"  "writeNginxConfig '$xrayPort' '$userDomain' '$proxyUrl' '$wsPath'"
@@ -136,7 +168,19 @@ installWsTls() {
     systemctl enable --now xray
     systemctl restart xray nginx
 
+    # Устанавливаем Reality если выбрано
+    if $install_reality; then
+        echo -e "\n${cyan}--- Reality ---${reset}"
+        ufw allow "$realityPort"/tcp comment 'Xray Reality' 2>/dev/null || true
+        REALITY_INTERNAL_PORT=$realityPort
+        run_task "Конфиг Reality"  "writeRealityConfig '$realityPort' '$realityDest'"
+        run_task "Сервис Reality"  setupRealityService
+        [ -f "$warpDomainsFile" ] && applyWarpDomains
+        [ -f "$relayConfigFile" ]  && applyRelayDomains
+    fi
+
     echo -e "\n${green}$(msg install_complete)${reset}"
+    _initUsersFile
     getQrCode
 }
 
