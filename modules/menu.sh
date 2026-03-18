@@ -18,9 +18,61 @@ prepareSoftware() {
     run_task "Установка Cloudflare WARP" installWarp
 }
 
+_installNginxMainline() {
+    # Нам нужен nginx >= 1.19.4 для grpc_buffering и >= 1.15.6 для grpc_socket_keepalive
+    # Системный nginx на Ubuntu 20.04 = 1.18.0 — не подходит
+    # Устанавливаем из официального репозитория nginx.org (mainline)
+    local cur_ver
+    cur_ver=$(nginx -v 2>&1 | grep -oP '\d+\.\d+\.\d+' | head -1)
+    local cur_minor
+    cur_minor=$(echo "$cur_ver" | cut -d. -f2)
+
+    # Если уже >= 1.19 — достаточно
+    if [ -n "$cur_ver" ] && [ "${cur_minor:-0}" -ge 19 ]; then
+        echo "info: nginx $cur_ver already sufficient (>= 1.19.4), skipping."
+        return 0
+    fi
+
+    echo -e "${cyan}nginx $cur_ver too old, installing mainline from nginx.org...${reset}"
+
+    if command -v apt &>/dev/null; then
+        # Добавляем официальный nginx репо
+        installPackage gnupg2 || true
+        curl -fsSL https://nginx.org/keys/nginx_signing.key \
+            | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg 2>/dev/null
+        local codename
+        codename=$(lsb_release -cs 2>/dev/null || . /etc/os-release && echo "$VERSION_CODENAME")
+        echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] \
+http://nginx.org/packages/mainline/ubuntu ${codename} nginx" \
+            > /etc/apt/sources.list.d/nginx-mainline.list
+        # Pinning — предпочитаем nginx.org над системным
+        printf 'Package: *\nPin: origin nginx.org\nPin-Priority: 900\n' \
+            > /etc/apt/preferences.d/99nginx
+        apt-get update -qq 2>/dev/null
+        # Удаляем старый nginx если есть
+        apt-get remove -y nginx nginx-common nginx-core 2>/dev/null || true
+        apt-get install -y nginx
+    elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
+        cat > /etc/yum.repos.d/nginx-mainline.repo << 'YUMEOF'
+[nginx-mainline]
+name=nginx mainline repo
+baseurl=http://nginx.org/packages/mainline/centos/$releasever/$basearch/
+gpgcheck=1
+enabled=1
+gpgkey=https://nginx.org/keys/nginx_signing.key
+module_hotfixes=true
+YUMEOF
+        ${PACKAGE_MANAGEMENT_INSTALL} nginx
+    fi
+
+    local new_ver
+    new_ver=$(nginx -v 2>&1 | grep -oP '\d+\.\d+\.\d+' | head -1)
+    echo "${green}nginx installed: $new_ver${reset}"
+}
+
 prepareSoftwareWs() {
     prepareSoftware
-    run_task "Установка Nginx"   "installPackage nginx"   || true
+    run_task "Установка Nginx (mainline)" _installNginxMainline
 
     echo "--- [3/3] $(msg menu_sep_sec) ---"
     run_task "Настройка UFW" "ufw allow 22/tcp && ufw allow 443/tcp && echo 'y' | ufw enable"
