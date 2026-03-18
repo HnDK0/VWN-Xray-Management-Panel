@@ -106,9 +106,9 @@ _diagXray() {
         fi
         if [ -n "$grpc_port" ]; then
             if ss -tlnp 2>/dev/null | grep -q ":${grpc_port}"; then
-                _pass "$(msg diag_port_listen): gRPC $grpc_port"
+                _pass "$(msg diag_port_listen): gRPC :$grpc_port"
             else
-                _fail "$(msg diag_port_not_listen): gRPC $grpc_port"
+                _fail "$(msg diag_port_not_listen): gRPC :$grpc_port"
             fi
         fi
 
@@ -220,11 +220,27 @@ _diagNginx() {
     domain_in_conf=$(vwn_conf_get VWN_DOMAIN)
     if [ -n "$domain_in_conf" ]; then
         local resolved_ip server_ip
-        resolved_ip=$(getent hosts "$domain_in_conf" 2>/dev/null | awk '{print $1}' | head -1)
+        # Принудительно резолвим IPv4 — игнорируем IPv6 Cloudflare
+        resolved_ip=$(getent ahostsv4 "$domain_in_conf" 2>/dev/null | awk '/STREAM/{print $1}' | head -1)
+        # Fallback если ahostsv4 недоступен
+        [ -z "$resolved_ip" ] && resolved_ip=$(getent hosts "$domain_in_conf" 2>/dev/null | awk '{print $1}' | head -1)
         server_ip=$(getServerIP)
-        if   [ -z "$resolved_ip" ];          then _fail "$(msg diag_dns_fail): $domain_in_conf"
-        elif [ "$resolved_ip" = "$server_ip" ]; then _pass "$(msg diag_dns_ok): $domain_in_conf → $resolved_ip"
-        else _warn "$(msg diag_dns_mismatch): $domain_in_conf → $resolved_ip ($(msg diag_server_ip): $server_ip)"
+        if [ -z "$resolved_ip" ]; then
+            _fail "$(msg diag_dns_fail): $domain_in_conf"
+        elif [ "$resolved_ip" = "$server_ip" ]; then
+            _pass "$(msg diag_dns_ok): $domain_in_conf → $resolved_ip"
+        else
+            # Проверяем диапазоны Cloudflare proxy (IPv4)
+            local is_cf=0
+            for cf_range in 103.21.244 103.22.200 103.31.4 104.16 104.17 104.18 104.19 104.20 104.21 104.22 104.23 \
+                            108.162 141.101 162.158 172.64 172.65 172.66 172.67 173.245 188.114 190.93 197.234 198.41; do
+                [[ "$resolved_ip" == ${cf_range}.* ]] && is_cf=1 && break
+            done
+            if [ "$is_cf" -eq 1 ]; then
+                _warn "$(msg diag_dns_cf): $domain_in_conf → $resolved_ip (Cloudflare Proxy)"
+            else
+                _warn "$(msg diag_dns_mismatch): $domain_in_conf → $resolved_ip ($(msg diag_server_ip): $server_ip)"
+            fi
         fi
     fi
     echo ""
@@ -348,7 +364,6 @@ runFullDiag() {
 
     _diagSystem
     _diagXray
-    _diagHaproxy
     _diagNginx
     _diagWarp
     _diagTunnels
@@ -378,10 +393,9 @@ manageDiag() {
         echo -e "${green}1.${reset} $(msg diag_run_full)"
         echo -e "${green}2.${reset} $(msg diag_run_system)"
         echo -e "${green}3.${reset} $(msg diag_run_xray)"
-        echo -e "${green}5.${reset} $(msg diag_run_nginx)"
-        echo -e "${green}6.${reset} $(msg diag_run_warp)"
-        echo -e "${green}7.${reset} $(msg diag_run_tunnels)"
-        echo -e "${green}8.${reset} $(msg diag_run_connect)"
+        echo -e "${green}5.${reset} $(msg diag_run_warp)"
+        echo -e "${green}6.${reset} $(msg diag_run_tunnels)"
+        echo -e "${green}7.${reset} $(msg diag_run_connect)"
         echo -e "${green}0.${reset} $(msg back)"
         echo ""
         read -rp "$(msg choose)" choice
@@ -389,11 +403,10 @@ manageDiag() {
             1) runFullDiag ;;
             2) clear; _DIAG_ISSUES=(); _diagSystem ;;
             3) clear; _DIAG_ISSUES=(); _diagXray ;;
-            4) clear; _DIAG_ISSUES=(); _diagHaproxy ;;
-            5) clear; _DIAG_ISSUES=(); _diagNginx ;;
-            6) clear; _DIAG_ISSUES=(); _diagWarp ;;
-            7) clear; _DIAG_ISSUES=(); _diagTunnels ;;
-            8) clear; _DIAG_ISSUES=(); _diagConnectivity ;;
+            4) clear; _DIAG_ISSUES=(); _diagNginx ;;
+            5) clear; _DIAG_ISSUES=(); _diagWarp ;;
+            6) clear; _DIAG_ISSUES=(); _diagTunnels ;;
+            7) clear; _DIAG_ISSUES=(); _diagConnectivity ;;
             0) break ;;
         esac
         [ "$choice" = "0" ] && continue

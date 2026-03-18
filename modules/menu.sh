@@ -261,12 +261,14 @@ manageWs() {
         [ -n "$s_connect" ] && echo -e "  CDN:   ${green}${s_connect}${reset}"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
         if [ -f "$configPath" ]; then
-            echo -e "  $(printf "%-7s" "XHTTP:")$s_ws  $(_portSt "$s_xhttp_port") ${green}${s_xhttp_path:-—}${reset}  :${s_xhttp_port:-—}"
-            echo -e "  $(printf "%-7s" "gRPC:") $s_ws  $(_portSt "$s_grpc_port") ${green}${s_grpc_svc:-—}${reset}  :${s_grpc_port:-—}"
+            local s_ws_c
+            s_ws_c=$(_pval "$s_ws" 7)
+            echo -e "  XHTTP: $s_ws_c $(_portSt "$s_xhttp_port") ${green}${s_xhttp_path:-—}${reset}  :${s_xhttp_port:-—}"
+            echo -e "  gRPC:  $s_ws_c $(_portSt "$s_grpc_port") ${green}${s_grpc_svc:-—}${reset}  :${s_grpc_port:-—}"
             echo -e "  $(msg lbl_domain): ${green}${s_domain}${reset}"
         else
-            echo -e "  $(printf "%-7s" "XHTTP:")${yellow}NOT INSTALLED${reset}"
-            echo -e "  $(printf "%-7s" "gRPC:") ${yellow}NOT INSTALLED${reset}"
+            echo -e "  XHTTP: ${red}NOT INSTALLED${reset}"
+            echo -e "  gRPC:  ${red}NOT INSTALLED${reset}"
         fi
         echo -e "${cyan}================================================================${reset}"
         echo -e "  ${cyan}$(msg menu_sep_config)${reset}"
@@ -353,26 +355,26 @@ menu() {
         echo -e "  ${cyan}── $(msg menu_sep_proto_short) ──────────────────────────────────────────${reset}"
         _pst() { [ -n "$1" ] && ss -tlnp 2>/dev/null | grep -q ":${1}" && echo "${green}●${reset}" || echo "${red}○${reset}"; }
         if [ -f "$configPath" ]; then
-            local _xhttp_path _grpc_svc _xhttp_port _grpc_port
+            local _xhttp_port _grpc_port
             _xhttp_port=$(jq -r '.inbounds[] | select(.tag=="xhttp-inbound") | .port' "$configPath" 2>/dev/null | head -1)
             _grpc_port=$(jq -r '.inbounds[] | select(.tag=="grpc-inbound") | .port' "$configPath" 2>/dev/null | head -1)
-            echo -e "  $(printf "%-8s" "XHTTP:")${green}$(get_xhttp_path)${reset}  :$(jq -r '[.inbounds[] | select(.tag=="xhttp-inbound")] | .[0].port' "$configPath" 2>/dev/null)"
-            echo -e "  $(printf "%-8s" "gRPC:") ${green}$(get_grpc_service)${reset}  :$(jq -r '[.inbounds[] | select(.tag=="grpc-inbound")] | .[0].port' "$configPath" 2>/dev/null)"
+            echo -e "  XHTTP:  $s_ws_c $(_pst "$_xhttp_port") ${green}$(get_xhttp_path)${reset}  :${_xhttp_port}"
+            echo -e "  gRPC:   $s_ws_c $(_pst "$_grpc_port") ${green}$(get_grpc_service)${reset}  :${_grpc_port}"
         else
-            echo -e "  $(printf "%-8s" "XHTTP:")${yellow}NOT INSTALLED${reset}"
-            echo -e "  $(printf "%-8s" "gRPC:") ${yellow}NOT INSTALLED${reset}"
+            echo -e "  XHTTP:  ${red}NOT INSTALLED${reset}"
+            echo -e "  gRPC:   ${red}NOT INSTALLED${reset}"
         fi
         if [ -f "$realityConfigPath" ]; then
             local _r_port _r_dest
             _r_port=$(jq -r '.inbounds[0].port' "$realityConfigPath" 2>/dev/null)
             _r_dest=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0] // "—"' "$realityConfigPath" 2>/dev/null)
-            echo -e "  $(printf "%-8s" "Reality:")$s_reality_c  $(_pst "$_r_port") ${green}${_r_dest}${reset}  :${_r_port}"
+            echo -e "  Reality: $s_reality_c $(_pst "$_r_port") ${green}${_r_dest}${reset}  :${_r_port}"
         else
-            echo -e "  $(printf "%-8s" "Reality:")${yellow}NOT INSTALLED${reset}"
+            echo -e "  Reality: ${red}NOT INSTALLED${reset}"
         fi
-        echo -e "  Nginx: $s_nginx,  SSL: $s_ssl"
-        echo -e "  $(printf "%-8s" "WARP:")$s_warp"
-        [ -n "$s_connect" ] && echo -e "  $(printf "%-8s" "CDN:")${green}${s_connect}${reset}"
+        echo -e "  Nginx:  $s_nginx_c,  SSL: $s_ssl"
+        echo -e "  WARP:   $s_warp"
+        [ -n "$s_connect" ] && echo -e "  CDN:    ${green}${s_connect}${reset}"
         echo -e "  ${cyan}── $(msg menu_sep_tun_short) ───────────────────────────────────────────${reset}"
         echo -e "  Relay: $s_relay,  Psiphon: $s_psiphon,  Tor: $s_tor"
         echo -e "  ${cyan}── $(msg menu_sep_sec_short) ────────────────────────────────────────────${reset}"

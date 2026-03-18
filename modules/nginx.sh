@@ -10,6 +10,24 @@
 #   Client:$realityPort   → xray-reality (xray держит TLS сам)
 # =================================================================
 
+# ============================================================
+# Определяем синтаксис http2 в зависимости от версии nginx
+# < 1.25.1 : listen 443 ssl http2
+# >= 1.25.1: listen 443 ssl + http2 on;
+# ============================================================
+
+_nginx_h2_syntax() {
+    local ver major minor
+    ver=$(nginx -v 2>&1 | grep -oP '\d+\.\d+\.\d+' | head -1)
+    major=$(echo "$ver" | cut -d. -f1)
+    minor=$(echo "$ver" | cut -d. -f2)
+    if [ "${major:-0}" -gt 1 ] || { [ "${major:-0}" -eq 1 ] && [ "${minor:-0}" -ge 25 ]; }; then
+        echo "new"
+    else
+        echo "old"
+    fi
+}
+
 writeNginxConfig() {
     local domain="$1"
     local proxyUrl="$2"
@@ -57,6 +75,17 @@ http {
 }
 NGINXMAIN
 
+    # Определяем синтаксис http2
+    local h2_mode h2_listen h2_on
+    h2_mode=$(_nginx_h2_syntax)
+    if [ "$h2_mode" = "new" ]; then
+        h2_listen=""
+        h2_on="    http2 on;"
+    else
+        h2_listen=" http2"
+        h2_on=""
+    fi
+
     cat > "$nginxPath" << NGINXEOF
 map \$uri \$sub_label {
     ~^/sub/(?<label>[A-Za-z0-9_-]+)_[A-Za-z0-9]+\\.txt\$  "${country_code} VLESS | \$label";
@@ -71,9 +100,9 @@ server {
 }
 
 server {
-    listen 443 ssl so_keepalive=on;
-    listen [::]:443 ssl so_keepalive=on;
-    http2 on;
+    listen 443 ssl${h2_listen} so_keepalive=on;
+    listen [::]:443 ssl${h2_listen} so_keepalive=on;
+${h2_on}
     server_name $domain;
 
     ssl_certificate     $certFile;

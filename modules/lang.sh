@@ -630,6 +630,7 @@ _initLang() {
     MSG[diag_dns_ok]=$(           [ "$VWN_LANG" = en ] && echo "DNS resolves correctly" || echo "DNS резолвится корректно")
     MSG[diag_dns_fail]=$(         [ "$VWN_LANG" = en ] && echo "DNS resolution failed!" || echo "DNS не резолвится!")
     MSG[diag_dns_mismatch]=$(     [ "$VWN_LANG" = en ] && echo "DNS points elsewhere"   || echo "DNS указывает не на этот сервер")
+    MSG[diag_dns_cf]=$(           [ "$VWN_LANG" = en ] && echo "DNS via Cloudflare Proxy" || echo "DNS через Cloudflare Proxy")
     MSG[diag_server_ip]=$(        [ "$VWN_LANG" = en ] && echo "server IP"              || echo "IP сервера")
     MSG[diag_warp_svc_running]=$( [ "$VWN_LANG" = en ] && echo "warp-svc running"       || echo "warp-svc запущен")
     MSG[diag_warp_svc_stopped]=$( [ "$VWN_LANG" = en ] && echo "warp-svc stopped!"      || echo "warp-svc не запущен!")
