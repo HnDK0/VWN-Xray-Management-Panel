@@ -70,10 +70,12 @@ applyWarpDomains() {
         local has_rule
         has_rule=$(jq '.routing.rules[] | select(.outboundTag=="warp")' "$cfg" 2>/dev/null)
         if [ -z "$has_rule" ]; then
+            # Правила нет — вставляем после block (индекс 0)
             jq --argjson r "$warp_rule" \
                 '.routing.rules = [.routing.rules[0]] + [$r] + .routing.rules[1:]' \
                 "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
         else
+            # Правило есть — обновляем домены, убираем port
             jq --argjson doms "[$domains_json]" \
                 '(.routing.rules[] | select(.outboundTag == "warp")) |= (.domain = $doms | del(.port))' \
                 "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
@@ -143,6 +145,7 @@ checkWarpStatus() {
 addDomainToWarpProxy() {
     read -rp "$(msg warp_domain_add)" domain
     [ -z "$domain" ] && return
+    # Убираем ведущую точку и префикс domain: при сохранении
     domain=$(echo "$domain" | sed 's/^domain://;s/^\.//')
     [ -z "$domain" ] && return
     [ ! -f "$warpDomainsFile" ] && touch "$warpDomainsFile"
@@ -177,61 +180,58 @@ MAX_LATENCY=8
 LOG_TAG="warp-watchdog"
 LOCKFILE="/tmp/warp-watchdog.lock"
 
-# Защита от параллельных запусков
 if [ -f "$LOCKFILE" ]; then
-    # Проверяем что процесс действительно жив
     lock_pid=$(cat "$LOCKFILE" 2>/dev/null)
     if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
         exit 0
     fi
-    # Процесс мёртв — удаляем старый lock
     rm -f "$LOCKFILE"
 fi
 echo $$ > "$LOCKFILE"
 trap 'rm -f "$LOCKFILE"' EXIT
 
-# Если warp-cli не установлен — выходим тихо
+_wc() {
+    if warp-cli --help 2>&1 | grep -q "accept-tos"; then
+        warp-cli --accept-tos "$@"
+    else
+        warp-cli "$@"
+    fi
+}
+
 command -v warp-cli &>/dev/null || exit 0
 
-# Если warp-svc не активен — пробуем запустить мягко
 if ! systemctl is-active --quiet warp-svc 2>/dev/null; then
     logger -t "$LOG_TAG" "warp-svc not running, starting..."
     systemctl start warp-svc
     sleep 5
-    _warp_cmd connect 2>/dev/null
+    _wc connect 2>/dev/null
     exit 0
 fi
 
-# Если порт 40000 не слушается — reconnect (не restart сервиса)
 if ! ss -tlnp 2>/dev/null | grep -q ':40000'; then
     logger -t "$LOG_TAG" "port 40000 not listening, reconnecting..."
-    _warp_cmd disconnect 2>/dev/null
+    _wc disconnect 2>/dev/null
     sleep 2
-    _warp_cmd connect 2>/dev/null
+    _wc connect 2>/dev/null
     sleep 5
 fi
 
-# Первая проверка связности
 result=$(curl -s --connect-timeout "$MAX_LATENCY" -x "$PROXY" "$CHECK_URL" 2>/dev/null)
-if echo "$result" | grep -q "warp=on\|warp=plus"; then
-    exit 0
-fi
+if echo "$result" | grep -q "warp=on\|warp=plus"; then exit 0; fi
 
 logger -t "$LOG_TAG" "first check failed, retrying in 20s..."
 sleep 20
 
-# Повторная проверка
 result=$(curl -s --connect-timeout "$MAX_LATENCY" -x "$PROXY" "$CHECK_URL" 2>/dev/null)
 if echo "$result" | grep -q "warp=on\|warp=plus"; then
     logger -t "$LOG_TAG" "WARP recovered on retry."
     exit 0
 fi
 
-# Мягкий reconnect — НЕ перезапускаем warp-svc
 logger -t "$LOG_TAG" "WARP down — reconnecting (soft)..."
-_warp_cmd disconnect 2>/dev/null
+_wc disconnect 2>/dev/null
 sleep 3
-_warp_cmd connect 2>/dev/null
+_wc connect 2>/dev/null
 sleep 8
 
 result=$(curl -s --connect-timeout "$MAX_LATENCY" -x "$PROXY" "$CHECK_URL" 2>/dev/null)
@@ -240,11 +240,10 @@ if echo "$result" | grep -q "warp=on\|warp=plus"; then
     exit 0
 fi
 
-# Только если совсем не помогло — жёсткий перезапуск сервиса
 logger -t "$LOG_TAG" "WARP still down — restarting warp-svc (hard)..."
 systemctl restart warp-svc
 sleep 10
-_warp_cmd connect 2>/dev/null
+_wc connect 2>/dev/null
 WDOG
 
     chmod +x /usr/local/bin/warp-watchdog.sh

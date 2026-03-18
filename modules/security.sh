@@ -126,55 +126,6 @@ manageUFW() {
     done
 }
 
-applySysctl() {
-    cat > /etc/sysctl.d/99-xray.conf << 'SYSCTL'
-# Файловые дескрипторы
-fs.file-max = 200000
-
-# Сетевые буферы
-net.core.rmem_max = 67108864
-net.core.wmem_max = 67108864
-net.core.netdev_max_backlog = 250000
-net.core.somaxconn = 65535
-
-# TCP
-net.ipv4.tcp_syncookies = 1
-net.ipv4.tcp_tw_reuse = 1
-net.ipv4.tcp_fin_timeout = 10
-net.ipv4.tcp_max_syn_backlog = 8192
-net.ipv4.tcp_max_tw_buckets = 5000
-net.ipv4.tcp_fastopen = 3
-net.ipv4.tcp_mtu_probing = 1
-net.ipv4.tcp_mem = 25600 51200 102400
-net.ipv4.tcp_rmem = 4096 65536 67108864
-net.ipv4.tcp_wmem = 4096 65536 67108864
-net.ipv4.ip_local_port_range = 10000 65000
-
-# TCP keepalive — держит WS соединения живыми через NAT мобильных операторов
-net.ipv4.tcp_keepalive_time = 120
-net.ipv4.tcp_keepalive_intvl = 10
-net.ipv4.tcp_keepalive_probes = 3
-
-# BBR
-net.core.default_qdisc = fq
-net.ipv4.tcp_congestion_control = bbr
-
-# Conntrack
-net.netfilter.nf_conntrack_max = 1000000
-
-# ICMP — скрыть сервер от пингов
-net.ipv4.icmp_echo_ignore_all = 1
-net.ipv6.icmp.echo_ignore_all = 1
-
-# IPv6 отключить — принудительный IPv4
-net.ipv6.conf.all.disable_ipv6 = 1
-net.ipv6.conf.default.disable_ipv6 = 1
-net.ipv6.conf.lo.disable_ipv6 = 1
-SYSCTL
-    sysctl --system &>/dev/null
-    sysctl -p /etc/sysctl.d/99-xray.conf &>/dev/null
-    echo "${green}$(msg sysctl_ok)${reset}"
-}
 getIPv6Status() {
     local val
     val=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)
@@ -184,24 +135,19 @@ getIPv6Status() {
 toggleIPv6() {
     local current
     current=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)
-
     if [ "$current" = "1" ]; then
-        # Включаем IPv6
         sysctl -w net.ipv6.conf.all.disable_ipv6=0 &>/dev/null
         sysctl -w net.ipv6.conf.default.disable_ipv6=0 &>/dev/null
         sysctl -w net.ipv6.conf.lo.disable_ipv6=0 &>/dev/null
         sysctl -w net.ipv6.icmp.echo_ignore_all=0 &>/dev/null
-        # Убираем из постоянного конфига
         sed -i '/disable_ipv6/d' /etc/sysctl.d/99-xray.conf 2>/dev/null || true
         sed -i '/ipv6.*icmp.*ignore/d' /etc/sysctl.d/99-xray.conf 2>/dev/null || true
         echo "${green}$(msg ipv6_enabled)${reset}"
     else
-        # Отключаем IPv6
         sysctl -w net.ipv6.conf.all.disable_ipv6=1 &>/dev/null
         sysctl -w net.ipv6.conf.default.disable_ipv6=1 &>/dev/null
         sysctl -w net.ipv6.conf.lo.disable_ipv6=1 &>/dev/null
         sysctl -w net.ipv6.icmp.echo_ignore_all=1 &>/dev/null
-        # Добавляем в постоянный конфиг если нет
         if ! grep -q "disable_ipv6" /etc/sysctl.d/99-xray.conf 2>/dev/null; then
             cat >> /etc/sysctl.d/99-xray.conf << 'SYSCTL'
 # IPv6
@@ -213,4 +159,23 @@ SYSCTL
         fi
         echo "${red}$(msg ipv6_disabled)${reset}"
     fi
+}
+
+applySysctl() {
+    cat > /etc/sysctl.d/99-xray.conf << 'SYSCTL'
+net.ipv4.icmp_echo_ignore_all = 1
+net.ipv6.icmp.echo_ignore_all = 1
+net.core.somaxconn = 65535
+net.ipv4.tcp_max_syn_backlog = 65535
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
+# TCP keepalive — держит WS соединения живыми через NAT мобильных операторов
+net.ipv4.tcp_keepalive_time = 120
+net.ipv4.tcp_keepalive_intvl = 10
+net.ipv4.tcp_keepalive_probes = 3
+SYSCTL
+    sysctl --system &>/dev/null
+    sysctl -p /etc/sysctl.d/99-xray.conf &>/dev/null
+    echo "${green}$(msg sysctl_ok)${reset}"
 }

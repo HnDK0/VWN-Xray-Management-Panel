@@ -1,6 +1,6 @@
 #!/bin/bash
 # =================================================================
-# install.sh — Установщик VWN (Xray VLESS + XHTTP + gRPC + TLS + Nginx + WARP + Reality)
+# install.sh — Установщик VWN (Xray VLESS + WARP + CDN + Reality)
 # Использование:
 #   bash install.sh          — первая установка
 #   bash install.sh --update — обновить модули (конфиги не трогает)
