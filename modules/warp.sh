@@ -19,23 +19,33 @@ installWarp() {
     installPackage "cloudflare-warp"
 }
 
+# Обёртка для совместимости: старые версии warp-cli требуют --accept-tos,
+# новые (2024+) убрали этот флаг
+_warp_cmd() {
+    if warp-cli --help 2>&1 | grep -q "accept-tos"; then
+        warp-cli --accept-tos "$@"
+    else
+        warp-cli "$@"
+    fi
+}
+
 configWarp() {
     systemctl enable --now warp-svc
     sleep 3
 
-    if ! warp-cli --accept-tos registration show &>/dev/null; then
-        warp-cli --accept-tos registration delete &>/dev/null || true
+    if ! _warp_cmd registration show &>/dev/null; then
+        _warp_cmd registration delete &>/dev/null || true
         local attempts=0
         while [ $attempts -lt 3 ]; do
-            warp-cli --accept-tos registration new && break
+            _warp_cmd registration new && break
             attempts=$((attempts + 1))
             sleep 3
         done
     fi
 
-    warp-cli --accept-tos mode proxy
-    warp-cli --accept-tos set-proxy-port 40000 2>/dev/null || true
-    warp-cli --accept-tos connect
+    _warp_cmd mode proxy
+    _warp_cmd set-proxy-port 40000 2>/dev/null || true
+    _warp_cmd connect
     sleep 5
 
     local warp_check
@@ -188,16 +198,16 @@ if ! systemctl is-active --quiet warp-svc 2>/dev/null; then
     logger -t "$LOG_TAG" "warp-svc not running, starting..."
     systemctl start warp-svc
     sleep 5
-    warp-cli --accept-tos connect 2>/dev/null
+    _warp_cmd connect 2>/dev/null
     exit 0
 fi
 
 # Если порт 40000 не слушается — reconnect (не restart сервиса)
 if ! ss -tlnp 2>/dev/null | grep -q ':40000'; then
     logger -t "$LOG_TAG" "port 40000 not listening, reconnecting..."
-    warp-cli --accept-tos disconnect 2>/dev/null
+    _warp_cmd disconnect 2>/dev/null
     sleep 2
-    warp-cli --accept-tos connect 2>/dev/null
+    _warp_cmd connect 2>/dev/null
     sleep 5
 fi
 
@@ -219,9 +229,9 @@ fi
 
 # Мягкий reconnect — НЕ перезапускаем warp-svc
 logger -t "$LOG_TAG" "WARP down — reconnecting (soft)..."
-warp-cli --accept-tos disconnect 2>/dev/null
+_warp_cmd disconnect 2>/dev/null
 sleep 3
-warp-cli --accept-tos connect 2>/dev/null
+_warp_cmd connect 2>/dev/null
 sleep 8
 
 result=$(curl -s --connect-timeout "$MAX_LATENCY" -x "$PROXY" "$CHECK_URL" 2>/dev/null)
@@ -234,7 +244,7 @@ fi
 logger -t "$LOG_TAG" "WARP still down — restarting warp-svc (hard)..."
 systemctl restart warp-svc
 sleep 10
-warp-cli --accept-tos connect 2>/dev/null
+_warp_cmd connect 2>/dev/null
 WDOG
 
     chmod +x /usr/local/bin/warp-watchdog.sh

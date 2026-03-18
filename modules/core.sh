@@ -226,7 +226,7 @@ _getTunnelMode() {
 getWarpStatusRaw() {
     if command -v warp-cli &>/dev/null; then
         local out
-        out=$(warp-cli --accept-tos status 2>/dev/null)
+        out=$(warp-cli --accept-tos status 2>/dev/null || warp-cli status 2>/dev/null)
         if echo "$out" | grep -qi "connected"; then
             echo "ACTIVE"
             return

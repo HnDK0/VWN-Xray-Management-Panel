@@ -393,6 +393,7 @@ manageDiag() {
         echo -e "${green}1.${reset} $(msg diag_run_full)"
         echo -e "${green}2.${reset} $(msg diag_run_system)"
         echo -e "${green}3.${reset} $(msg diag_run_xray)"
+        echo -e "${green}4.${reset} $(msg diag_run_haproxy)"
         echo -e "${green}5.${reset} $(msg diag_run_warp)"
         echo -e "${green}6.${reset} $(msg diag_run_tunnels)"
         echo -e "${green}7.${reset} $(msg diag_run_connect)"

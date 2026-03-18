@@ -145,10 +145,11 @@ installWsTls() {
     # Устанавливаем Reality если выбрано
     if $install_reality; then
         echo -e "\n${cyan}--- Reality ---${reset}"
+        # Открываем UFW порт ДО запуска сервиса
+        ufw allow "$realityPort"/tcp comment 'Xray Reality' 2>/dev/null || true
         REALITY_INTERNAL_PORT=$realityPort
         run_task "Конфиг Reality"   "writeRealityConfig '$realityDest'"
         run_task "Сервис Reality"   setupRealityService
-        ufw allow "$realityPort"/tcp comment 'Xray Reality' 2>/dev/null || true
         [ -f "$warpDomainsFile" ] && applyWarpDomains
         [ -f "$relayConfigFile" ]  && applyRelayDomains
     fi

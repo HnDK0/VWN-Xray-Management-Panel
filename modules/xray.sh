@@ -107,7 +107,7 @@ writeXrayConfig() {
                 "path": "/$xhttpPath/",
                 "host": "$domain",
                 "mode": "auto",
-                "scStreamUpServerSecs": "20-80"
+                "xPaddingBytes": "100-1000"
             }
         }
     },
@@ -197,8 +197,10 @@ writeXrayConfig() {
     "policy": {
         "levels": {
             "0": {
-                "handshake": 2,
-                "connIdle": 120
+                "handshake": 4,
+                "connIdle": 300,
+                "uplinkOnly": 2,
+                "downlinkOnly": 5
             }
         }
     }

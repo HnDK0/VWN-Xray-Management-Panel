@@ -123,21 +123,23 @@ ${h2_on}
             return 404;
         }
         client_max_body_size    0;
-        client_body_buffer_size 512k;
+        client_body_buffer_size 1m;
         client_body_timeout     52w;
         grpc_read_timeout       52w;
         grpc_send_timeout       52w;
+        grpc_socket_keepalive   on;
         grpc_set_header         X-Real-IP \$remote_addr;
         grpc_pass               grpc://127.0.0.1:$grpcPort;
     }
 
-    # ── XHTTP inbound (stream-up/auto, trailing slash обязателен) ──
+    # ── XHTTP inbound (stream-one, trailing slash обязателен) ──────
     location /${xhttpPath}/ {
         client_max_body_size 0;
-        client_body_timeout  1w;
+        client_body_timeout  52w;
         grpc_read_timeout    315s;
         grpc_send_timeout    5m;
         grpc_buffering       off;
+        grpc_socket_keepalive on;
         grpc_set_header      X-Real-IP \$remote_addr;
         grpc_pass            grpc://127.0.0.1:$xhttpPort;
     }

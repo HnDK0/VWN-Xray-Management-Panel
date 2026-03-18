@@ -156,6 +156,13 @@ applyTorDomains() {
     local domains_json
     domains_json=$(awk 'NF {printf "\"domain:%s\",", $1}' "$torDomainsFile" | sed 's/,$//')
 
+    # Если список доменов пуст — удаляем rule из конфигов, не применяем невалидный domain:[]
+    if [ -z "$domains_json" ]; then
+        echo "${yellow}$(msg tor_domains_empty)${reset}"
+        removeTorFromConfigs
+        return 0
+    fi
+
     applyTorOutbound
 
     for cfg in "$configPath" "$realityConfigPath"; do
@@ -205,6 +212,7 @@ checkTorIP() {
         fi
         echo "$(msg tor_retry_fail)"
         i=$((i + 1))
+        [ $i -le $attempts ] && sleep 3
     done
     echo "${red}$(msg tor_check_failed)${reset}"
 }

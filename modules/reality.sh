@@ -4,8 +4,6 @@
 # Reality слушает на 0.0.0.0:REALITY_INTERNAL_PORT (по умолчанию 8443)
 # =================================================================
 
-source "${VWN_LIB}/core.sh"
-
 # Публичный порт xray-reality (слушает на 0.0.0.0, открыт через UFW)
 REALITY_INTERNAL_PORT=8443
 
@@ -166,8 +164,10 @@ writeRealityConfig() {
     "policy": {
         "levels": {
             "0": {
-                "handshake": 2,
-                "connIdle": 120
+                "handshake": 4,
+                "connIdle": 300,
+                "uplinkOnly": 2,
+                "downlinkOnly": 5
             }
         }
     }
@@ -186,7 +186,7 @@ UUID:       $new_uuid
 PublicKey:  $pubKey
 ShortId:    $shortId
 ServerName: $destHost
-Port:       $port
+Port:       ${REALITY_INTERNAL_PORT}
 Flow:       xtls-rprx-vision
 EOF
 
