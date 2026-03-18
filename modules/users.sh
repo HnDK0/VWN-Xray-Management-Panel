@@ -125,7 +125,13 @@ buildUserSubFile() {
 
     if [ -f "$realityConfigPath" ]; then
         local r_uuid r_port r_shortId r_destHost r_pubKey r_name r_encoded_name
-        r_uuid=$(jq -r '.inbounds[0].settings.clients[0].id' "$realityConfigPath" 2>/dev/null)
+        # Ищем UUID этого пользователя в clients reality конфига
+        # Если не найден (старая установка без мульти-юзеров) — берём первого
+        r_uuid=$(jq -r --arg u "$uuid" \
+            '.inbounds[0].settings.clients[] | select(.id==$u) | .id' \
+            "$realityConfigPath" 2>/dev/null | head -1)
+        [ -z "$r_uuid" ] && \
+            r_uuid=$(jq -r '.inbounds[0].settings.clients[0].id' "$realityConfigPath" 2>/dev/null)
         r_port=$(jq -r '.inbounds[0].port' "$realityConfigPath" 2>/dev/null)
         r_shortId=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0]' "$realityConfigPath" 2>/dev/null)
         r_destHost=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0]' "$realityConfigPath" 2>/dev/null)
