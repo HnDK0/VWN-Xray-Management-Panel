@@ -4,7 +4,7 @@
 # Архитектура:
 #   Client:443 → Nginx (TLS, http2 on)
 #     ├── /$grpcService   → grpc_pass → xray grpc-inbound (plain)
-#     ├── /$xhttpPath/    → grpc_pass → xray xhttp-inbound (stream-one)
+#     ├── /$xhttpPath/    → grpc_pass → xray xhttp-inbound (stream-up/auto)
 #     ├── /sub/           → файлы подписок
 #     └── /               → proxy_pass → заглушка
 #   Client:$realityPort   → xray-reality (xray держит TLS сам)
@@ -114,32 +114,31 @@ ${h2_on}
     ssl_session_timeout 1d;
     ssl_session_tickets off;
 
-    client_header_timeout 1w;
-    keepalive_timeout     30m;
+    client_header_timeout 52w;
+    keepalive_timeout     52w;
 
     # ── gRPC inbound ───────────────────────────────────────────────
-    location /$grpcService {
+    location /$grpcService/Tun {
         if (\$content_type !~ "^application/grpc") {
             return 404;
         }
         client_max_body_size    0;
         client_body_buffer_size 512k;
-        client_body_timeout     1w;
-        grpc_read_timeout       1w;
-        grpc_send_timeout       1w;
+        client_body_timeout     52w;
+        grpc_read_timeout       52w;
+        grpc_send_timeout       52w;
         grpc_set_header         X-Real-IP \$remote_addr;
-        grpc_set_header         Host \$host;
         grpc_pass               grpc://127.0.0.1:$grpcPort;
     }
 
-    # ── XHTTP inbound (stream-one, trailing slash обязателен) ───────
+    # ── XHTTP inbound (stream-up/auto, trailing slash обязателен) ──
     location /${xhttpPath}/ {
         client_max_body_size 0;
         client_body_timeout  1w;
         grpc_read_timeout    315s;
         grpc_send_timeout    5m;
+        grpc_buffering       off;
         grpc_set_header      X-Real-IP \$remote_addr;
-        grpc_set_header      Host \$host;
         grpc_pass            grpc://127.0.0.1:$xhttpPort;
     }
 

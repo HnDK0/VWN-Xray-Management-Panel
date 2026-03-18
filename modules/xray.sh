@@ -105,7 +105,9 @@ writeXrayConfig() {
             "security": "none",
             "xhttpSettings": {
                 "path": "/$xhttpPath/",
-                "mode": "stream-one"
+                "host": "$domain",
+                "mode": "auto",
+                "scStreamUpServerSecs": "20-80"
             }
         }
     },
@@ -265,7 +267,7 @@ getShareUrlXhttp() {
     name=$(_getConfigName "XHTTP" "$label")
     encoded_name=$(python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))" \
         "$name" 2>/dev/null) || encoded_name="$name"
-    echo "vless://${xray_uuid}@${xray_userDomain}:443?encryption=none&security=tls&sni=${xray_userDomain}&fp=chrome&type=xhttp&host=${xray_userDomain}&path=${encoded_path}&mode=stream-one#${encoded_name}"
+    echo "vless://${xray_uuid}@${xray_userDomain}:443?encryption=none&security=tls&sni=${xray_userDomain}&fp=chrome&type=xhttp&host=${xray_userDomain}&path=${encoded_path}&mode=auto#${encoded_name}"
 }
 
 getShareUrlGrpc() {
@@ -300,7 +302,7 @@ getQrCode() {
 
         # XHTTP
         url_xhttp=$(getShareUrlXhttp "default")
-        echo -e "${cyan}[ XHTTP (stream-one) ]${reset}"
+        echo -e "${cyan}[ XHTTP (XHTTP (auto) ]${reset}"
         qrencode -s 1 -m 1 -t ANSIUTF8 "$url_xhttp" 2>/dev/null || true
         echo -e "\n${green}${url_xhttp}${reset}\n"
 

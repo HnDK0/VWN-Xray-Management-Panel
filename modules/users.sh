@@ -116,7 +116,7 @@ buildUserSubFile() {
         xhttp_name="${flag} VL-XHTTP | ${label} ${flag}"
         xhttp_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" \
             "$xhttp_name" 2>/dev/null || echo "$xhttp_name")
-        lines+="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=xhttp&host=${domain}&path=${xep}&mode=stream-one#${xhttp_encoded_name}"$'\n'
+        lines+="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=xhttp&host=${domain}&path=${xep}&mode=auto#${xhttp_encoded_name}"$'\n'
 
         # gRPC
         local grpc_service grpc_name grpc_encoded_name
@@ -392,7 +392,7 @@ showUserQR() {
         xhttp_name="${flag} VL-XHTTP | ${label} ${flag}"
         xhttp_encoded=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" \
             "$xhttp_name" 2>/dev/null || echo "$xhttp_name")
-        url_xhttp="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=xhttp&host=${domain}&path=${xep}&mode=stream-one#${xhttp_encoded}"
+        url_xhttp="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=xhttp&host=${domain}&path=${xep}&mode=auto#${xhttp_encoded}"
         echo -e "${cyan}[ XHTTP ]${reset}"
         qrencode -s 1 -m 1 -t ANSIUTF8 "$url_xhttp" 2>/dev/null || true
         echo -e "\n${green}${url_xhttp}${reset}\n"
