@@ -375,7 +375,7 @@ menu() {
         echo -e "  ${cyan}── $(msg menu_sep_tun_short) ───────────────────────────────────────────${reset}"
         echo -e "  Relay: $s_relay,  Psiphon: $s_psiphon,  Tor: $s_tor"
         echo -e "  ${cyan}── $(msg menu_sep_sec_short) ────────────────────────────────────────────${reset}"
-        echo -e "  BBR: $s_bbr,  F2B: $s_f2b,  Jail: $s_jail,  IPv6: $(getIPv6Status)"
+        echo -e "  BBR: $s_bbr,  F2B: $s_f2b,  Jail: $s_jail,  IPv6: $(getIPv6Status),  CPU Guard: $(getCpuGuardStatus)"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
 
         echo -e "  ${green}1.${reset}  $(msg menu_install)"
@@ -401,19 +401,20 @@ menu() {
         echo -e "  ${green}17.${reset} $(msg menu_ssh)"
         echo -e "  ${green}18.${reset} $(msg menu_ufw)"
         echo -e "  ${green}19.${reset} $(msg menu_ipv6)"
+        echo -e "  ${green}20.${reset} $(msg menu_cpuguard)"
         echo -e "  $(msg menu_sep_logs)"
-        echo -e "  ${green}20.${reset} $(msg menu_xray_acc)"
-        echo -e "  ${green}21.${reset} $(msg menu_xray_err)"
-        echo -e "  ${green}22.${reset} $(msg menu_nginx_acc)"
-        echo -e "  ${green}23.${reset} $(msg menu_nginx_err)"
-        echo -e "  ${green}24.${reset} $(msg menu_clear_logs)"
+        echo -e "  ${green}21.${reset} $(msg menu_xray_acc)"
+        echo -e "  ${green}22.${reset} $(msg menu_xray_err)"
+        echo -e "  ${green}23.${reset} $(msg menu_nginx_acc)"
+        echo -e "  ${green}24.${reset} $(msg menu_nginx_err)"
+        echo -e "  ${green}25.${reset} $(msg menu_clear_logs)"
         echo -e "  $(msg menu_sep_svc)"
-        echo -e "  ${green}25.${reset} $(msg menu_restart)"
-        echo -e "  ${green}26.${reset} $(msg menu_update_xray)"
-        echo -e "  ${green}27.${reset} $(msg menu_diag)"
-        echo -e "  ${green}28.${reset} $(msg menu_backup)"
-        echo -e "  ${green}29.${reset} $(msg menu_lang)"
-        echo -e "  ${green}30.${reset} $(msg menu_remove)"
+        echo -e "  ${green}26.${reset} $(msg menu_restart)"
+        echo -e "  ${green}27.${reset} $(msg menu_update_xray)"
+        echo -e "  ${green}28.${reset} $(msg menu_diag)"
+        echo -e "  ${green}29.${reset} $(msg menu_backup)"
+        echo -e "  ${green}30.${reset} $(msg menu_lang)"
+        echo -e "  ${green}31.${reset} $(msg menu_remove)"
         echo -e "  $(msg menu_sep_exit)"
         echo -e "  ${green}0.${reset}  $(msg menu_exit)"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
@@ -439,18 +440,19 @@ menu() {
             17) changeSshPort ;;
             18) manageUFW ;;
             19) toggleIPv6 ;;
-            20) tail -n 80 /var/log/xray/access.log 2>/dev/null || echo "$(msg no_logs)" ;;
-            21) tail -n 80 /var/log/xray/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
-            22) tail -n 80 /var/log/nginx/access.log 2>/dev/null || echo "$(msg no_logs)" ;;
-            23) tail -n 80 /var/log/nginx/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
-            24) clearLogs ;;
-            25) systemctl restart xray xray-reality nginx warp-svc psiphon tor 2>/dev/null || true
+            20) setupCpuGuard ;;
+            21) tail -n 80 /var/log/xray/access.log 2>/dev/null || echo "$(msg no_logs)" ;;
+            22) tail -n 80 /var/log/xray/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
+            23) tail -n 80 /var/log/nginx/access.log 2>/dev/null || echo "$(msg no_logs)" ;;
+            24) tail -n 80 /var/log/nginx/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
+            25) clearLogs ;;
+            26) systemctl restart xray xray-reality nginx warp-svc psiphon tor 2>/dev/null || true
                 echo "${green}$(msg all_services_restarted)${reset}" ;;
-            26) updateXrayCore ;;
-            27) manageDiag ;;
-            28) manageBackup ;;
-            29) selectLang; _initLang ;;
-            30) fullRemove ;;
+            27) updateXrayCore ;;
+            28) manageDiag ;;
+            29) manageBackup ;;
+            30) selectLang; _initLang ;;
+            31) fullRemove ;;
             0)  exit 0 ;;
             *)  echo -e "${red}$(msg invalid)${reset}"; sleep 1 ;;
         esac

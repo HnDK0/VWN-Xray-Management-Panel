@@ -161,6 +161,77 @@ SYSCTL
     fi
 }
 
+getCpuGuardStatus() {
+    # Проверяем что приоритеты выставлены
+    local xray_weight
+    xray_weight=$(systemctl show xray.service -p CPUWeight 2>/dev/null | cut -d= -f2)
+    if [ "${xray_weight:-}" = "200" ]; then
+        echo "${green}ON${reset}"
+    else
+        echo "${red}OFF${reset}"
+    fi
+}
+
+setupCpuGuard() {
+    echo -e "${cyan}$(msg cpuguard_setup)${reset}"
+
+    # Высокий приоритет для основных сервисов
+    for svc in xray.service xray-reality.service nginx.service; do
+        systemctl set-property "$svc" CPUWeight=200 2>/dev/null || true
+    done
+
+    # Низкий приоритет для интерактивных сессий (SSH, случайные процессы)
+    systemctl set-property user.slice CPUWeight=20 2>/dev/null || true
+
+    # Персистентность — записываем в юниты чтобы пережило перезагрузку
+    for svc in xray xray-reality nginx; do
+        local drop_in="/etc/systemd/system/${svc}.service.d"
+        mkdir -p "$drop_in"
+        cat > "${drop_in}/cpuguard.conf" << 'EOF'
+[Service]
+CPUWeight=200
+Nice=-10
+EOF
+    done
+
+    # user.slice drop-in
+    mkdir -p /etc/systemd/system/user.slice.d
+    cat > /etc/systemd/system/user.slice.d/cpuguard.conf << 'EOF'
+[Slice]
+CPUWeight=20
+EOF
+
+    systemctl daemon-reload
+
+    echo "${green}$(msg cpuguard_ok)${reset}"
+    echo ""
+    echo -e "  xray:    ${green}CPUWeight=200, Nice=-10${reset}"
+    echo -e "  nginx:   ${green}CPUWeight=200, Nice=-10${reset}"
+    echo -e "  user.slice: ${yellow}CPUWeight=20${reset} (SSH сессии, посторонние процессы)"
+}
+
+removeCpuGuard() {
+    echo -e "${yellow}$(msg cpuguard_remove_confirm) $(msg yes_no)${reset}"
+    read -r confirm
+    [[ "$confirm" != "y" ]] && { echo "$(msg cancel)"; return 0; }
+
+    for svc in xray xray-reality nginx; do
+        rm -f "/etc/systemd/system/${svc}.service.d/cpuguard.conf"
+        rmdir "/etc/systemd/system/${svc}.service.d" 2>/dev/null || true
+    done
+    rm -f /etc/systemd/system/user.slice.d/cpuguard.conf
+    rmdir /etc/systemd/system/user.slice.d 2>/dev/null || true
+
+    systemctl daemon-reload
+    # Сбрасываем живые значения
+    systemctl set-property user.slice CPUWeight=100 2>/dev/null || true
+    for svc in xray.service xray-reality.service nginx.service; do
+        systemctl set-property "$svc" CPUWeight=100 2>/dev/null || true
+    done
+
+    echo "${green}$(msg removed)${reset}"
+}
+
 applySysctl() {
     cat > /etc/sysctl.d/99-xray.conf << 'SYSCTL'
 net.ipv4.icmp_echo_ignore_all = 1
