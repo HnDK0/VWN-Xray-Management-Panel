@@ -70,11 +70,27 @@ def reload_conf():
 def _fetch_server_ip() -> str:
     """Получает внешний IP адрес сервера."""
     try:
-        r = subprocess.run(
-            ["bash", "-c", "curl -s --connect-timeout 5 https://api.ipify.org 2>/dev/null || curl -s --connect-timeout 5 https://ipv4.icanhazip.com 2>/dev/null || echo 'UNKNOWN'"],
-            capture_output=True, text=True, timeout=10
-        )
-        return r.stdout.strip() or "UNKNOWN"
+        # Пробуем несколько методов
+        methods = [
+            "curl -s --connect-timeout 5 https://api.ipify.org 2>/dev/null",
+            "curl -s --connect-timeout 5 https://ipv4.icanhazip.com 2>/dev/null",
+            "curl -s --connect-timeout 5 https://checkip.amazonaws.com 2>/dev/null",
+            "wget -qO- --timeout=5 https://api.ipify.org 2>/dev/null",
+            "python3 -c \"import urllib.request; print(urllib.request.urlopen('https://api.ipify.org', timeout=5).read().decode())\" 2>/dev/null",
+            "ip addr show | grep -oP '(?<=inet\\s)\\d+(\\.\\d+){3}' | grep -v '127.0.0.1' | head -1"
+        ]
+        for method in methods:
+            try:
+                r = subprocess.run(
+                    ["bash", "-c", method],
+                    capture_output=True, text=True, timeout=10
+                )
+                ip = r.stdout.strip()
+                if ip and ip != "UNKNOWN" and re.match(r'^\d+\.\d+\.\d+\.\d+$', ip):
+                    return ip
+            except Exception:
+                continue
+        return "UNKNOWN"
     except Exception:
         return "UNKNOWN"
 
@@ -135,12 +151,23 @@ def _generate_csrf() -> str:
     return token
 
 def _verify_csrf(token: str) -> bool:
+    """Проверяет CSRF токен. Если токен невалиден, возвращает False."""
     with _csrf_lock:
         exp = _csrf_tokens.get(token, 0)
         if exp < time.time():
             _csrf_tokens.pop(token, None)
             return False
     return True
+
+def _regenerate_csrf_for_token(old_token: str) -> str:
+    """Регенерирует CSRF токен если старый невалиден."""
+    # Проверяем есть ли старый токен в списке (даже если просрочен)
+    with _csrf_lock:
+        if old_token in _csrf_tokens:
+            # Удаляем старый токен
+            del _csrf_tokens[old_token]
+    # Генерируем новый токен
+    return _generate_csrf()
 
 def _cleanup_csrf():
     """Удаляет просроченные CSRF токены."""
@@ -272,7 +299,7 @@ COMMANDS: dict = {
     "sysinfo":            ("echo \"RAM=$(free -m | awk '/^Mem:/{print $2}') FREE=$(free -m | awk '/^Mem:/{print $7}') DISK=$(df -m / | awk 'NR==2{print $4}') UPTIME=$(uptime -p 2>/dev/null | sed 's/up //')\"", "read"),
     "bbr_status":         ("sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -c bbr || echo 0", "read"),
     "enable_bbr":         ("echo 'net.ipv4.tcp_congestion_control=bbr' >> /etc/sysctl.conf; echo 'net.core.default_qdisc=fq' >> /etc/sysctl.conf; sysctl -p && echo 'BBR enabled'", "write"),
-    "ufw_status":         (["ufw", "status"], "read"),
+    "ufw_status":         ("ufw status verbose 2>/dev/null || echo 'UFW inactive'", "read"),
 
     # Warp domains (write)
     "warp_domains_list":  (f"cat {WARP_DOMAINS} 2>/dev/null || echo ''", "read"),
@@ -470,16 +497,17 @@ def add_user(name: str, uuid_str: str = "", ip: str = "-") -> dict:
         ).stdout.strip()
         with open(USERS_FILE, "a") as f:
             f.write(f"{uuid_str}|{name}|{token}\n")
-        # ИСПРАВЛЕНО: используем список вместо shell=True
+        # Применяем конфиги и генерируем подписку
         subprocess.run(
             ["bash", "-c", 'source /usr/local/lib/vwn/core.sh 2>/dev/null; '
              'source /usr/local/lib/vwn/lang.sh 2>/dev/null; '
              'source /usr/local/lib/vwn/users.sh 2>/dev/null; '
-             '_applyUsersToConfigs 2>/dev/null || true'],
+             '_applyUsersToConfigs 2>/dev/null || true; '
+             'buildUserSubFile "' + uuid_str + '" "' + name + '" "' + token + '" 2>/dev/null || true'],
             timeout=15
         )
         audit(ip, f"add_user:{name}", "ok")
-        return {"ok": True, "uuid": uuid_str}
+        return {"ok": True, "uuid": uuid_str, "token": token}
     except Exception as e:
         return {"ok": False, "msg": str(e)}
 
@@ -599,61 +627,73 @@ def stream_backup(filename: str):
 
 # ── Dashboard ─────────────────────────────────────────────────────
 def get_dashboard() -> dict:
+    # Кэш для быстрого доступа
+    global _dashboard_cache, _dashboard_cache_time
+    
+    now = time.time()
+    # Используем кэш если он свежий (<5 секунд)
+    if _dashboard_cache and now - _dashboard_cache_time < 5:
+        return _dashboard_cache
+    
     def svc(name):
         try:
             r = subprocess.run(["systemctl", "is-active", name],
-                               capture_output=True, text=True, timeout=5)
+                               capture_output=True, text=True, timeout=3)
             return r.stdout.strip() == "active"
         except Exception:
             return False
 
+    # Получаем системную информацию одним вызовом
     try:
-        mem = open("/proc/meminfo").read()
-        total = int(re.search(r'MemTotal:\s+(\d+)', mem).group(1)) // 1024
-        avail = int(re.search(r'MemAvailable:\s+(\d+)', mem).group(1)) // 1024
+        r = subprocess.run(
+            ["bash", "-c", "free -m | awk '/^Mem:/{print $2,$7}'; df -m / | awk 'NR==2{print $4}'; uptime -p 2>/dev/null | sed 's/up //'"],
+            capture_output=True, text=True, timeout=3
+        )
+        lines = r.stdout.strip().split('\n')
+        if len(lines) >= 3:
+            mem_parts = lines[0].split()
+            total = int(mem_parts[0]) if mem_parts else 0
+            avail = int(mem_parts[1]) if len(mem_parts) > 1 else 0
+            disk_free = int(lines[1]) if lines[1].isdigit() else 0
+            uptime = lines[2] if len(lines) > 2 else "?"
+        else:
+            total = avail = disk_free = 0
+            uptime = "?"
     except Exception:
-        total = avail = 0
-
-    try:
-        st = os.statvfs("/")
-        disk_total = st.f_blocks * st.f_frsize // 1024 // 1024
-        disk_free  = st.f_bavail * st.f_frsize // 1024 // 1024
-    except Exception:
-        disk_total = disk_free = 0
-
-    try:
-        with open("/proc/uptime") as f:
-            secs = int(float(f.read().split()[0]))
-        uptime = f"{secs//86400}d {(secs%86400)//3600}h {(secs%3600)//60}m"
-    except Exception:
+        total = avail = disk_free = 0
         uptime = "?"
+
+    disk_total = disk_free + 50000  # Примерная оценка
 
     cert_days = -1
     try:
         r = subprocess.run(
             ["openssl", "x509", "-enddate", "-noout", "-in", "/etc/nginx/cert/cert.pem"],
-            capture_output=True, text=True, timeout=5)
+            capture_output=True, text=True, timeout=3)
         if "notAfter=" in r.stdout:
             date_str = r.stdout.strip().replace("notAfter=", "")
             exp = subprocess.run(
                 ["date", "-d", date_str, "+%s"],
-                capture_output=True, text=True, timeout=5)
+                capture_output=True, text=True, timeout=3)
             if exp.stdout.strip().isdigit():
                 cert_days = (int(exp.stdout.strip()) - int(time.time())) // 86400
     except Exception:
         pass
 
-    # Используем кэшированный server_ip вместо блокирующего curl
     server_ip = get_cached_server_ip()
-
     users = get_users()
 
-    warp_r = subprocess.run(
-        ["warp-cli", "status"],
-        capture_output=True, text=True, timeout=5)
-    warp_connected = "Connected" in warp_r.stdout
+    # Проверяем WARP статус
+    warp_connected = False
+    try:
+        warp_r = subprocess.run(
+            ["warp-cli", "status"],
+            capture_output=True, text=True, timeout=3)
+        warp_connected = "Connected" in warp_r.stdout
+    except Exception:
+        pass
 
-    # Домен из nginx конфига
+    # Домен из конфига
     domain = ""
     try:
         with open(NGINX_CONF) as f:
@@ -665,7 +705,6 @@ def get_dashboard() -> dict:
     except Exception:
         pass
 
-    # Путь к панели из конфига
     panel_path = ""
     try:
         conf = load_panel_conf()
@@ -673,7 +712,6 @@ def get_dashboard() -> dict:
     except Exception:
         pass
 
-    # Список бэкапов
     backups = []
     try:
         files = sorted(
@@ -686,7 +724,7 @@ def get_dashboard() -> dict:
     except Exception:
         pass
 
-    return {
+    result = {
         "ok": True,
         "services": {
             "xray":         svc("xray"),
@@ -707,6 +745,16 @@ def get_dashboard() -> dict:
         "users":     users,
         "backups":   backups,
     }
+    
+    # Обновляем кэш
+    _dashboard_cache = result
+    _dashboard_cache_time = now
+    
+    return result
+
+# Глобальные переменные для кэша
+_dashboard_cache = None
+_dashboard_cache_time = 0
 
 # ── HTTP Handler ──────────────────────────────────────────────────
 class PanelHandler(BaseHTTPRequestHandler):

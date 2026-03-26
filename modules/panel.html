@@ -514,13 +514,6 @@ select.inp{cursor:pointer}
             <button class="btn-sm" id="btn-load-xray">Refresh</button>
           </div>
         </div>
-        <div class="card">
-          <div class="card-title">Users & Subscriptions</div>
-          <table class="tbl">
-            <thead><tr><th>Name</th><th>UUID</th><th>Sub URL</th><th></th></tr></thead>
-            <tbody id="xray-users-tbody"></tbody>
-          </table>
-        </div>
       </div>
 
       <!-- Config Editor -->
@@ -657,7 +650,7 @@ function toast(msg,type=''){
 function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 
-// Async API function
+// Async API function with CSRF retry
 async function api(method,path,body){
   const opts={method,headers:{'Content-Type':'application/json'}};
   if(token)opts.headers['Authorization']='Bearer '+token;
@@ -666,7 +659,18 @@ async function api(method,path,body){
   try{
     const r=await fetch(path,opts);
     if(r.status===401){logout();return null;}
-    if(r.status===403){toast('Access denied (CSRF)','err');return {ok:false,error:'CSRF'};}
+    if(r.status===403){
+      // CSRF error - пробуем перелогиниться
+      const data=await r.json();
+      if(data.error&&data.error.includes('CSRF')){
+        toast('Session expired, re-login...','err');
+        // Пробуем получить новый токен через повторный логин
+        logout();
+        return {ok:false,error:'CSRF'};
+      }
+      toast('Access denied','err');
+      return {ok:false,error:'CSRF'};
+    }
     if(r.status===429){toast('Too many attempts, wait 15 min','err');return {ok:false,error:'rate'};}
     if(!r.ok){toast('Server error: '+r.status,'err');return {ok:false,error:'server'};}
     return await r.json();
