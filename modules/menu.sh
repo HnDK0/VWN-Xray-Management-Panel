@@ -14,7 +14,20 @@ prepareSoftware() {
     for p in tar gpg unzip jq nano ufw socat curl qrencode python3; do
         run_task "Установка $p" "installPackage '$p'" || true
     done
-    run_task "Установка Xray-core"       installXray
+
+    # Критическая задача — Xray
+    run_task "Установка Xray-core" installXray
+    if [ $? -ne 0 ]; then
+        echo -e "${red}$(msg xray_install_fail)${reset}"
+        read -rp "$(msg xray_install_retry)" retry
+        if [[ "$retry" == "y" ]]; then
+            run_task "$(msg xray_install_retry_title)" installXray || { echo "${red}$(msg xray_install_aborted)${reset}"; return 1; }
+        else
+            echo "${red}$(msg xray_install_aborted)${reset}"
+            return 1
+        fi
+    fi
+
     run_task "Установка Cloudflare WARP" installWarp
 }
 
@@ -58,12 +71,32 @@ YUMEOF
 }
 
 prepareSoftwareWs() {
-    prepareSoftware
+    prepareSoftware || return 1
+
+    # Критическая задача — Nginx
     run_task "Установка Nginx (mainline)" _installNginxMainline
+    if [ $? -ne 0 ]; then
+        echo -e "${red}$(msg nginx_install_fail)${reset}"
+        read -rp "$(msg nginx_install_retry)" retry
+        if [[ "$retry" == "y" ]]; then
+            run_task "$(msg nginx_install_retry_title)" _installNginxMainline || { echo "${red}$(msg nginx_install_aborted)${reset}"; return 1; }
+        else
+            echo "${red}$(msg nginx_install_aborted)${reset}"
+            return 1
+        fi
+    fi
 
     echo "--- [3/3] $(msg menu_sep_sec) ---"
     run_task "Настройка UFW" "ufw allow 22/tcp && ufw allow 443/tcp && ufw allow 443/udp && echo 'y' | ufw enable"
-    run_task "Системные параметры" applySysctl
+    if [ $? -ne 0 ]; then
+        echo -e "${red}$(msg ufw_not_configured)${reset}"
+        read -rp "$(msg ufw_continue)" cont_ufw
+        if [[ "$cont_ufw" != "y" ]]; then
+            echo "${red}$(msg xray_install_aborted)${reset}"
+            return 1
+        fi
+    fi
+    run_task "Системные параметры" applySysctl || true
 }
 
 # Установка VLESS + WebSocket + TLS + Nginx + WARP + CDN
@@ -157,13 +190,24 @@ installWsTls() {
     systemctl enable --now nginx
     systemctl start nginx 2>/dev/null || true
 
-    run_task "Настройка WARP"          configWarp
-    run_task "Выпуск SSL"              "userDomain='$userDomain' configCert"
-    run_task "Применение правил WARP"  applyWarpDomains
-    run_task "Ротация логов"           setupLogrotate
-    run_task "Автоочистка логов"       setupLogClearCron
-    run_task "Автообновление SSL"      setupSslCron
-    run_task "WARP Watchdog"           setupWarpWatchdog
+    run_task "Настройка WARP"          configWarp || true
+
+    # Критическая задача — SSL
+    run_task "Выпуск SSL" "userDomain='$userDomain' configCert"
+    if [ $? -ne 0 ]; then
+        echo -e "${red}$(msg ssl_not_issued)${reset}"
+        read -rp "$(msg ssl_continue)" cont_ssl
+        if [[ "$cont_ssl" != "y" ]]; then
+            echo "${red}$(msg xray_install_aborted)${reset}"
+            return 1
+        fi
+    fi
+
+    run_task "Применение правил WARP"  applyWarpDomains || true
+    run_task "Ротация логов"           setupLogrotate || true
+    run_task "Автоочистка логов"       setupLogClearCron || true
+    run_task "Автообновление SSL"      setupSslCron || true
+    run_task "WARP Watchdog"           setupWarpWatchdog || true
 
     systemctl enable --now xray
     systemctl restart xray nginx
@@ -226,7 +270,7 @@ fullRemove() {
         if curl -fsSL --connect-timeout 15 --proto '=https' --tlsv1.2 \
             "https://github.com/XTLS/Xray-install/raw/main/install-release.sh" \
             -o "$xray_tmpfile" 2>/dev/null \
-            && head -1 "$xray_tmpfile" | grep -q '#!/bin/bash'; then
+            && head -1 "$xray_tmpfile" | grep -qE '^#!.*(bash|sh)' && ! head -5 "$xray_tmpfile" | grep -qi '<html'; then
             bash "$xray_tmpfile" @ remove || true
         fi
         rm -f "$xray_tmpfile"
@@ -258,7 +302,7 @@ removeWs() {
     if curl -fsSL --connect-timeout 15 --proto '=https' --tlsv1.2 \
         "https://github.com/XTLS/Xray-install/raw/main/install-release.sh" \
         -o "$xray_tmpfile2" 2>/dev/null \
-        && head -1 "$xray_tmpfile2" | grep -q '#!/bin/bash'; then
+        && head -1 "$xray_tmpfile2" | grep -qE '^#!.*(bash|sh)' && ! head -5 "$xray_tmpfile2" | grep -qi '<html'; then
         bash "$xray_tmpfile2" @ remove || true
     fi
     rm -f "$xray_tmpfile2"

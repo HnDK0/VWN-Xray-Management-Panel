@@ -48,10 +48,16 @@ installXray() {
     if curl -fsSL --connect-timeout 30 --proto '=https' --tlsv1.2 \
         "https://github.com/XTLS/Xray-install/raw/main/install-release.sh" \
         -o "$tmpfile" 2>/dev/null; then
-        if head -1 "$tmpfile" | grep -q '#!/bin/bash'; then
+        if head -1 "$tmpfile" | grep -qE '^#!.*(bash|sh)' && ! head -5 "$tmpfile" | grep -qi '<html'; then
             bash "$tmpfile" @ install
+            # Проверяем что xray реально установился
+            if ! command -v xray &>/dev/null; then
+                echo "${red}ERROR: xray not found after install${reset}"
+                rm -f "$tmpfile"; return 1
+            fi
         else
             echo "${red}ERROR: invalid installer content${reset}"
+            echo "First line: $(head -1 "$tmpfile" 2>/dev/null)"
             rm -f "$tmpfile"; return 1
         fi
     else
@@ -481,10 +487,16 @@ updateXrayCore() {
     if curl -fsSL --connect-timeout 30 --proto '=https' --tlsv1.2 \
         "https://github.com/XTLS/Xray-install/raw/main/install-release.sh" \
         -o "$tmpfile" 2>/dev/null; then
-        if head -1 "$tmpfile" | grep -q '#!/bin/bash'; then
+        if head -1 "$tmpfile" | grep -qE '^#!.*(bash|sh)' && ! head -5 "$tmpfile" | grep -qi '<html'; then
             bash "$tmpfile" @ install
+            # Проверяем что xray реально обновился
+            if ! command -v xray &>/dev/null; then
+                echo "${red}$(msg xray_not_found)${reset}"
+                rm -f "$tmpfile"; return 1
+            fi
         else
             echo "${red}ERROR: invalid installer content${reset}"
+            echo "First line: $(head -1 "$tmpfile" 2>/dev/null)"
             rm -f "$tmpfile"; return 1
         fi
     else
