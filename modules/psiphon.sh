@@ -362,15 +362,34 @@ changeCountry() {
     [ ! -f "$psiphonConfigFile" ] && { echo "${red}$(msg psiphon_not_setup)${reset}"; return 1; }
 
     echo -e "${cyan}$(msg psiphon_change_country)${reset}"
-    echo " 1) DE  2) NL  3) US  4) GB  5) FR"
-    echo " $(msg country_at)  $(msg country_ca)  $(msg country_se)  $(msg psiphon_country_auto)  $(msg psiphon_country_manual)"
+    echo " 🇩🇪 1) DE  🇳🇱 2) NL  🇫🇷 3) FR  🇬🇧 4) GB  🇮🇹 5) IT"
+    echo " 🇪🇸 6) ES  🇵🇹 7) PT  🇵🇱 8) PL  🇨🇿 9) CZ  🇦🇹 10) AT"
+    echo " 🇧🇪 11) BE  🇩🇰 12) DK  🇳🇴 13) NO  🇸🇪 14) SE  🇫🇮 15) FI"
+    echo " 🇨🇭 16) CH  🇮🇪 17) IE  🇺🇸 18) US  🇨🇦 19) CA  🇲🇽 20) MX"
+    echo " 🇧🇷 21) BR  🇦🇷 22) AR  🇦🇺 23) AU  🇳🇿 24) NZ  🇯🇵 25) JP"
+    echo " 🇰🇷 26) KR  🇸🇬 27) SG  🇭🇰 28) HK  🇹🇼 29) TW  🇮🇳 30) IN"
+    echo " 🇿🇦 31) ZA  🇮🇱 32) IL  🇹🇷 33) TR  🇷🇴 34) RO  🇭🇺 35) HU"
+    echo " 🇬🇷 36) GR  🇺🇦 37) UA  🇷🇺 38) RU  🇨🇱 39) CL  🇨🇴 40) CO"
+    echo "  Auto  📝 Manual"
     read -rp "$(msg prompt_choice_plain)" c
     local country
     case "$c" in
-        1) country="DE" ;; 2) country="NL" ;; 3) country="US" ;;
-        4) country="GB" ;; 5) country="FR" ;; 6) country="AT" ;;
-        7) country="CA" ;; 8) country="SE" ;; 9) country="" ;;
-        10) read -rp "$(msg country): " country ;;
+        1) country="DE" ;; 2) country="NL" ;; 3) country="FR" ;;
+        4) country="GB" ;; 5) country="IT" ;; 6) country="ES" ;;
+        7) country="PT" ;; 8) country="PL" ;; 9) country="CZ" ;;
+        10) country="AT" ;; 11) country="BE" ;; 12) country="DK" ;;
+        13) country="NO" ;; 14) country="SE" ;; 15) country="FI" ;;
+        16) country="CH" ;; 17) country="IE" ;; 18) country="US" ;;
+        19) country="CA" ;; 20) country="MX" ;; 21) country="BR" ;;
+        22) country="AR" ;; 23) country="AU" ;; 24) country="NZ" ;;
+        25) country="JP" ;; 26) country="KR" ;; 27) country="SG" ;;
+        28) country="HK" ;; 29) country="TW" ;; 30) country="IN" ;;
+        31) country="ZA" ;; 32) country="IL" ;; 33) country="TR" ;;
+        34) country="RO" ;; 35) country="HU" ;; 36) country="GR" ;;
+        37) country="UA" ;; 38) country="RU" ;; 39) country="CL" ;;
+        40) country="CO" ;;
+        "a"|"auto"|"") country="" ;;
+        "m"|"manual") read -rp "$(msg country): " country ;;
         *) return ;;
     esac
 
