@@ -386,14 +386,13 @@ managePanel() {
     while true; do
         clear
         echo -e "${cyan}$(msg panel_menu_title)${reset}"
-        echo -e "  $(msg status): $(getPanelStatus),  Auth: $(getPanelAuthStatus)"
+        echo -e "$(msg status): $(getPanelStatus),  Auth: $(getPanelAuthStatus)"
         echo ""
         echo -e "${green}1.${reset} $(msg panel_install)"
         echo -e "${green}2.${reset} $(msg panel_open)"
         echo -e "${green}3.${reset} $(msg panel_change_pass)"
         echo -e "${green}4.${reset} $(msg panel_restart)"
         echo -e "${green}5.${reset} $(msg panel_view_log)"
-        echo ""
         echo -e "${green}6.${reset} $(msg panel_reinstall)"
         echo -e "${green}7.${reset} $(msg panel_remove)"
         echo -e "${green}8.${reset} Enable Basic Auth (.htpasswd)"
