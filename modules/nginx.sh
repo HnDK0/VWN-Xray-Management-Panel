@@ -301,17 +301,10 @@ configCert() {
 
 
     if [ ! -f ~/.acme.sh/acme.sh ]; then
-        local acme_tmpfile
-        acme_tmpfile=$(mktemp)
-        if curl -fsSL --connect-timeout 30 --proto '=https' --tlsv1.2 \
-            "https://get.acme.sh" -o "$acme_tmpfile" 2>/dev/null \
-            && head -1 "$acme_tmpfile" | grep -qE '^#!.*(sh|bash)'; then
-            sh "$acme_tmpfile" --install -m "acme@${userDomain}"
-        else
+        curl https://get.acme.sh | sh -s email="acme@${userDomain}" 2>/dev/null || {
             echo "${red}$(msg acme_install_fail)${reset}"
-            rm -f "$acme_tmpfile"; return 1
-        fi
-        rm -f "$acme_tmpfile"
+            return 1
+        }
     fi
 
     # Проверяем что acme.sh установился
