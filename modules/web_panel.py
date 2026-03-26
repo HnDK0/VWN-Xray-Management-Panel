@@ -21,6 +21,7 @@ WARP_DOMAINS  = "/usr/local/etc/xray/warp_domains.txt"
 RELAY_DOMAINS = "/usr/local/etc/xray/relay_domains.txt"
 PSIPHON_CONF  = "/usr/local/etc/xray/psiphon.json"
 TOR_DOMAINS   = "/usr/local/etc/xray/tor_domains.txt"
+PSIPHON_DOMAINS = "/usr/local/etc/xray/psiphon_domains.txt"
 PANEL_HTML    = "/usr/local/lib/vwn/panel.html"
 AUDIT_LOG     = "/var/log/vwn-panel-audit.log"
 BACKUP_DIR    = "/root/vwn-backups"
@@ -500,11 +501,11 @@ def del_user(name: str, ip: str = "-") -> dict:
 
 # ── Управление доменами (warp/relay/tor) ──────────────────────────
 DOMAIN_FILES = {
-    "warp":  WARP_DOMAINS,
-    "relay": RELAY_DOMAINS,
-    "tor":   TOR_DOMAINS,
+    "warp":     WARP_DOMAINS,
+    "relay":    RELAY_DOMAINS,
+    "tor":      TOR_DOMAINS,
+    "psiphon":  PSIPHON_DOMAINS,
 }
-PSIPHON_DOMAINS = "/usr/local/etc/xray/psiphon_domains.txt"
 
 APPLY_COMMANDS = {
     "warp":     ["bash", "-c", 'source /usr/local/lib/vwn/core.sh 2>/dev/null; source /usr/local/lib/vwn/lang.sh 2>/dev/null; source /usr/local/lib/vwn/warp.sh 2>/dev/null; applyWarpDomains 2>/dev/null || true'],
