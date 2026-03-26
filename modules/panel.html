@@ -221,11 +221,13 @@ select.inp{cursor:pointer}
         <div class="grid-2" style="margin-top:16px">
           <div class="card">
             <div class="card-title">Services</div>
-            <div class="svc-list" id="svc-list"></div>
-            <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-              <button class="btn-sm" data-action="restart_all">🔄 Restart All</button>
-              <button class="btn-sm" id="btn-refresh-dashboard">↻ Refresh</button>
-            </div>
+          <div class="svc-list" id="svc-list"></div>
+          <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn-sm success" data-action="restart_all">🔄 Restart All</button>
+            <button class="btn-sm" data-action="stop_all">⏹ Stop All</button>
+            <button class="btn-sm" data-action="start_all">▶ Start All</button>
+            <button class="btn-sm" id="btn-refresh-dashboard">↻ Refresh</button>
+          </div>
           </div>
           <div class="card">
             <div class="card-title">Quick Actions</div>
@@ -798,14 +800,15 @@ function showApp(){
 // Navigation
 function navigateTo(page){
   currentPage=page;
+  clearServiceTimers();
   document.querySelectorAll('.nav-item').forEach(el=>el.classList.toggle('active',el.dataset.page===page));
   document.querySelectorAll('.page').forEach(el=>el.classList.toggle('active',el.id==='page-'+page));
   document.getElementById('page-title').textContent=page.charAt(0).toUpperCase()+page.slice(1).replace('-',' ');
   if(page==='users')loadUsersPage();
-  if(page==='warp'){loadWarpStatus();loadDomainsUI('warp');}
-  if(page==='relay'){loadRelayStatus();loadDomainsUI('relay');}
-  if(page==='psiphon'){loadPsiphonStatus();loadDomainsUI('psiphon');}
-  if(page==='tor'){loadTorStatus();loadDomainsUI('tor');}
+  if(page==='warp'){loadWarpStatus();loadDomainsUI('warp');warpTimer=setInterval(()=>{if(currentPage==='warp')loadWarpStatus();},15000);}
+  if(page==='relay'){loadRelayStatus();loadDomainsUI('relay');relayTimer=setInterval(()=>{if(currentPage==='relay')loadRelayStatus();},15000);}
+  if(page==='psiphon'){loadPsiphonStatus();loadDomainsUI('psiphon');psiphonTimer=setInterval(()=>{if(currentPage==='psiphon')loadPsiphonStatus();},15000);}
+  if(page==='tor'){loadTorStatus();loadDomainsUI('tor');torTimer=setInterval(()=>{if(currentPage==='tor')loadTorStatus();},15000);}
   if(page==='backup')loadBackups();
   if(page==='xray')loadXrayConfig();
   if(page==='reality')loadRealityConfig();
@@ -1033,8 +1036,19 @@ async function loadXrayConfig(){
     document.getElementById('xray-port').value=port;
     document.getElementById('xray-path').value=path;
     document.getElementById('xray-domain').value=host;
-    const cdnR=await api('POST','./api/cmd',{action:'server_ip'});
-    document.getElementById('xray-cdn').value=host||(cdnR?cdnR.output:'');
+    // Читаем connect_host из vwn.conf для CDN
+    const confR=await api('POST','./api/cmd',{action:'vwn_conf_get'});
+    let cdnHost=host;
+    if(confR&&confR.ok){
+      const lines=confR.output.split('\n');
+      for(const line of lines){
+        if(line.startsWith('CONNECT_HOST=')){
+          cdnHost=line.split('=')[1]||host;
+          break;
+        }
+      }
+    }
+    document.getElementById('xray-cdn').value=cdnHost;
   }catch(e){}
   loadXrayUsers();
 }
@@ -1098,6 +1112,16 @@ async function loadSecurityStatus(){
 async function loadUFWStatus(){
   const r=await api('POST','./api/cmd',{action:'ufw_status'});
   document.getElementById('ufw-status-view').textContent=(r&&r.output)||'UFW inactive';
+}
+
+// Auto-refresh timers
+let warpTimer=null, relayTimer=null, psiphonTimer=null, torTimer=null;
+
+function clearServiceTimers(){
+  if(warpTimer){clearInterval(warpTimer);warpTimer=null;}
+  if(relayTimer){clearInterval(relayTimer);relayTimer=null;}
+  if(psiphonTimer){clearInterval(psiphonTimer);psiphonTimer=null;}
+  if(torTimer){clearInterval(torTimer);torTimer=null;}
 }
 
 // WARP Status

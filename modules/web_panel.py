@@ -264,7 +264,7 @@ COMMANDS: dict = {
     "status_tor":         ("systemctl is-active tor 2>/dev/null || echo inactive", "read"),
     "status_fail2ban":    ("systemctl is-active fail2ban 2>/dev/null || echo inactive", "read"),
 
-    # Управление сервисами (write) — используем shell=False где возможно
+    # Управление сервисами (write) — restart
     "restart_xray":       (["systemctl", "restart", "xray"], "write"),
     "restart_xray_reality": (["systemctl", "restart", "xray-reality"], "write"),
     "restart_nginx":      (["systemctl", "restart", "nginx"], "write"),
@@ -273,6 +273,36 @@ COMMANDS: dict = {
     "restart_psiphon":    (["systemctl", "restart", "psiphon"], "write"),
     "restart_tor":        (["systemctl", "restart", "tor"], "write"),
     "restart_fail2ban":   (["systemctl", "restart", "fail2ban"], "write"),
+
+    # Управление сервисами — stop
+    "stop_xray":          (["systemctl", "stop", "xray"], "write"),
+    "stop_xray_reality":  (["systemctl", "stop", "xray-reality"], "write"),
+    "stop_nginx":         (["systemctl", "stop", "nginx"], "write"),
+    "stop_warp":          (["bash", "-c", "warp-cli disconnect 2>/dev/null; systemctl stop warp-svc 2>/dev/null || true"], "write"),
+    "stop_psiphon":       (["systemctl", "stop", "psiphon"], "write"),
+    "stop_tor":           (["systemctl", "stop", "tor"], "write"),
+    "stop_fail2ban":      (["systemctl", "stop", "fail2ban"], "write"),
+
+    # Управление сервисами — start
+    "start_xray":         (["systemctl", "start", "xray"], "write"),
+    "start_xray_reality": (["systemctl", "start", "xray-reality"], "write"),
+    "start_nginx":        (["systemctl", "start", "nginx"], "write"),
+    "start_warp":         (["bash", "-c", "systemctl start warp-svc 2>/dev/null && sleep 3 && warp-cli connect 2>/dev/null || true"], "write"),
+    "start_psiphon":      (["systemctl", "start", "psiphon"], "write"),
+    "start_tor":          (["systemctl", "start", "tor"], "write"),
+    "start_fail2ban":     (["systemctl", "start", "fail2ban"], "write"),
+
+    # Управление сервисами — enable/disable
+    "enable_xray":        (["systemctl", "enable", "xray"], "write"),
+    "disable_xray":       (["systemctl", "disable", "xray"], "write"),
+    "enable_nginx":       (["systemctl", "enable", "nginx"], "write"),
+    "disable_nginx":      (["systemctl", "disable", "nginx"], "write"),
+    "enable_warp":        (["systemctl", "enable", "warp-svc"], "write"),
+    "disable_warp":       (["systemctl", "disable", "warp-svc"], "write"),
+    "enable_psiphon":     (["systemctl", "enable", "psiphon"], "write"),
+    "disable_psiphon":    (["systemctl", "disable", "psiphon"], "write"),
+    "enable_tor":         (["systemctl", "enable", "tor"], "write"),
+    "disable_tor":        (["systemctl", "disable", "tor"], "write"),
 
     # Диагностика (read)
     "nginx_test":         (["nginx", "-t"], "read"),
@@ -352,6 +382,8 @@ COMMANDS: dict = {
 
     # ── Services ─────────────────────────────────────────────────
     "restart_all":        (["bash", "-c", 'systemctl restart xray xray-reality nginx warp-svc psiphon tor 2>/dev/null; echo "All services restarted"'], "write"),
+    "stop_all":           (["bash", "-c", 'warp-cli disconnect 2>/dev/null; systemctl stop xray xray-reality nginx warp-svc psiphon tor 2>/dev/null; echo "All services stopped"'], "write"),
+    "start_all":          (["bash", "-c", 'systemctl start xray xray-reality nginx warp-svc psiphon tor 2>/dev/null; sleep 2; warp-cli connect 2>/dev/null || true; echo "All services started"'], "write"),
 
     # ── WARP watchdog ────────────────────────────────────────────
     "warp_watchdog_setup":(["bash", "-c", 'source /usr/local/lib/vwn/core.sh 2>/dev/null; source /usr/local/lib/vwn/lang.sh 2>/dev/null; source /usr/local/lib/vwn/warp.sh 2>/dev/null; setupWarpWatchdog'], "write"),
@@ -365,6 +397,7 @@ COMMANDS: dict = {
 
     # VLESS config (read)
     "xray_config_get":    (f"cat {XRAY_CONFIG} 2>/dev/null || echo '{{}}'", "read"),
+    "vwn_conf_get":       (f"cat {VWN_CONF} 2>/dev/null || echo ''", "read"),
     "xray_change_port":   ("/usr/local/lib/vwn/xray.sh change_port", "write"),
     "xray_change_path":   ("/usr/local/lib/vwn/xray.sh change_path", "write"),
     "xray_change_domain": ("/usr/local/lib/vwn/xray.sh change_domain", "write"),
@@ -479,23 +512,29 @@ COMMANDS: dict = {
     "psiphon_country_auto": (["bash", "-c", 'source /usr/local/lib/vwn/core.sh 2>/dev/null; source /usr/local/lib/vwn/lang.sh 2>/dev/null; source /usr/local/lib/vwn/psiphon.sh 2>/dev/null; echo "a" | changeCountry'], "write"),
 }
 
+def _strip_ansi(text: str) -> str:
+    """Удаляет ANSI escape коды из текста."""
+    import re
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    return ansi_escape.sub('', text)
+
 def run_command(action: str, ip: str = "-") -> dict:
     if action not in COMMANDS:
         return {"ok": False, "output": "Unknown action"}
     cmd, level = COMMANDS[action]
     try:
+        env = {**os.environ, "TERM": "dumb", "NO_COLOR": "1"}
         if isinstance(cmd, list):
-            # shell=False — безопаснее для фиксированных команд
             result = subprocess.run(
                 cmd, capture_output=True, text=True,
-                timeout=60, env={**os.environ, "TERM": "xterm"}
+                timeout=60, env=env
             )
         else:
             result = subprocess.run(
                 cmd, shell=True, capture_output=True, text=True,
-                timeout=60, env={**os.environ, "TERM": "xterm"}
+                timeout=60, env=env
             )
-        out = (result.stdout + result.stderr).strip()
+        out = _strip_ansi((result.stdout + result.stderr).strip())
         if level in ("write", "admin"):
             audit(ip, f"cmd:{action}", "ok" if result.returncode == 0 else f"rc={result.returncode}")
         return {"ok": True, "output": out}
