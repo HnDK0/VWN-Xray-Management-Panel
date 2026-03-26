@@ -7,6 +7,7 @@ PANEL_CONF="/usr/local/etc/xray/panel.conf"
 PANEL_PY="/usr/local/lib/vwn/web_panel.py"
 PANEL_HTML="/usr/local/lib/vwn/panel.html"
 PANEL_PORT=8444
+GITHUB_RAW="https://raw.githubusercontent.com/HnDK0/VWN-Xray-Management-Panel/main"
 
 # ── Генерация секрета ─────────────────────────────────────────────
 _panel_gen_secret() {
@@ -120,6 +121,9 @@ _panel_gen_path() {
 # ── Основная установка панели ─────────────────────────────────────
 installPanel() {
     echo -e "${cyan}$(msg panel_installing)${reset}"
+    
+    # Создаём директорию для бэкапов (нужна для systemd ReadWritePaths)
+    mkdir -p /root/vwn-backups
 
     local secret pass_hash port="$PANEL_PORT" panel_path
     if [ -f "$PANEL_CONF" ]; then
