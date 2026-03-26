@@ -11,11 +11,15 @@
 _getCountryFlag() {
     local ip="$1"
     local code
-    # Основной API
+    # API 1: ip-api.com
     code=$(curl -s --connect-timeout 5 "https://ip-api.com/line/${ip}?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
-    # Резервный API если основной не сработал
+    # API 2: ipinfo.io
     if [[ ! "$code" =~ ^[A-Z]{2}$ ]]; then
         code=$(curl -s --connect-timeout 5 "https://ipinfo.io/${ip}/country" 2>/dev/null | tr -d '[:space:]')
+    fi
+    # API 3: country.is (работает в РФ)
+    if [[ ! "$code" =~ ^[A-Z]{2}$ ]]; then
+        code=$(curl -s --connect-timeout 5 "https://api.country.is/${ip}" 2>/dev/null | jq -r '.country' 2>/dev/null | tr -d '[:space:]')
     fi
     if [[ "$code" =~ ^[A-Z]{2}$ ]]; then
         # Конвертируем код страны в emoji флаг через региональные индикаторы
