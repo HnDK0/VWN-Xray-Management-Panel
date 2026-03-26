@@ -243,6 +243,22 @@ TESTEOF
         wait $xray_pid 2>/dev/null
     fi
     echo "$(msg relay_ip) : $relay_ip"
+    
+    # Определяем страну выхода
+    if [ "$relay_ip" != "$(msg unavailable)" ]; then
+        local country=""
+        # API 1: ip-api.com
+        country=$(curl -s --connect-timeout 5 "https://ip-api.com/line/${relay_ip}?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
+        # API 2: ipinfo.io
+        if [[ ! "$country" =~ ^[A-Z]{2}$ ]]; then
+            country=$(curl -s --connect-timeout 5 "https://ipinfo.io/${relay_ip}/country" 2>/dev/null | tr -d '[:space:]')
+        fi
+        # API 3: country.is
+        if [[ ! "$country" =~ ^[A-Z]{2}$ ]]; then
+            country=$(curl -s --connect-timeout 5 "https://api.country.is/${relay_ip}" 2>/dev/null | jq -r '.country' 2>/dev/null | tr -d '[:space:]')
+        fi
+        echo "$(msg relay_exit_country) : ${country:-$(msg unknown)}"
+    fi
 }
 
 manageRelay() {

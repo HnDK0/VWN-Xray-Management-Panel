@@ -206,7 +206,16 @@ checkTorIP() {
         if [ -n "$ip" ]; then
             echo "$ip"
             local country
-            country=$(curl -s --connect-timeout 5 -x socks5://127.0.0.1:${TOR_PORT}                 "https://ip-api.com/line/${ip}?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
+            # API 1: ip-api.com
+            country=$(curl -s --connect-timeout 5 -x socks5://127.0.0.1:${TOR_PORT} "https://ip-api.com/line/${ip}?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
+            # API 2: ipinfo.io
+            if [[ ! "$country" =~ ^[A-Z]{2}$ ]]; then
+                country=$(curl -s --connect-timeout 5 -x socks5://127.0.0.1:${TOR_PORT} "https://ipinfo.io/${ip}/country" 2>/dev/null | tr -d '[:space:]')
+            fi
+            # API 3: country.is
+            if [[ ! "$country" =~ ^[A-Z]{2}$ ]]; then
+                country=$(curl -s --connect-timeout 5 -x socks5://127.0.0.1:${TOR_PORT} "https://api.country.is/${ip}" 2>/dev/null | jq -r '.country' 2>/dev/null | tr -d '[:space:]')
+            fi
             echo "$(msg tor_exit_country) : ${country:-$(msg unknown)}"
             return 0
         fi

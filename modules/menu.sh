@@ -435,6 +435,7 @@ menu() {
         [ -n "$s_connect" ] && echo -e "  CDN: ${green}${s_connect}${reset}"
         echo -e "  ${cyan}── $(msg menu_sep_tun_short) ───────────────────────────────────────────${reset}"
         echo -e "  Relay: $s_relay,  Psiphon: $s_psiphon,  Tor: $s_tor"
+        echo -e "  ${cyan}── Panel ──────────────────────────────────────────${reset}"
         echo -e "  Panel: $s_panel"
         echo -e "  ${cyan}── $(msg menu_sep_sec_short) ────────────────────────────────────────────${reset}"
         echo -e "  BBR: $s_bbr,  F2B: $s_f2b,  Jail: $s_jail,  IPv6: $(getIPv6Status),  CPU Guard: $(getCpuGuardStatus)"
