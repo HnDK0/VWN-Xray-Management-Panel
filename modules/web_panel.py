@@ -80,11 +80,16 @@ def _fetch_server_ip() -> str:
 
 def get_cached_server_ip() -> str:
     """Возвращает кэшированный server_ip."""
-    global _server_ip_last_update
+    global _server_ip_last_update, _server_ip_cache
     with _server_ip_lock:
-        # Обновляем если прошло больше 10 минут или кэш пуст
-        if time.time() - _server_ip_last_update > 600 or _server_ip_cache == "UNKNOWN":
-            return _server_ip_cache  # Вернём текущий, обновление в фоне
+        # Если кэш пуст или устарел (>10 мин), обновляем синхронно
+        if _server_ip_cache == "UNKNOWN" or time.time() - _server_ip_last_update > 600:
+            try:
+                ip = _fetch_server_ip()
+                _server_ip_cache = ip
+                _server_ip_last_update = time.time()
+            except Exception:
+                pass
         return _server_ip_cache
 
 def _server_ip_updater():
@@ -257,7 +262,7 @@ COMMANDS: dict = {
     "log_nginx_access":   ("tail -n 100 /var/log/nginx/access.log 2>/dev/null || echo 'No logs'", "read"),
     "log_psiphon":        ("tail -n 100 /var/log/psiphon/psiphon.log 2>/dev/null || echo 'No logs'", "read"),
     "log_warp":           ("journalctl -u warp-svc -n 100 --no-pager 2>/dev/null || echo 'No logs'", "read"),
-    "clear_logs":         ("/usr/local/bin/clear-logs.sh 2>/dev/null || true && echo 'Logs cleared'", "write"),
+    "clear_logs":         (["bash", "-c", "/usr/local/bin/clear-logs.sh 2>/dev/null; echo 'Logs cleared'"], "write"),
 
     # Backup (write)
     "backup_list":        (f"ls -t {BACKUP_DIR}/vwn-backup-*.tar.gz 2>/dev/null | head -20 || echo 'NO_BACKUPS'", "read"),
@@ -271,9 +276,9 @@ COMMANDS: dict = {
 
     # Warp domains (write)
     "warp_domains_list":  (f"cat {WARP_DOMAINS} 2>/dev/null || echo ''", "read"),
-    "warp_mode_global":   (["bash", "-c", 'source /usr/local/lib/vwn/core.sh; source /usr/local/lib/vwn/lang.sh; source /usr/local/lib/vwn/warp.sh; toggleWarpMode <<< 1'], "write"),
-    "warp_mode_split":    (["bash", "-c", 'source /usr/local/lib/vwn/core.sh; source /usr/local/lib/vwn/lang.sh; source /usr/local/lib/vwn/warp.sh; toggleWarpMode <<< 2'], "write"),
-    "warp_mode_off":      (["bash", "-c", 'source /usr/local/lib/vwn/core.sh; source /usr/local/lib/vwn/lang.sh; source /usr/local/lib/vwn/warp.sh; toggleWarpMode <<< 3'], "write"),
+    "warp_mode_global":   (["bash", "-c", 'source /usr/local/lib/vwn/core.sh 2>/dev/null; source /usr/local/lib/vwn/lang.sh 2>/dev/null; source /usr/local/lib/vwn/warp.sh 2>/dev/null; echo "1" | toggleWarpMode 2>&1'], "write"),
+    "warp_mode_split":    (["bash", "-c", 'source /usr/local/lib/vwn/core.sh 2>/dev/null; source /usr/local/lib/vwn/lang.sh 2>/dev/null; source /usr/local/lib/vwn/warp.sh 2>/dev/null; echo "2" | toggleWarpMode 2>&1'], "write"),
+    "warp_mode_off":      (["bash", "-c", 'source /usr/local/lib/vwn/core.sh 2>/dev/null; source /usr/local/lib/vwn/lang.sh 2>/dev/null; source /usr/local/lib/vwn/warp.sh 2>/dev/null; echo "3" | toggleWarpMode 2>&1'], "write"),
 
     # Обновление (admin)
     "vwn_update":         (["bash", "/usr/local/lib/vwn/update.sh"], "admin"),
@@ -312,6 +317,8 @@ COMMANDS: dict = {
     "ufw_status":         ("ufw status verbose 2>/dev/null || echo 'UFW inactive'", "read"),
     "ssh_port_get":       ("grep -E '^Port ' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -1 || echo '22'", "read"),
     "ipv6_status":        ("sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo '0'", "read"),
+    "cpuguard_status":    (["bash", "-c", "systemctl show xray.service -p CPUWeight 2>/dev/null | grep -q '200' && echo 'ON' || echo 'OFF'"], "read"),
+    "webjail_status":     (["bash", "-c", "grep -q '\\[nginx-probe\\]' /etc/fail2ban/jail.local 2>/dev/null && echo 'ON' || echo 'OFF'"], "read"),
 
     # ── Users advanced ──────────────────────────────────────────
     "users_rebuild_sub":  (["bash", "-c", 'source /usr/local/lib/vwn/core.sh 2>/dev/null; source /usr/local/lib/vwn/lang.sh 2>/dev/null; source /usr/local/lib/vwn/users.sh 2>/dev/null; rebuildAllSubFiles'], "write"),
@@ -846,6 +853,7 @@ class PanelHandler(BaseHTTPRequestHandler):
 
         if path == "/api/cmd":
             action = body.get("action", "")
+            value = body.get("value", "")  # Получаем значение для команд изменения
             if action in COMMANDS:
                 _, level = COMMANDS[action]
                 if level in ("write", "admin"):
@@ -864,6 +872,28 @@ class PanelHandler(BaseHTTPRequestHandler):
                         if conf.get("PANEL_ADMIN_ONLY", "") == "1":
                             self._send_json({"error": "Admin only"}, 403)
                             return
+            # Если передано значение, добавляем его в команду
+            if value and action.startswith("xray_change_"):
+                # Модифицируем команду для передачи значения через stdin
+                cmd, _ = COMMANDS[action]
+                if isinstance(cmd, str):
+                    # Для shell команд добавляем передачу значения через echo
+                    modified_cmd = f"echo '{value}' | {cmd}"
+                    try:
+                        result = subprocess.run(
+                            modified_cmd, shell=True, capture_output=True, text=True,
+                            timeout=60, env={**os.environ, "TERM": "xterm"}
+                        )
+                        out = (result.stdout + result.stderr).strip()
+                        audit(ip, f"cmd:{action}", "ok" if result.returncode == 0 else f"rc={result.returncode}")
+                        self._send_json({"ok": result.returncode == 0, "output": out})
+                        return
+                    except subprocess.TimeoutExpired:
+                        self._send_json({"ok": False, "output": "Timeout"})
+                        return
+                    except Exception as e:
+                        self._send_json({"ok": False, "output": str(e)})
+                        return
             result = run_command(action, ip)
             self._send_json(result)
 

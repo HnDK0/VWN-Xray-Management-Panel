@@ -601,8 +601,14 @@ async function api(method,path,body){
   if(token)opts.headers['Authorization']='Bearer '+token;
   if(csrfToken)opts.headers['X-CSRF-Token']=csrfToken;
   if(body!==undefined)opts.body=JSON.stringify(body);
-  try{const r=await fetch(path,opts);if(r.status===401){logout();return null;}return await r.json();}
-  catch(e){toast('Network error: '+e.message,'err');return null;}
+  try{
+    const r=await fetch(path,opts);
+    if(r.status===401){logout();return null;}
+    if(r.status===403){toast('Access denied (CSRF)','err');return {ok:false,error:'CSRF'};}
+    if(r.status===429){toast('Too many attempts, wait 15 min','err');return {ok:false,error:'rate'};}
+    if(!r.ok){toast('Server error: '+r.status,'err');return {ok:false,error:'server'};}
+    return await r.json();
+  }catch(e){toast('Network error: '+e.message,'err');return {ok:false,error:'network'};}
 }
 
 function isLoggedIn(){return token&&Date.now()/1000<tokenExp;}
@@ -794,6 +800,7 @@ document.getElementById('login-btn').addEventListener('click',doLogin);
 document.getElementById('login-pass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 document.getElementById('logout-btn').addEventListener('click',logout);
 document.getElementById('btn-add-user').addEventListener('click',openAddUser);
+document.getElementById('btn-add-user2').addEventListener('click',openAddUser);
 document.querySelectorAll('.nav-item[data-page]').forEach(el=>{el.addEventListener('click',()=>navigateTo(el.dataset.page));});
 document.querySelectorAll('.modal-bg').forEach(bg=>{bg.addEventListener('click',e=>{if(e.target===bg)bg.classList.remove('open');});});
 
@@ -807,7 +814,7 @@ async function loadXrayConfig(){
     document.getElementById('xray-port').value=port;document.getElementById('xray-path').value=path;
     document.getElementById('xray-domain').value=host;
     const cdnR=await api('POST','./api/cmd',{action:'server_ip'});
-    document.getElementById('xray-cdn').value=host||(cdnR?cdnnR.output:'');
+    document.getElementById('xray-cdn').value=host||(cdnR?cdnR.output:'');
   }catch(e){}
   loadXrayUsers();
 }
@@ -831,10 +838,16 @@ async function changeXrayField(field){
   if(field!=='uuid'){
     const labels={'port':'New port number','path':'New WS path (e.g. /ws)','domain':'New domain (e.g. example.com)','cdn':'New CDN host'};
     showInputModal('Change '+field,labels[field]||'New value','',async(val)=>{
-      toast('Changing '+field+'...');const r=await api('POST','./api/cmd',{action});if(r)toast(r.output||'Done',r.ok?'ok':'err');if(r&&r.ok)loadXrayConfig();
+      toast('Changing '+field+'...');
+      const r=await api('POST','./api/cmd',{action,value:val});
+      if(r&&r.ok){toast('Changed successfully','ok');loadXrayConfig();}
+      else toast((r&&r.output)||'Failed','err');
     });return;
   }
-  toast('Changing '+field+'...');const r=await api('POST','./api/cmd',{action});if(r)toast(r.output||'Done',r.ok?'ok':'err');if(r&&r.ok)loadXrayConfig();
+  toast('Changing '+field+'...');
+  const r=await api('POST','./api/cmd',{action});
+  if(r&&r.ok){toast('UUIDs rotated','ok');loadXrayConfig();}
+  else toast((r&&r.output)||'Failed','err');
 }
 
 async function loadRealityConfig(){
@@ -849,11 +862,12 @@ async function loadSecurityStatus(){
   document.getElementById('ipv6-status').textContent=(ipv6&&ipv6.output==='1')?'OFF':'ON';
   const ssh=await api('POST','./api/cmd',{action:'ssh_port_get'});
   document.getElementById('ssh-port').textContent=(ssh&&ssh.output)||'22';
-  const cpug=await api('POST','./api/cmd',{action:'cpuguard_setup'});
-  document.getElementById('cpuguard-status').textContent=(cpug&&cpug.ok)?'ON':'OFF';
+  const cpug=await api('POST','./api/cmd',{action:'cpuguard_status'});
+  document.getElementById('cpuguard-status').textContent=(cpug&&cpug.output==='ON')?'ON':'OFF';
   const f2b=await api('POST','./api/cmd',{action:'status_fail2ban'});
   document.getElementById('f2b-status').textContent=(f2b&&f2b.output==='active')?'ON':'OFF';
-  document.getElementById('webjail-status').textContent='—';
+  const wj=await api('POST','./api/cmd',{action:'webjail_status'});
+  document.getElementById('webjail-status').textContent=(wj&&wj.output==='ON')?'ON':'OFF';
   loadUFWStatus();
 }
 
