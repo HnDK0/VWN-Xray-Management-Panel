@@ -386,23 +386,24 @@ managePanel() {
     while true; do
         clear
         echo -e "${cyan}$(msg panel_menu_title)${reset}"
-        echo -e "  $(msg status): $(getPanelStatus)"
+        echo -e "  $(msg status): $(getPanelStatus),  Auth: $(getPanelAuthStatus)"
         echo ""
-        echo -e "${green}1.${reset} $(msg panel_open)"
-        echo -e "${green}2.${reset} $(msg panel_change_pass)"
-        echo -e "${green}3.${reset} $(msg panel_restart)"
-        echo -e "${green}4.${reset} $(msg panel_view_log)"
-        echo -e "  Auth: $(getPanelAuthStatus)"
+        echo -e "${green}1.${reset} $(msg panel_install)"
+        echo -e "${green}2.${reset} $(msg panel_open)"
+        echo -e "${green}3.${reset} $(msg panel_change_pass)"
+        echo -e "${green}4.${reset} $(msg panel_restart)"
+        echo -e "${green}5.${reset} $(msg panel_view_log)"
         echo ""
-        echo -e "${green}5.${reset} $(msg panel_reinstall)"
-        echo -e "${green}6.${reset} $(msg panel_remove)"
-        echo -e "${green}7.${reset} Enable Basic Auth (.htpasswd)"
-        echo -e "${green}8.${reset} Disable Basic Auth"
+        echo -e "${green}6.${reset} $(msg panel_reinstall)"
+        echo -e "${green}7.${reset} $(msg panel_remove)"
+        echo -e "${green}8.${reset} Enable Basic Auth (.htpasswd)"
+        echo -e "${green}9.${reset} Disable Basic Auth"
         echo -e "${green}0.${reset} $(msg back)"
         echo ""
         read -rp "$(msg choose)" choice
         case $choice in
-            1)
+            1) installPanel ;;
+            2)
                 local domain saved_path
                 domain=$(grep -E '^\s*server_name\s+' "$nginxPath" 2>/dev/null | grep -v '_' | awk '{print $2}' | tr -d ';' | head -1)
                 saved_path=$(grep "^PANEL_PATH=" "$PANEL_CONF" 2>/dev/null | cut -d= -f2-)
@@ -414,13 +415,13 @@ managePanel() {
                     echo "${yellow}$(msg panel_url_later)${reset}"
                 fi
                 ;;
-            2) panelChangePassword ;;
-            3) systemctl restart vwn-panel && echo "${green}OK${reset}" ;;
-            4) journalctl -u vwn-panel -n 50 --no-pager ;;
-            5) installPanel ;;
-            6) removePanel ;;
-            7) enablePanelBasicAuth ;;
-            8) disablePanelBasicAuth ;;
+            3) panelChangePassword ;;
+            4) systemctl restart vwn-panel && echo "${green}OK${reset}" ;;
+            5) journalctl -u vwn-panel -n 50 --no-pager ;;
+            6) installPanel ;;
+            7) removePanel ;;
+            8) enablePanelBasicAuth ;;
+            9) disablePanelBasicAuth ;;
             0) break ;;
         esac
         [ "$choice" = "0" ] && continue

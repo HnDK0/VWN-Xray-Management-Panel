@@ -544,6 +544,7 @@ _initLang() {
     MSG[tor_already]=$(     [ "$VWN_LANG" = en ] && echo "tor already installed." || echo "tor уже установлен.")
 
     # ── PANEL ─────────────────────────────────────────────────────
+    MSG[panel_install]=$(         [ "$VWN_LANG" = en ] && echo "Install panel"                  || echo "Установить панель")
     MSG[panel_menu_title]=$(      [ "$VWN_LANG" = en ] && echo "=== Web Panel ==="              || echo "=== Веб-панель ===")
     MSG[panel_installing]=$(      [ "$VWN_LANG" = en ] && echo "Installing web panel..."        || echo "Установка веб-панели...")
     MSG[panel_downloading]=$(     [ "$VWN_LANG" = en ] && echo "Downloading panel files..."     || echo "Загрузка файлов панели...")
