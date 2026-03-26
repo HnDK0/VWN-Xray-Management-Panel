@@ -5,8 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>VWN Panel</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500&display=swap');
 :root{
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
   --bg:#0d1117;--bg2:#161b22;--bg3:#1c2128;--bg4:#21262d;
   --border:#30363d;--border2:#3d444d;
   --text:#e6edf3;--text2:#8b949e;--text3:#6e7681;
@@ -18,13 +19,13 @@
   --accent:#58a6ff;--radius:6px;--radius2:10px;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-size:14px;min-height:100vh}
-code,pre,.mono{font-family:'JetBrains Mono',monospace}
+body{background:var(--bg);color:var(--text);font-family:var(--font-sans);font-size:14px;min-height:100vh}
+code,pre,.mono{font-family:var(--font-mono)}
 /* Login */
 #login-screen{display:flex;align-items:center;justify-content:center;min-height:100vh}
 .login-box{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius2);padding:40px;width:380px;max-width:92vw}
 .login-logo{text-align:center;margin-bottom:32px}
-.login-logo .logo-mark{font-family:'JetBrains Mono',monospace;font-size:32px;font-weight:700;color:var(--accent);letter-spacing:-2px}
+.login-logo .logo-mark{font-family:var(--font-mono);font-size:32px;font-weight:700;color:var(--accent);letter-spacing:-2px}
 .login-logo .logo-sub{font-size:11px;color:var(--text3);letter-spacing:3px;text-transform:uppercase;margin-top:4px}
 .login-box label{display:block;font-size:12px;color:var(--text2);margin-bottom:6px;letter-spacing:.5px}
 .login-box input[type=password]{width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);padding:10px 14px;font-family:inherit;font-size:14px;outline:none;transition:border .15s}
@@ -38,7 +39,7 @@ code,pre,.mono{font-family:'JetBrains Mono',monospace}
 /* Sidebar */
 .sidebar{width:220px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;position:fixed;top:0;left:0;height:100vh;z-index:100}
 .sidebar-logo{padding:18px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
-.sidebar-logo .mark{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:18px;color:var(--accent)}
+.sidebar-logo .mark{font-family:var(--font-mono);font-weight:700;font-size:18px;color:var(--accent)}
 .sidebar-logo .version{font-size:11px;color:var(--text3)}
 .nav{flex:1;padding:10px 0;overflow-y:auto}
 .nav-item{display:flex;align-items:center;gap:10px;padding:9px 20px;cursor:pointer;color:var(--text2);font-size:13px;transition:all .12s;border-left:2px solid transparent;user-select:none}
@@ -67,7 +68,7 @@ code,pre,.mono{font-family:'JetBrains Mono',monospace}
 /* Stat cards */
 .stat-card{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
 .stat-label{font-size:11px;color:var(--text3);letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px}
-.stat-val{font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:var(--text)}
+.stat-val{font-family:var(--font-mono);font-size:22px;font-weight:700;color:var(--text)}
 .stat-sub{font-size:11px;color:var(--text2);margin-top:4px}
 .bar{height:4px;background:var(--border);border-radius:2px;margin-top:8px;overflow:hidden}
 .bar-fill{height:100%;border-radius:2px;background:var(--accent);transition:width .6s ease}
@@ -78,7 +79,7 @@ code,pre,.mono{font-family:'JetBrains Mono',monospace}
 .svc-row{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--bg3);border-radius:var(--radius);border:1px solid var(--border)}
 .svc-name{font-size:13px;font-weight:500}
 .svc-right{display:flex;align-items:center;gap:10px}
-.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600;font-family:'JetBrains Mono',monospace}
+.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600;font-family:var(--font-mono)}
 .badge.on{background:var(--green3);color:var(--green);border:1px solid var(--green2)}
 .badge.off{background:var(--red2);color:var(--red);border:1px solid #5a2020}
 .badge.warn{background:var(--yellow2);color:var(--yellow)}
@@ -96,9 +97,9 @@ code,pre,.mono{font-family:'JetBrains Mono',monospace}
 .page{display:none}
 .page.active{display:block}
 /* Log output */
-.log-out{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:14px;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text2);white-space:pre-wrap;word-break:break-all;max-height:500px;overflow-y:auto;margin-top:12px}
+.log-out{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:14px;font-family:var(--font-mono);font-size:12px;color:var(--text2);white-space:pre-wrap;word-break:break-all;max-height:500px;overflow-y:auto;margin-top:12px}
 /* Editor */
-.editor-area{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:12px;padding:12px;resize:vertical;min-height:300px;outline:none}
+.editor-area{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-family:var(--font-mono);font-size:12px;padding:12px;resize:vertical;min-height:300px;outline:none}
 .editor-area:focus{border-color:var(--accent)}
 /* Input row */
 .input-row{display:flex;gap:8px;margin-bottom:12px}
@@ -191,7 +192,7 @@ code,pre,.mono{font-family:'JetBrains Mono',monospace}
       </div>
       <div class="nav-sep"></div>
       <div class="nav-item" data-page="settings">
-        <svg viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M7.429 1.525a6.593 6.593 0 011.142 0c.036.003.108.036.137.146l.289 1.105c.147.56.55.967.997 1.189.174.086.341.178.502.278.433.268.97.começ372 1.539.245l1.105-.29c.109-.028.199.009.232.039.208.204.39.424.544.655.154.232.276.48.365.740.03.088-.004.196-.095.247l-.978.573c-.483.284-.73.77-.73 1.27 0 .5.247.986.73 1.27l.978.573c.09.052.124.16.095.247-.09.26-.21.508-.365.74a3.502 3.502 0 01-.544.655c-.033.03-.123.067-.232.039l-1.105-.29c-.57-.127-1.106-.023-1.54.245-.16.1-.327.192-.5.278-.449.222-.851.628-.998 1.188l-.289 1.105c-.029.11-.1.143-.137.146a6.605 6.605 0 01-1.142 0c-.036-.003-.108-.037-.137-.146l-.289-1.105c-.147-.56-.55-.966-.997-1.188a5.081 5.081 0 01-.501-.278c-.433-.268-.97-.372-1.539-.245l-1.105.29c-.109.028-.199-.009-.232-.039a3.5 3.5 0 01-.544-.655 3.484 3.484 0 01-.365-.74c-.03-.087.004-.196.095-.247l.978-.573c.483-.284.73-.77.73-1.27 0-.5-.247-.985-.73-1.27l-.978-.572c-.09-.052-.124-.16-.095-.248.09-.26.21-.508.365-.74a3.5 3.5 0 01.544-.655c.033-.03.123-.067.232-.039l1.105.29c.57.127 1.106.023 1.54-.245.16-.1.326-.192.5-.278.449-.222.851-.628.998-1.189l.289-1.105c.029-.11.1-.143.137-.146zM8 10.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z"/></svg>
+        <svg viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M7.429 1.525a6.593 6.593 0 011.142 0c.036.003.108.036.137.146l.289 1.105c.147.56.55.967.997 1.189.174.086.341.178.502.278.433.268.97.372 1.539.245l1.105-.29c.109-.028.199.009.232.039.208.204.39.424.544.655.154.232.276.48.365.740.03.088-.004.196-.095.247l-.978.573c-.483.284-.73.77-.73 1.27 0 .5.247.986.73 1.27l.978.573c.09.052.124.16.095.247-.09.26-.21.508-.365.74a3.502 3.502 0 01-.544.655c-.033.03-.123.067-.232.039l-1.105-.29c-.57-.127-1.106-.023-1.54.245-.16.1-.327.192-.5.278-.449.222-.851.628-.998 1.188l-.289 1.105c-.029.11-.1.143-.137.146a6.605 6.605 0 01-1.142 0c-.036-.003-.108-.037-.137-.146l-.289-1.105c-.147-.56-.55-.966-.997-1.188a5.081 5.081 0 01-.501-.278c-.433-.268-.97-.372-1.539-.245l-1.105.29c-.109.028-.199-.009-.232-.039a3.5 3.5 0 01-.544-.655 3.484 3.484 0 01-.365-.74c-.03-.087.004-.196.095-.247l.978-.573c.483-.284.73-.77.73-1.27 0-.5-.247-.985-.73-1.27l-.978-.572c-.09-.052-.124-.16-.095-.248.09-.26.21-.508.365-.74a3.5 3.5 0 01.544-.655c.033-.03.123-.067.232-.039l1.105.29c.57.127 1.106.023 1.54-.245.16-.1.326-.192.5-.278.449-.222.851-.628.998-1.189l.289-1.105c.029-.11.1-.143.137-.146zM8 10.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z"/></svg>
         Settings
       </div>
     </div>
