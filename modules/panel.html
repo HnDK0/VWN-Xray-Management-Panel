@@ -511,7 +511,7 @@ async function doLogin() {
   if (!pass) { err.textContent = 'Enter password'; return; }
   const btn = document.getElementById('login-btn');
   btn.disabled = true; btn.textContent = 'Signing in...';
-  const r = await fetch('/api/login', {
+  const r = await fetch('./api/login', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({password: pass})
@@ -556,7 +556,7 @@ function navigateTo(page) {
 // ── SSE ──────────────────────────────────────────────────────────
 function initSSE() {
   if (sseSource) sseSource.close();
-  sseSource = new EventSource('/api/stream?token=' + encodeURIComponent(token));
+  sseSource = new EventSource('./api/stream?token=' + encodeURIComponent(token));
   sseSource.onmessage = e => {
     try { renderDashboard(JSON.parse(e.data)); } catch(_) {}
   };
@@ -567,7 +567,7 @@ function initSSE() {
 
 // ── Dashboard ────────────────────────────────────────────────────
 async function loadDashboard() {
-  const d = await api('POST', '/api/dashboard');
+  const d = await api('POST', './api/dashboard');
   if (d) renderDashboard(d);
 }
 
@@ -635,7 +635,7 @@ function renderDashboard(d) {
 // ── Services ─────────────────────────────────────────────────────
 async function svcRestart(action, label) {
   toast(`Restarting ${label}...`);
-  const r = await api('POST', '/api/cmd', {action});
+  const r = await api('POST', './api/cmd', {action});
   if (r) toast(r.output || 'Done', r.ok ? 'ok' : 'err');
 }
 
@@ -807,7 +807,7 @@ async function loadBackups() {
     return `<tr>
       <td class="mono" style="font-size:12px">${esc(b.name)}</td>
       <td style="color:var(--text2)">${sizeMb} MB</td>
-      <td><a href="/api/backup/download/${esc(b.name)}" class="btn-sm" download style="text-decoration:none;display:inline-block">⬇ Download</a></td>
+      <td><a href="./api/backup/download/${esc(b.name)}" class="btn-sm" download style="text-decoration:none;display:inline-block">⬇ Download</a></td>
     </tr>`;
   }).join('');
 }
