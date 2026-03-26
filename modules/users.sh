@@ -105,6 +105,7 @@ _initUsersFile() {
 buildUserSubFile() {
     local uuid="$1" label="$2" token="$3"
     mkdir -p "$SUB_DIR"
+    chown www-data:www-data "$SUB_DIR" 2>/dev/null || true
     applyNginxSub 2>/dev/null || true
 
     local domain lines="" server_ip flag
@@ -149,6 +150,7 @@ buildUserSubFile() {
     rm -f "${SUB_DIR}/${safe}_"*.txt "${SUB_DIR}/${safe}_"*.html
     printf '%s' "$lines" | base64 -w 0 > "${SUB_DIR}/${filename}"
     chmod 600 "${SUB_DIR}/${filename}"
+    chown www-data:www-data "${SUB_DIR}/${filename}" 2>/dev/null || true
     buildUserHtmlPage "$uuid" "$label" "$token" "$lines" 2>/dev/null || true
 }
 
@@ -344,6 +346,7 @@ function generateQR(text){
 </script></body></html>
 SUBEOF
     chmod 600 "$htmlfile"
+    chown www-data:www-data "$htmlfile" 2>/dev/null || true
 }
 
 
