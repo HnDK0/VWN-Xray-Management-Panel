@@ -642,7 +642,7 @@ async function svcRestart(action, label) {
 
 // ── Users ────────────────────────────────────────────────────────
 async function loadUsersPage() {
-  const r = await api('POST', '/api/users');
+  const r = await api('POST', './api/users');
   if (r && r.ok) renderUsersTable(r.users, 'users-tbody-full', false);
 }
 
@@ -681,7 +681,7 @@ async function submitAddUser() {
   const name = document.getElementById('new-user-name').value.trim();
   const uuid = document.getElementById('new-user-uuid').value.trim();
   if (!name) { toast('Enter a name', 'err'); return; }
-  const r = await api('POST', '/api/users/add', {name, uuid});
+  const r = await api('POST', './api/users/add', {name, uuid});
   closeModal('modal-user');
   if (r && r.ok) {
     toast('User added: ' + name, 'ok');
@@ -694,7 +694,7 @@ async function submitAddUser() {
 
 async function delUserUI(name) {
   if (!confirm(`Delete user "${name}"?`)) return;
-  const r = await api('POST', '/api/users/del', {name});
+  const r = await api('POST', './api/users/del', {name});
   if (r && r.ok) {
     toast('User deleted', 'ok');
     loadDashboard();
@@ -706,7 +706,7 @@ async function delUserUI(name) {
 
 // ── Domains ──────────────────────────────────────────────────────
 async function loadDomainsUI(list) {
-  const r = await api('POST', '/api/cmd', {action: list + '_domains_list'});
+  const r = await api('POST', './api/cmd', {action: list + '_domains_list'});
   const container = document.getElementById(list + '-domains-list');
   if (!container) return;
   const domains = (r && r.output) ? r.output.split('\n').filter(Boolean) : [];
@@ -723,7 +723,7 @@ async function addDomainUI(list) {
   const inp = document.getElementById(list + '-new-domain');
   const domain = inp.value.trim();
   if (!domain) return;
-  const r = await api('POST', '/api/domain/add', {list, domain});
+  const r = await api('POST', './api/domain/add', {list, domain});
   if (r && r.ok) {
     inp.value = '';
     toast('Domain added', 'ok');
@@ -734,7 +734,7 @@ async function addDomainUI(list) {
 }
 
 async function delDomainUI(list, domain) {
-  const r = await api('POST', '/api/domain/del', {list, domain});
+  const r = await api('POST', './api/domain/del', {list, domain});
   if (r && r.ok) {
     toast('Removed', 'ok');
     loadDomainsUI(list);
@@ -749,20 +749,20 @@ async function cmdAction(action) {
   document.getElementById('modal-cmd-title').textContent = title;
   document.getElementById('modal-cmd-out').textContent = 'Running...';
   openModal('modal-cmd');
-  const r = await api('POST', '/api/cmd', {action});
+  const r = await api('POST', './api/cmd', {action});
   document.getElementById('modal-cmd-out').textContent = (r && r.output) || (r ? 'Done' : 'Error');
 }
 
 // ── Logs ─────────────────────────────────────────────────────────
 async function loadLog(action, label) {
   document.getElementById('log-out').textContent = `Loading ${label}...`;
-  const r = await api('POST', '/api/cmd', {action});
+  const r = await api('POST', './api/cmd', {action});
   document.getElementById('log-out').textContent = (r && r.output) || 'No logs';
 }
 
 async function clearLogsUI() {
   if (!confirm('Clear all logs?')) return;
-  const r = await api('POST', '/api/cmd', {action: 'clear_logs'});
+  const r = await api('POST', './api/cmd', {action: 'clear_logs'});
   toast((r && r.output) || 'Cleared', r && r.ok ? 'ok' : 'err');
 }
 
@@ -770,7 +770,7 @@ async function clearLogsUI() {
 async function loadFile() {
   const name = document.getElementById('file-select').value;
   document.getElementById('editor-status').textContent = 'Loading...';
-  const r = await api('POST', '/api/file/read', {name});
+  const r = await api('POST', './api/file/read', {name});
   if (r && r.ok) {
     document.getElementById('editor-content').value = r.content;
     document.getElementById('editor-status').textContent = 'Loaded';
@@ -784,7 +784,7 @@ async function saveFile() {
   const name = document.getElementById('file-select').value;
   const content = document.getElementById('editor-content').value;
   document.getElementById('editor-status').textContent = 'Saving...';
-  const r = await api('POST', '/api/file/write', {name, content});
+  const r = await api('POST', './api/file/write', {name, content});
   if (r && r.ok) {
     document.getElementById('editor-status').textContent = 'Saved ✓';
     toast('Saved', 'ok');
@@ -796,7 +796,7 @@ async function saveFile() {
 
 // ── Backup ────────────────────────────────────────────────────────
 async function loadBackups() {
-  const d = await api('POST', '/api/dashboard');
+  const d = await api('POST', './api/dashboard');
   const backups = d && d.backups ? d.backups : [];
   const tbody = document.getElementById('backup-tbody');
   if (backups.length === 0) {
@@ -816,7 +816,7 @@ async function loadBackups() {
 async function createBackup() {
   const btn = document.getElementById('btn-create-backup');
   btn.disabled = true; btn.textContent = 'Creating...';
-  const r = await api('POST', '/api/cmd', {action: 'backup_create'});
+  const r = await api('POST', './api/cmd', {action: 'backup_create'});
   btn.disabled = false; btn.textContent = '+ Create Backup';
   toast((r && r.output) || 'Done', r && r.ok ? 'ok' : 'err');
   loadBackups();
@@ -828,7 +828,7 @@ async function changePassword() {
   const p2 = document.getElementById('new-pass2').value;
   if (p1.length < 8) { toast('Min 8 characters', 'err'); return; }
   if (p1 !== p2) { toast('Passwords do not match', 'err'); return; }
-  const r = await api('POST', '/api/panel/passwd', {password: p1});
+  const r = await api('POST', './api/panel/passwd', {password: p1});
   if (r && r.ok) {
     toast('Password changed', 'ok');
     document.getElementById('new-pass').value = '';
@@ -896,7 +896,7 @@ document.querySelectorAll('.modal-bg').forEach(bg => {
 
 // ── Xray Config ──────────────────────────────────────────────────
 async function loadXrayConfig() {
-  const r = await api('POST', '/api/cmd', {action: 'xray_config_get'});
+  const r = await api('POST', './api/cmd', {action: 'xray_config_get'});
   if (!r || !r.ok) return;
   try {
     const cfg = JSON.parse(r.output);
@@ -910,7 +910,7 @@ async function loadXrayConfig() {
     document.getElementById('xray-path').value = path;
     document.getElementById('xray-domain').value = host;
     // CDN host
-    const cdnR = await api('POST', '/api/cmd', {action: 'server_ip'});
+    const cdnR = await api('POST', './api/cmd', {action: 'server_ip'});
     document.getElementById('xray-cdn').value = host || (cdnR ? cdnR.output : '');
   } catch(e) {}
   // Load users with sub URLs
@@ -918,7 +918,7 @@ async function loadXrayConfig() {
 }
 
 async function loadXrayUsers() {
-  const r = await api('POST', '/api/users');
+  const r = await api('POST', './api/users');
   if (!r || !r.ok) return;
   const tbody = document.getElementById('xray-users-tbody');
   if (!r.users || r.users.length === 0) {
@@ -963,14 +963,14 @@ async function changeXrayField(field) {
     };
     showInputModal('Change ' + field, labels[field] || 'New value', '', async (val) => {
       toast('Changing ' + field + '...');
-      const r = await api('POST', '/api/cmd', {action, val});
+      const r = await api('POST', './api/cmd', {action, val});
       if (r) toast(r.output || 'Done', r.ok ? 'ok' : 'err');
       if (r && r.ok) loadXrayConfig();
     });
     return;
   }
   toast('Changing ' + field + '...');
-  const r = await api('POST', '/api/cmd', {action});
+  const r = await api('POST', './api/cmd', {action});
   if (r) toast(r.output || 'Done', r.ok ? 'ok' : 'err');
   if (r && r.ok) loadXrayConfig();
 }

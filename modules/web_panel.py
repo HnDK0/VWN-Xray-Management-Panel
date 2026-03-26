@@ -34,6 +34,11 @@ RATE_WINDOW   = 900     # за 15 минут
 _conf_cache: dict = {}
 _conf_lock = threading.Lock()
 
+# ── Кэш server_ip (обновляется в фоновом потоке) ──
+_server_ip_cache: str = "UNKNOWN"
+_server_ip_lock = threading.Lock()
+_server_ip_last_update: float = 0
+
 def _load_conf(path: str) -> dict:
     conf = {}
     try:
@@ -60,6 +65,39 @@ def reload_conf():
     with _conf_lock:
         _conf_cache = {}
     load_panel_conf()
+
+def _fetch_server_ip() -> str:
+    """Получает внешний IP адрес сервера."""
+    try:
+        r = subprocess.run(
+            ["bash", "-c", "curl -s --connect-timeout 5 https://api.ipify.org 2>/dev/null || curl -s --connect-timeout 5 https://ipv4.icanhazip.com 2>/dev/null || echo 'UNKNOWN'"],
+            capture_output=True, text=True, timeout=10
+        )
+        return r.stdout.strip() or "UNKNOWN"
+    except Exception:
+        return "UNKNOWN"
+
+def get_cached_server_ip() -> str:
+    """Возвращает кэшированный server_ip."""
+    global _server_ip_last_update
+    with _server_ip_lock:
+        # Обновляем если прошло больше 10 минут или кэш пуст
+        if time.time() - _server_ip_last_update > 600 or _server_ip_cache == "UNKNOWN":
+            return _server_ip_cache  # Вернём текущий, обновление в фоне
+        return _server_ip_cache
+
+def _server_ip_updater():
+    """Фоновый поток для обновления server_ip."""
+    global _server_ip_cache, _server_ip_last_update
+    while True:
+        try:
+            ip = _fetch_server_ip()
+            with _server_ip_lock:
+                _server_ip_cache = ip
+                _server_ip_last_update = time.time()
+        except Exception as e:
+            print(f"WARN: server_ip updater error: {e}", flush=True)
+        time.sleep(600)  # Обновляем каждые 10 минут
 
 def load_vwn_conf() -> dict:
     return _load_conf(VWN_CONF)
@@ -491,9 +529,12 @@ def stream_backup(filename: str):
 # ── Dashboard ─────────────────────────────────────────────────────
 def get_dashboard() -> dict:
     def svc(name):
-        r = subprocess.run(["systemctl", "is-active", name],
-                           capture_output=True, text=True)
-        return r.stdout.strip() == "active"
+        try:
+            r = subprocess.run(["systemctl", "is-active", name],
+                               capture_output=True, text=True, timeout=5)
+            return r.stdout.strip() == "active"
+        except Exception:
+            return False
 
     try:
         mem = open("/proc/meminfo").read()
@@ -525,13 +566,14 @@ def get_dashboard() -> dict:
             date_str = r.stdout.strip().replace("notAfter=", "")
             exp = subprocess.run(
                 ["date", "-d", date_str, "+%s"],
-                capture_output=True, text=True)
+                capture_output=True, text=True, timeout=5)
             if exp.stdout.strip().isdigit():
                 cert_days = (int(exp.stdout.strip()) - int(time.time())) // 86400
     except Exception:
         pass
 
-    server_ip = run_command("server_ip").get("output", "?")
+    # Используем кэшированный server_ip вместо блокирующего curl
+    server_ip = get_cached_server_ip()
 
     users = get_users()
 
@@ -715,6 +757,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             audit(self._ip(), f"download_backup:{filename}", "ok")
             return
 
+        print(f"GET {path} — Not found", flush=True)
         self._send_json({"error": "Not found"}, 404)
 
     def do_POST(self):
@@ -725,10 +768,12 @@ class PanelHandler(BaseHTTPRequestHandler):
             return
 
         if not self._check_origin():
+            print(f"POST {path} — Forbidden (origin) from {self._ip()}", flush=True)
             self._send_json({"error": "Forbidden (origin)"}, 403)
             return
 
         if not self._auth():
+            print(f"POST {path} — Unauthorized from {self._ip()}", flush=True)
             self._send_json({"error": "Unauthorized"}, 401)
             return
 
@@ -793,6 +838,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._send_json(get_dashboard())
 
         else:
+            print(f"POST {path} — Not found", flush=True)
             self._send_json({"error": "Not found"}, 404)
 
     def _handle_login(self):
@@ -894,6 +940,17 @@ def main():
 
     # Инициализируем кэш конфига
     load_panel_conf(force=True)
+
+    # Запускаем фоновый поток для обновления server_ip
+    ip_thread = threading.Thread(target=_server_ip_updater, daemon=True)
+    ip_thread.start()
+
+    # Первоначальное получение server_ip
+    global _server_ip_cache, _server_ip_last_update
+    with _server_ip_lock:
+        _server_ip_cache = _fetch_server_ip()
+        _server_ip_last_update = time.time()
+    print(f"INFO: server_ip = {_server_ip_cache}", flush=True)
 
     port = int(conf.get("PANEL_PORT", LISTEN_PORT))
     server = ThreadingHTTPServer((LISTEN_HOST, port), PanelHandler)
