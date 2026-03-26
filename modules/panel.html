@@ -257,6 +257,17 @@ select.inp{cursor:pointer}
       <!-- WARP -->
       <div class="page" id="page-warp">
         <div class="card">
+          <div class="card-title">WARP Status</div>
+          <div class="grid-2" style="margin-bottom:16px">
+            <div class="stat-card">
+              <div class="stat-label">Installation</div>
+              <div class="stat-val" id="warp-install-status">—</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Connection</div>
+              <div class="stat-val" id="warp-conn-status">—</div>
+            </div>
+          </div>
           <div class="card-title">WARP Settings</div>
           <p class="section-desc">Cloudflare WARP provides additional privacy by routing traffic through Cloudflare's network.</p>
           <div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">
@@ -278,6 +289,17 @@ select.inp{cursor:pointer}
       <!-- Relay -->
       <div class="page" id="page-relay">
         <div class="card">
+          <div class="card-title">Relay Status</div>
+          <div class="grid-2" style="margin-bottom:16px">
+            <div class="stat-card">
+              <div class="stat-label">Installation</div>
+              <div class="stat-val" id="relay-install-status">—</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Mode</div>
+              <div class="stat-val" id="relay-mode-status">—</div>
+            </div>
+          </div>
           <div class="card-title">Relay Settings</div>
           <p class="section-desc">Route traffic through an external VLESS/VMess/Trojan/SOCKS proxy server.</p>
           <div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">
@@ -298,6 +320,17 @@ select.inp{cursor:pointer}
       <!-- Psiphon -->
       <div class="page" id="page-psiphon">
         <div class="card">
+          <div class="card-title">Psiphon Status</div>
+          <div class="grid-2" style="margin-bottom:16px">
+            <div class="stat-card">
+              <div class="stat-label">Installation</div>
+              <div class="stat-val" id="psiphon-install-status">—</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Mode</div>
+              <div class="stat-val" id="psiphon-mode-status">—</div>
+            </div>
+          </div>
           <div class="card-title">Psiphon Settings</div>
           <p class="section-desc">Psiphon censorship-circumvention tool with optional WARP+Psiphon tunnel.</p>
           <div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">
@@ -335,6 +368,17 @@ select.inp{cursor:pointer}
       <!-- Tor -->
       <div class="page" id="page-tor">
         <div class="card">
+          <div class="card-title">Tor Status</div>
+          <div class="grid-2" style="margin-bottom:16px">
+            <div class="stat-card">
+              <div class="stat-label">Installation</div>
+              <div class="stat-val" id="tor-install-status">—</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Service</div>
+              <div class="stat-val" id="tor-service-status">—</div>
+            </div>
+          </div>
           <div class="card-title">Tor Settings</div>
           <p class="section-desc">Route specific domains through the Tor network for anonymity.</p>
           <div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">
@@ -667,10 +711,10 @@ function navigateTo(page){
   document.querySelectorAll('.page').forEach(el=>el.classList.toggle('active',el.id==='page-'+page));
   document.getElementById('page-title').textContent=page.charAt(0).toUpperCase()+page.slice(1).replace('-',' ');
   if(page==='users')loadUsersPage();
-  if(page==='warp')loadDomainsUI('warp');
-  if(page==='relay')loadDomainsUI('relay');
-  if(page==='psiphon')loadDomainsUI('psiphon');
-  if(page==='tor')loadDomainsUI('tor');
+  if(page==='warp'){loadWarpStatus();loadDomainsUI('warp');}
+  if(page==='relay'){loadRelayStatus();loadDomainsUI('relay');}
+  if(page==='psiphon'){loadPsiphonStatus();loadDomainsUI('psiphon');}
+  if(page==='tor'){loadTorStatus();loadDomainsUI('tor');}
   if(page==='backup')loadBackups();
   if(page==='xray')loadXrayConfig();
   if(page==='reality')loadRealityConfig();
@@ -720,12 +764,13 @@ async function loadUsersPage(){const r=await api('POST','./api/users');if(r&&r.o
 
 function renderUsersFull(users){
   const tbody=document.getElementById('users-tbody-full');if(!tbody)return;
-  if(!users||users.length===0){tbody.innerHTML='<tr><td colspan="5" style="color:var(--text3)">No users</td></tr>';return;}
+  if(!users||users.length===0){tbody.innerHTML='<tr><td colspan="6" style="color:var(--text3)">No users</td></tr>';return;}
   const domain=document.getElementById('xray-domain')?.value||'';
   tbody.innerHTML=users.map(u=>{
     const safe=u.name.replace(/[^A-Za-z0-9_-]/g,'');
-    const subUrl=domain?`https://${domain}/sub/${safe}_${u.token}.txt`:'(set domain)';
-    return`<tr><td><strong>${esc(u.name)}</strong></td><td class="mono" style="font-size:11px;color:var(--text3)">${esc(u.uuid.substring(0,8))}...</td><td class="mono" style="font-size:11px;color:var(--text3)">${esc(u.token||'')}</td><td class="mono" style="font-size:11px;word-break:break-all">${esc(subUrl)}</td><td><button class="btn-sm danger" data-user="${esc(u.name)}" data-action="del-user">Del</button></td></tr>`;
+    const subTxtUrl=domain?`https://${domain}/sub/${safe}_${u.token}.txt`:'(set domain)';
+    const subHtmlUrl=domain?`https://${domain}/sub/${safe}_${u.token}.html`:'(set domain)';
+    return`<tr><td><strong>${esc(u.name)}</strong></td><td class="mono" style="font-size:11px;color:var(--text3)">${esc(u.uuid.substring(0,8))}...</td><td class="mono" style="font-size:11px;color:var(--text3)">${esc(u.token||'')}</td><td class="mono" style="font-size:10px;word-break:break-all">${esc(subTxtUrl)}<br>${esc(subHtmlUrl)}</td><td style="white-space:nowrap"><button class="btn-sm" data-url="${esc(subTxtUrl)}" data-action="copy-url">📋 TXT</button> <button class="btn-sm" data-url="${esc(subHtmlUrl)}" data-action="copy-url">📋 HTML</button></td><td><button class="btn-sm danger" data-user="${esc(u.name)}" data-action="del-user">Del</button></td></tr>`;
   }).join('');
 }
 
@@ -948,6 +993,40 @@ async function loadSecurityStatus(){
 async function loadUFWStatus(){
   const r=await api('POST','./api/cmd',{action:'ufw_status'});
   document.getElementById('ufw-status-view').textContent=(r&&r.output)||'UFW inactive';
+}
+
+// WARP Status
+async function loadWarpStatus(){
+  const install=await api('POST','./api/cmd',{action:'status_warp'});
+  document.getElementById('warp-install-status').textContent=(install&&install.output!=='NOT_INSTALLED')?'Installed':'Not Installed';
+  const conn=await api('POST','./api/cmd',{action:'warp_ip'});
+  document.getElementById('warp-conn-status').textContent=(conn&&conn.output!=='ERROR')?'Connected':'Disconnected';
+}
+
+// Relay Status
+async function loadRelayStatus(){
+  const install=await api('POST','./api/cmd',{action:'relay_check'});
+  document.getElementById('relay-install-status').textContent=(install&&install.ok)?'Installed':'Not Installed';
+  // Check relay mode from config
+  const r=await api('POST','./api/cmd',{action:'relay_domains_list'});
+  const hasDomains=r&&r.output&&r.output.trim().length>0;
+  document.getElementById('relay-mode-status').textContent=hasDomains?'Split':'OFF';
+}
+
+// Psiphon Status
+async function loadPsiphonStatus(){
+  const install=await api('POST','./api/cmd',{action:'status_psiphon'});
+  document.getElementById('psiphon-install-status').textContent=(install&&install.output!=='inactive')?'Installed':'Not Installed';
+  const r=await api('POST','./api/cmd',{action:'psiphon_domains_list'});
+  const hasDomains=r&&r.output&&r.output.trim().length>0;
+  document.getElementById('psiphon-mode-status').textContent=hasDomains?'Split':'OFF';
+}
+
+// Tor Status
+async function loadTorStatus(){
+  const install=await api('POST','./api/cmd',{action:'status_tor'});
+  document.getElementById('tor-install-status').textContent=(install&&install.output!=='inactive')?'Installed':'Not Installed';
+  document.getElementById('tor-service-status').textContent=(install&&install.output==='active')?'Running':'Stopped';
 }
 
 // Initialize all event handlers
