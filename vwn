@@ -13,7 +13,7 @@ _load_modules() {
             source "$VWN_LIB/${module}.sh"
         else
             echo "ERROR: Module ${module}.sh not found in $VWN_LIB"
-            echo "Reinstall: bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh)"
+            echo "Reinstall: bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VWN-Xray-Management-Panel/main/install.sh)"
             exit 1
         fi
     done
@@ -42,7 +42,7 @@ case "${1:-}" in
         else
             tmpfile=$(mktemp)
             curl -fsSL --connect-timeout 15 --proto '=https' --tlsv1.2 \
-                "https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh" \
+                "https://raw.githubusercontent.com/HnDK0/VWN-Xray-Management-Panel/main/install.sh" \
                 -o "$tmpfile" 2>/dev/null
             if head -1 "$tmpfile" | grep -q '#!/bin/bash'; then
                 bash "$tmpfile" --update

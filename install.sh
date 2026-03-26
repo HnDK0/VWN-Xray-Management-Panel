@@ -18,7 +18,7 @@ green=$(tput setaf 2 && tput bold 2>/dev/null || echo "")
 cyan=$(tput setaf 6 && tput bold 2>/dev/null || echo "")
 reset=$(tput sgr0 2>/dev/null || echo "")
 
-MODULES="lang core xray nginx warp reality relay psiphon tor security logs backup users diag menu"
+MODULES="lang core xray nginx warp reality relay psiphon tor security logs backup users diag menu panel"
 UPDATE_ONLY=false
 
 # Fallback msg() — works BEFORE lang.sh is loaded.
@@ -144,7 +144,7 @@ case "${1:-}" in
         fi
         exit 0 ;;
 esac
-for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag menu; do
+for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag menu panel; do
     [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh" || { echo "ERROR: module $module not found"; exit 1; }
 done
 VWN_CONF="/usr/local/etc/xray/vwn.conf"
