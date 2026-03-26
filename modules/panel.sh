@@ -232,17 +232,12 @@ EOF
     if systemctl is-active --quiet vwn-panel; then
         echo -e "\n${green}================================================================${reset}"
         echo -e "   $(msg panel_installed)"
-        local domain
+        local domain saved_path
         domain=$(grep -E '^\s*server_name\s+' "$nginxPath" 2>/dev/null | grep -v '_' | awk '{print $2}' | tr -d ';' | head -1)
-        if [ -n "$domain" ]; then
-            echo -e "   URL: ${green}https://${domain}${panel_path}/${reset}"
-        else
-            echo -e "   $(msg panel_url_later)"
-        fi
-        # Читаем PANEL_PATH из конфига для отображения
-        local saved_path
         saved_path=$(grep "^PANEL_PATH=" "$PANEL_CONF" 2>/dev/null | cut -d= -f2-)
-        if [ -n "$saved_path" ]; then
+        if [ -n "$domain" ] && [ -n "$saved_path" ]; then
+            echo -e "   URL: ${green}https://${domain}${saved_path}/${reset}"
+        elif [ -n "$saved_path" ]; then
             echo -e "   Path: ${green}${saved_path}/${reset}"
         fi
         echo -e "${green}================================================================${reset}"
