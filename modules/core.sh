@@ -192,6 +192,7 @@ run_task() {
     echo -e "\n${yellow}>>> $m${reset}"
     if eval "$@"; then
         echo -e "[${green} DONE ${reset}] $m"
+        return 0
     else
         echo -e "[${red} FAIL ${reset}] $m"
         return 1
