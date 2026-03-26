@@ -49,7 +49,7 @@ installXray() {
         "https://github.com/XTLS/Xray-install/raw/main/install-release.sh" \
         -o "$tmpfile" 2>/dev/null; then
         if head -1 "$tmpfile" | grep -qE '^#!.*(bash|sh)' && ! head -5 "$tmpfile" | grep -qi '<html'; then
-            bash "$tmpfile" @ install
+            bash "$tmpfile" install
             # Проверяем что xray реально установился
             if ! command -v xray &>/dev/null; then
                 echo "${red}ERROR: xray not found after install${reset}"
@@ -488,7 +488,7 @@ updateXrayCore() {
         "https://github.com/XTLS/Xray-install/raw/main/install-release.sh" \
         -o "$tmpfile" 2>/dev/null; then
         if head -1 "$tmpfile" | grep -qE '^#!.*(bash|sh)' && ! head -5 "$tmpfile" | grep -qi '<html'; then
-            bash "$tmpfile" @ install
+            bash "$tmpfile" install
             # Проверяем что xray реально обновился
             if ! command -v xray &>/dev/null; then
                 echo "${red}$(msg xray_not_found)${reset}"
