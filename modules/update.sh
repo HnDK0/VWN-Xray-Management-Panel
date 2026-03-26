@@ -25,8 +25,8 @@ echo ""
 for module in $MODULES; do
     printf "  Updating %-12s ... " "${module}.sh"
     tmpfile=$(mktemp)
-    if curl -fsSL --connect-timeout 15 --proto '=https' --tlsv1.2 \
-        "${GITHUB_RAW}/modules/${module}.sh" -o "$tmpfile" 2>/dev/null; then
+    if curl -fsSL --connect-timeout 15 \
+        "${GITHUB_RAW}/modules/${module}.sh" -o "$tmpfile" 2>&1; then
         # Базовая проверка: файл должен начинаться с #!/bin/bash
         if head -1 "$tmpfile" | grep -q '#!/bin/bash'; then
             chmod 600 "$tmpfile"
@@ -46,14 +46,20 @@ done
 for fname in web_panel.py panel.html; do
     printf "  Updating %-12s ... " "$fname"
     tmpfile=$(mktemp)
-    if curl -fsSL --connect-timeout 15 --proto '=https' --tlsv1.2 \
-        "${GITHUB_RAW}/modules/${fname}" -o "$tmpfile" 2>/dev/null; then
-        [ "$fname" = "web_panel.py" ] && chmod 700 "$tmpfile" || chmod 600 "$tmpfile"
-        mv -f "$tmpfile" "${VWN_LIB}/${fname}"
-        echo "${green}OK${reset}"
+    if curl -fsSL --connect-timeout 15 \
+        "${GITHUB_RAW}/modules/${fname}" -o "$tmpfile" 2>&1; then
+        # Проверяем, что файл не пустой
+        if [ -s "$tmpfile" ]; then
+            [ "$fname" = "web_panel.py" ] && chmod 700 "$tmpfile" || chmod 600 "$tmpfile"
+            mv -f "$tmpfile" "${VWN_LIB}/${fname}"
+            echo "${green}OK${reset}"
+        else
+            rm -f "$tmpfile"
+            echo "${red}FAIL (empty file)${reset}"
+        fi
     else
         rm -f "$tmpfile"
-        echo "${red}FAIL${reset}"
+        echo "${red}FAIL (download error)${reset}"
     fi
 done
 

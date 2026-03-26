@@ -107,6 +107,28 @@ download_modules() {
             rm -f "$tmpfile"; return 1
         fi
     done
+
+    # Загружаем файлы веб-панели
+    for fname in web_panel.py panel.html; do
+        echo -n "  $(msg loading) ${fname}... "
+        local tmpfile
+        tmpfile=$(mktemp)
+        if curl -fsSL --connect-timeout 15 \
+            "${GITHUB_RAW}/modules/${fname}" \
+            -o "$tmpfile" 2>/dev/null; then
+            if [ "$fname" = "web_panel.py" ]; then
+                chmod 700 "$tmpfile"
+            else
+                chmod 600 "$tmpfile"
+            fi
+            mv -f "$tmpfile" "${VWN_LIB}/${fname}"
+            echo "${green}OK${reset}"
+        else
+            echo "${red}$(msg error)${reset}"
+            echo "$(msg module_fail) ${fname}"
+            rm -f "$tmpfile"; return 1
+        fi
+    done
 }
 
 install_vwn_binary() {
