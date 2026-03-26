@@ -1,0 +1,102 @@
+#!/bin/bash
+# =================================================================
+# vwn — Загрузчик модулей VWN
+# =================================================================
+
+VWN_LIB="/usr/local/lib/vwn"
+
+_ALL_MODULES="lang core xray nginx warp reality relay psiphon tor security logs backup users diag panel menu"
+
+_load_modules() {
+    for module in $_ALL_MODULES; do
+        if [ -f "$VWN_LIB/${module}.sh" ]; then
+            source "$VWN_LIB/${module}.sh"
+        else
+            echo "ERROR: Module ${module}.sh not found in $VWN_LIB"
+            echo "Reinstall: bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh)"
+            exit 1
+        fi
+    done
+}
+
+# ── Хуки для acme.sh ──────────────────────────────────────────────
+case "${1:-}" in
+    "open-80")
+        ufw status | grep -q inactive && exit 0
+        ufw allow from any to any port 80 proto tcp comment 'ACME temp' &>/dev/null
+        exit 0
+        ;;
+    "close-80")
+        ufw status | grep -q inactive && exit 0
+        ufw status numbered | grep 'ACME temp' | awk -F"[][]" '{print $2}' | sort -rn | while read -r n; do
+            echo "y" | ufw delete "$n" &>/dev/null
+        done
+        exit 0
+        ;;
+
+    # ИСПРАВЛЕНО: не curl|bash — используем локальный update.sh,
+    # если недоступен — скачиваем install.sh в tmpfile с проверкой
+    "update")
+        if [ -f "$VWN_LIB/update.sh" ]; then
+            bash "$VWN_LIB/update.sh"
+        else
+            tmpfile=$(mktemp)
+            curl -fsSL --connect-timeout 15 --proto '=https' --tlsv1.2 \
+                "https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh" \
+                -o "$tmpfile" 2>/dev/null
+            if head -1 "$tmpfile" | grep -q '#!/bin/bash'; then
+                bash "$tmpfile" --update
+            else
+                echo "ERROR: Failed to download update script"
+                rm -f "$tmpfile"; exit 1
+            fi
+            rm -f "$tmpfile"
+        fi
+        exit 0
+        ;;
+
+    "status")
+        _load_modules; _initLang; runFullDiag; exit 0 ;;
+    "backup")
+        _load_modules; _initLang; createBackup; exit 0 ;;
+    "restore")
+        _load_modules; _initLang; restoreBackup; exit 0 ;;
+    "qr")
+        _load_modules; _initLang; getQrCode; exit 0 ;;
+    "panel")
+        _load_modules; _initLang; managePanel; exit 0 ;;
+    "panel-setup")
+        _load_modules; _initLang; installPanel; exit 0 ;;
+
+    "help"|"--help"|"-h")
+        cat << 'HELP'
+VWN — Xray VLESS + WARP + CDN + Reality
+
+Usage: vwn [command]
+
+  (no args)      Open main menu
+  update         Update all modules
+  status         Run full diagnostics
+  backup         Create backup
+  restore        Restore from backup
+  qr             Show QR code
+  panel          Manage web panel
+  panel-setup    Install/reinstall web panel
+  open-80        Open port 80 (acme.sh hook)
+  close-80       Close port 80 (acme.sh hook)
+HELP
+        exit 0
+        ;;
+esac
+
+# ── Загружаем все модули и запускаем меню ──────────────────────────
+_load_modules
+
+VWN_CONF="/usr/local/etc/xray/vwn.conf"
+if [ ! -f "$VWN_CONF" ] || ! grep -q "VWN_LANG=" "$VWN_CONF" 2>/dev/null; then
+    selectLang
+    _initLang
+fi
+
+isRoot
+menu "$@"

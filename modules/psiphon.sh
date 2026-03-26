@@ -1,0 +1,457 @@
+#!/bin/bash
+# =================================================================
+# psiphon.sh — Psiphon: установка, домены, управление
+# Использует psiphon-tunnel-core ConsoleClient
+# SOCKS5 на 127.0.0.1:40002
+# =================================================================
+
+PSIPHON_PORT=40002
+PSIPHON_SERVICE="/etc/systemd/system/psiphon.service"
+PSIPHON_MODE_FILE="/usr/local/etc/xray/psiphon_mode"  # plain | warp
+
+# Публичные PropagationChannelId/SponsorId из открытых клиентов Psiphon
+PSIPHON_PROPAGATION_CHANNEL="FFFFFFFFFFFFFFFF"
+PSIPHON_SPONSOR_ID="FFFFFFFFFFFFFFFF"
+PSIPHON_REMOTE_SERVER_LIST_URL="https://s3.amazonaws.com/psiphon/web/mjr4-p23r-puwl/server_list_compressed"
+PSIPHON_REMOTE_SERVER_LIST_KEY="MIICIDANBgkqhkiG9w0BAQEFAAOCAg0AMIICCAKCAgEAt7Ls+/39r+T6zNW7GiVpJfzq/xvL9SBH5rIFnk0RXYEYavax3WS6HOD35eTAqn8AniOwiH+DOkvgSKF2caqk/y1dfq47Pdymtwzp9ikpB1C5OfAysXzBiwVJlCdajBKvBZDerV1cMvRzCKvKwRmvDmHgphQQ7WfXIGbRbmmk6opMBh3roE42KcotLFtqp0RRwLtcBRNtCdsrVsjiI1Lqz/lH+T61sGjSjQ3CHMuZYSQJZo/KrvzgQXpkaCTdbObxHqb6/+i1qaVOfEsvjoiyzTxJADvSytVtcTjijhPEV6XskJVHE1Zgl+7rATr/pDQkw6DPCNBS1+Y6fy7GstZALQXwEDN/qhQI9kWkHijT8ns+i1vGg00Mk/6J75arLhqcodWsdeG/M/moWgqQAnlZAGVtJI1OgeF5fsPpXu4kctOfuZlGjVZXQNW34aOzm8r8S0eVZitPlbhcPiR4gT/aSMz/wd8lZlzZYsje/Jr8u/YtlwjjreZrGRmG8KMOzukV3lLmMppXFMvl4bxv6YFEmIuTsOhbLTwFgh7KYNjodLj/LsqRVfwz31PgWQFTEPICV7GCvgVlPRxnofqKSjgTWI4mxDhBpVcATvaoBl1L/6WLbFvBsoAUBItWwctO2xalKxF5szhGm8lccoc5MZr8kfE0uxMgsxz4er68iCID+rsCAQM="
+
+getPsiphonStatus() {
+    if systemctl is-active --quiet psiphon 2>/dev/null; then
+        local country=""
+        [ -f "$psiphonConfigFile" ] && country=$(jq -r '.EgressRegion // ""' "$psiphonConfigFile" 2>/dev/null)
+        local tunnel_mode
+        tunnel_mode=$(cat "$PSIPHON_MODE_FILE" 2>/dev/null || echo "plain")
+        # Определяем режим маршрутизации по конфигу Xray
+        local route_mode="OFF"
+        if [ -f "$configPath" ]; then
+            local ps_rule
+            ps_rule=$(jq -r '.routing.rules[] | select(.outboundTag=="psiphon") | if .port == "0-65535" then "Global" elif (.domain | length) > 0 then "Split" else "OFF" end' "$configPath" 2>/dev/null | head -1)
+            [ -n "$ps_rule" ] && route_mode="$ps_rule"
+        fi
+        local country_str="${country:+, $country}"
+        local tmode_str
+        [ "$tunnel_mode" = "warp" ] && tmode_str=" [WARP+Psiphon]" || tmode_str=" [Psiphon]"
+        case "$route_mode" in
+            Global) echo "${green}ON | Global${tmode_str}${country_str}${reset}" ;;
+            Split)  echo "${green}ON | Split${tmode_str}${country_str}${reset}" ;;
+            *)      echo "${yellow}ON | $(msg mode_off)${tmode_str}${country_str}${reset}" ;;
+        esac
+    else
+        echo "${red}OFF${reset}"
+    fi
+}
+
+installPsiphonBinary() {
+    if [ -f "$psiphonBin" ]; then
+        echo "info: $(msg psiphon_already)"; return 0
+    fi
+
+    [ -z "${PACKAGE_MANAGEMENT_INSTALL:-}" ] && identifyOS
+    echo -e "${cyan}$(msg psiphon_dl)${reset}"
+    local arch
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64)  arch_name="x86_64" ;;
+        aarch64) arch_name="arm64" ;;
+        armv7l)  arch_name="arm" ;;
+        *)       echo "${red}$(msg psiphon_arch_unsupported)${reset}"; return 1 ;;
+    esac
+
+    local bin_url="https://github.com/Psiphon-Labs/psiphon-tunnel-core-binaries/raw/master/linux/psiphon-tunnel-core-${arch_name}"
+    curl -fsSL -o "$psiphonBin" "$bin_url" || {
+        echo "${red}$(msg psiphon_dl_fail)${reset}"; return 1
+    }
+    chmod +x "$psiphonBin"
+    echo "${green}$(msg psiphon_installed_bin): $psiphonBin${reset}"
+}
+
+writePsiphonConfig() {
+    local country="${1:-}"
+    local tunnel_mode="${2:-plain}"  # plain | warp
+    mkdir -p /usr/local/etc/xray
+    mkdir -p /var/log/psiphon
+
+    # Сохраняем текущий режим туннеля
+    echo "$tunnel_mode" > "$PSIPHON_MODE_FILE"
+
+
+    export PSIPHON_PROPAGATION_CHANNEL PSIPHON_SPONSOR_ID PSIPHON_PORT
+    export PSIPHON_REMOTE_SERVER_LIST_URL PSIPHON_REMOTE_SERVER_LIST_KEY
+    export PSIPHON_COUNTRY="$country"
+    export PSIPHON_UPSTREAM
+    [ "$tunnel_mode" = "warp" ] && PSIPHON_UPSTREAM="socks5://127.0.0.1:40000" || PSIPHON_UPSTREAM=""
+    export PSIPHON_CONFIG_FILE="$psiphonConfigFile"
+        # Генерируем конфиг через python3 чтобы корректно включать/исключать UpstreamProxyURL
+    python3 - << PYEOF
+import json, os
+cfg = {
+    "PropagationChannelId": os.environ.get("PSIPHON_PROPAGATION_CHANNEL", "FFFFFFFFFFFFFFFF"),
+    "SponsorId":            os.environ.get("PSIPHON_SPONSOR_ID", "FFFFFFFFFFFFFFFF"),
+    "LocalSocksProxyPort":  int(os.environ.get("PSIPHON_PORT", "40002")),
+    "LocalHttpProxyPort":   0,
+    "DisableLocalSocksProxy": False,
+    "DisableLocalHTTPProxy":  True,
+    "EgressRegion":         os.environ.get("PSIPHON_COUNTRY", ""),
+    "DataRootDirectory":    "/var/lib/psiphon",
+    "RemoteServerListDownloadFilename": "/var/lib/psiphon/remote_server_list",
+    "RemoteServerListUrl":  os.environ.get("PSIPHON_REMOTE_SERVER_LIST_URL", ""),
+    "RemoteServerListSignaturePublicKey": os.environ.get("PSIPHON_REMOTE_SERVER_LIST_KEY", ""),
+    "MigrateDataStoreDirectory": "/var/lib/psiphon",
+    "ClientPlatform":       "Android_4.0.4_com.example.exampleClientLibraryApp",
+    "NetworkID":            "default",
+    "UseIndistinguishableTLS": True,
+    "TunnelProtocol":       "",
+    "ConnectionWorkerPoolSize": 10,
+    "LimitTunnelProtocols": []
+}
+upstream = os.environ.get("PSIPHON_UPSTREAM", "")
+if upstream:
+    cfg["UpstreamProxyURL"] = upstream
+with open(os.environ["PSIPHON_CONFIG_FILE"], "w") as f:
+    json.dump(cfg, f, indent=4)
+PYEOF
+    # Создаём пользователя и директорию
+    id psiphon &>/dev/null || useradd -r -s /sbin/nologin -d /var/lib/psiphon psiphon
+    mkdir -p /var/lib/psiphon
+    chown -R psiphon:psiphon /var/lib/psiphon
+    chown -R psiphon:psiphon /var/log/psiphon
+    chmod 755 /var/lib/psiphon
+}
+
+setupPsiphonService() {
+    cat > "$PSIPHON_SERVICE" << EOF
+[Unit]
+Description=Psiphon Tunnel Core
+After=network.target
+
+[Service]
+Type=simple
+User=psiphon
+ExecStart=$psiphonBin -config $psiphonConfigFile
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/psiphon/psiphon.log
+StandardError=append:/var/log/psiphon/psiphon.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable psiphon
+    systemctl restart psiphon
+    sleep 5
+
+    # Проверяем что SOCKS5 поднялся
+    if curl -s --connect-timeout 10 -x socks5://127.0.0.1:${PSIPHON_PORT} https://api.ipify.org &>/dev/null; then
+        echo "${green}$(msg psiphon_running)${reset}"
+    else
+        echo "${yellow}$(msg psiphon_started)${reset}"
+    fi
+}
+
+applyPsiphonOutbound() {
+    # Добавляет psiphon outbound (SOCKS5 на 40002) в оба конфига Xray
+    local psiphon_ob='{"tag":"psiphon","protocol":"socks","settings":{"servers":[{"address":"127.0.0.1","port":40002}]}}'
+
+    for cfg in "$configPath" "$realityConfigPath"; do
+        [ -f "$cfg" ] || continue
+        local has_ob
+        has_ob=$(jq '.outbounds[] | select(.tag=="psiphon")' "$cfg" 2>/dev/null)
+        if [ -z "$has_ob" ]; then
+            jq --argjson ob "$psiphon_ob" '.outbounds += [$ob]' \
+                "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
+        fi
+        local has_rule
+        has_rule=$(jq '.routing.rules[] | select(.outboundTag=="psiphon")' "$cfg" 2>/dev/null)
+        if [ -z "$has_rule" ]; then
+            # Вставляем правило после block, перед warp
+            jq '.routing.rules = [.routing.rules[0]] + [{"type":"field","domain":[],"outboundTag":"psiphon"}] + .routing.rules[1:]' \
+                "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
+        fi
+    done
+}
+
+applyPsiphonDomains() {
+    [ ! -f "$psiphonConfigFile" ] && { echo "${red}$(msg psiphon_not_setup)${reset}"; return 1; }
+    [ ! -f "$psiphonDomainsFile" ] && touch "$psiphonDomainsFile"
+    local domains_json
+    domains_json=$(awk 'NF {printf "\"domain:%s\",", $1}' "$psiphonDomainsFile" | sed 's/,$//')
+
+    # Если список доменов пуст — удаляем rule из конфигов, не применяем невалидный domain:[]
+    if [ -z "$domains_json" ]; then
+        echo "${yellow}$(msg psiphon_domains_empty)${reset}"
+        removePsiphonFromConfigs
+        return 0
+    fi
+
+    applyPsiphonOutbound
+
+    for cfg in "$configPath" "$realityConfigPath"; do
+        [ -f "$cfg" ] || continue
+        jq "(.routing.rules[] | select(.outboundTag == \"psiphon\")) |= (.domain = [$domains_json] | del(.port))" \
+            "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
+    done
+    systemctl restart xray 2>/dev/null || true
+    systemctl restart xray-reality 2>/dev/null || true
+    echo "${green}$(msg psiphon_split_ok)${reset}"
+}
+
+togglePsiphonGlobal() {
+    applyPsiphonOutbound
+    for cfg in "$configPath" "$realityConfigPath"; do
+        [ -f "$cfg" ] || continue
+        jq '(.routing.rules[] | select(.outboundTag == "psiphon")) |= (.port = "0-65535" | del(.domain))' \
+            "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
+    done
+    systemctl restart xray 2>/dev/null || true
+    systemctl restart xray-reality 2>/dev/null || true
+    echo "${green}$(msg psiphon_global_ok)${reset}"
+}
+
+removePsiphonFromConfigs() {
+    for cfg in "$configPath" "$realityConfigPath"; do
+        [ -f "$cfg" ] || continue
+        jq 'del(.outbounds[] | select(.tag=="psiphon")) | del(.routing.rules[] | select(.outboundTag=="psiphon"))' \
+            "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
+    done
+    systemctl restart xray 2>/dev/null || true
+    systemctl restart xray-reality 2>/dev/null || true
+}
+
+checkPsiphonIP() {
+    echo "$(msg psiphon_real_ip) : $(getServerIP)"
+    echo "$(msg psiphon_ip)..."
+    local ip
+    ip=$(curl -s --connect-timeout 15 -x socks5://127.0.0.1:${PSIPHON_PORT} https://api.ipify.org 2>/dev/null || echo "$(msg unavailable)")
+    echo "$(msg psiphon_ip) : $ip"
+    if [ "$ip" != "$(msg unavailable)" ]; then
+        local country
+        country=$(curl -s --connect-timeout 8 -x socks5://127.0.0.1:${PSIPHON_PORT}             "https://ip-api.com/line/${ip}?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
+        echo "$(msg psiphon_exit_country) : ${country:-$(msg unknown)}"
+    fi
+}
+
+removePsiphon() {
+    echo -e "${red}$(msg psiphon_remove_confirm) $(msg yes_no)${reset}"
+    read -r confirm
+    if [[ "$confirm" == "y" ]]; then
+        systemctl stop psiphon 2>/dev/null || true
+        systemctl disable psiphon 2>/dev/null || true
+        rm -f "$PSIPHON_SERVICE" "$psiphonBin" "$psiphonConfigFile" "$psiphonDomainsFile" "$PSIPHON_MODE_FILE"
+        rm -rf /var/lib/psiphon /var/log/psiphon
+        systemctl daemon-reload
+        removePsiphonFromConfigs
+        echo "${green}$(msg removed)${reset}"
+    fi
+}
+
+_checkWarpReady() {
+    # Проверяем сервис и что порт 40000 слушается (не делаем внешний запрос)
+    if ! systemctl is-active --quiet warp-svc 2>/dev/null; then
+        return 1
+    fi
+    if ! ss -tlnp 2>/dev/null | grep -q ':40000'; then
+        return 1
+    fi
+    return 0
+}
+
+switchPsiphonTunnelMode() {
+    [ ! -f "$psiphonConfigFile" ] && { echo "${red}$(msg psiphon_not_installed)${reset}"; return 1; }
+
+    local current
+    current=$(cat "$PSIPHON_MODE_FILE" 2>/dev/null || echo "plain")
+
+    echo -e "${cyan}$(msg psiphon_tunnel_mode_title)${reset}"
+    echo -e "  $(msg psiphon_current_mode): ${green}${current}${reset}"
+    echo ""
+    echo -e "${green}1.${reset} $(msg psiphon_mode_plain)"
+    echo -e "${green}2.${reset} $(msg psiphon_mode_warp)"
+    echo -e "${green}0.${reset} $(msg back)"
+    read -rp "$(msg prompt_choice_plain)" tmode
+
+    local country
+    country=$(jq -r '.EgressRegion // ""' "$psiphonConfigFile" 2>/dev/null)
+
+    case "$tmode" in
+        1)
+            writePsiphonConfig "$country" "plain"
+            systemctl restart psiphon
+            echo "${green}$(msg psiphon_mode_plain_ok)${reset}"
+            ;;
+        2)
+            # Проверяем что WARP запущен и порт слушается
+            if ! _checkWarpReady; then
+                echo "${red}$(msg psiphon_warp_not_running)${reset}"
+                return 1
+            fi
+            writePsiphonConfig "$country" "warp"
+            systemctl restart psiphon
+            echo "${green}$(msg psiphon_mode_warp_ok)${reset}"
+            ;;
+        0) return ;;
+    esac
+}
+
+installPsiphon() {
+    echo -e "${cyan}$(msg psiphon_setup_title)${reset}"
+
+    installPsiphonBinary || return 1
+
+    echo -e "${cyan}$(msg psiphon_country_select)${reset}"
+    echo " $(msg country_de)"
+    echo " $(msg country_nl)"
+    echo " $(msg country_us)"
+    echo " $(msg country_gb)"
+    echo " $(msg country_fr)"
+    echo " $(msg country_at)"
+    echo " $(msg country_ca)"
+    echo " $(msg country_se)"
+    echo " $(msg psiphon_country_auto)"
+    echo "$(msg psiphon_country_manual)"
+    read -rp "$(msg prompt_choice)" country_choice
+
+    local country
+    case "${country_choice:-1}" in
+        1) country="DE" ;;
+        2) country="NL" ;;
+        3) country="US" ;;
+        4) country="GB" ;;
+        5) country="FR" ;;
+        6) country="AT" ;;
+        7) country="CA" ;;
+        8) country="SE" ;;
+        9) country="" ;;
+        10) read -rp "$(msg psiphon_country_prompt)" country ;;
+        *) country="DE" ;;
+    esac
+
+    echo -e "${cyan}$(msg psiphon_tunnel_mode_title)${reset}"
+    echo -e "${green}1.${reset} $(msg psiphon_mode_plain)"
+    echo -e "${green}2.${reset} $(msg psiphon_mode_warp)"
+    read -rp "$(msg prompt_choice_plain)" tmode_choice
+    local tunnel_mode="plain"
+    if [ "$tmode_choice" = "2" ]; then
+        if ! _checkWarpReady; then
+            echo "${yellow}$(msg psiphon_warp_not_running) — $(msg psiphon_fallback_plain)${reset}"
+        else
+            tunnel_mode="warp"
+        fi
+    fi
+
+    writePsiphonConfig "$country" "$tunnel_mode"
+    setupPsiphonService
+
+    # Добавляем в Xray конфиги с пустым списком доменов (Split режим)
+    applyPsiphonDomains
+
+    echo -e "\n${green}$(msg psiphon_installed)${reset}"
+    echo "$(msg psiphon_hint)"
+}
+
+changeCountry() {
+    [ ! -f "$psiphonConfigFile" ] && { echo "${red}$(msg psiphon_not_setup)${reset}"; return 1; }
+
+    echo -e "${cyan}$(msg psiphon_change_country)${reset}"
+    echo " 1) DE  2) NL  3) US  4) GB  5) FR"
+    echo " $(msg country_at)  $(msg country_ca)  $(msg country_se)  $(msg psiphon_country_auto)  $(msg psiphon_country_manual)"
+    read -rp "$(msg prompt_choice_plain)" c
+    local country
+    case "$c" in
+        1) country="DE" ;; 2) country="NL" ;; 3) country="US" ;;
+        4) country="GB" ;; 5) country="FR" ;; 6) country="AT" ;;
+        7) country="CA" ;; 8) country="SE" ;; 9) country="" ;;
+        10) read -rp "$(msg country): " country ;;
+        *) return ;;
+    esac
+
+    jq ".EgressRegion = \"$country\"" "$psiphonConfigFile" \
+        > "${psiphonConfigFile}.tmp" && mv "${psiphonConfigFile}.tmp" "$psiphonConfigFile"
+    systemctl restart psiphon
+    echo "${green}$(msg psiphon_country_changed) ${country:-$(msg auto)}. $(msg psiphon_country_restarting)${reset}"
+}
+
+managePsiphon() {
+    set +e
+    while true; do
+        clear
+        local s_psiphon s_country="" s_domains=""
+        s_psiphon=$(getPsiphonStatus)
+        [ -f "$psiphonConfigFile" ] && s_country=$(jq -r '.EgressRegion // ""' "$psiphonConfigFile" 2>/dev/null)
+        [ -f "$psiphonDomainsFile" ] && s_domains=$(wc -l < "$psiphonDomainsFile")
+        echo -e "${cyan}================================================================${reset}"
+        printf "   ${red}$(msg psiphon_title)${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
+        echo -e "${cyan}----------------------------------------------------------------${reset}"
+        echo -e "  $(msg status): $s_psiphon"
+        if [ -f "$psiphonConfigFile" ]; then
+            local s_tmode
+            s_tmode=$(cat "$PSIPHON_MODE_FILE" 2>/dev/null || echo "plain")
+            [ "$s_tmode" = "warp" ] && s_tmode="${green}WARP+Psiphon${reset}" || s_tmode="${green}Psiphon${reset}"
+            echo -e "  $(msg country): ${green}${s_country:-$(msg auto)}${reset},  SOCKS5: 127.0.0.1:$PSIPHON_PORT,  $(msg domains_count): ${green}${s_domains:-0}${reset}"
+            echo -e "  $(msg psiphon_tunnel_mode): $s_tmode"
+        fi
+        echo -e "${cyan}----------------------------------------------------------------${reset}"
+        echo ""
+        echo -e "${green}1.${reset} $(msg psiphon_install)"
+        echo -e "${green}2.${reset} $(msg psiphon_mode)"
+        echo -e "${green}3.${reset} $(msg psiphon_add)"
+        echo -e "${green}4.${reset} $(msg psiphon_del)"
+        echo -e "${green}5.${reset} $(msg psiphon_edit)"
+        echo -e "${green}6.${reset} $(msg psiphon_country)"
+        echo -e "${green}7.${reset} $(msg psiphon_check)"
+        echo -e "${green}8.${reset} $(msg psiphon_restart)"
+        echo -e "${green}9.${reset} $(msg psiphon_logs)"
+        echo -e "${green}10.${reset} $(msg psiphon_remove)"
+        echo -e "${green}11.${reset} $(msg psiphon_tunnel_mode)"
+        echo -e "${green}0.${reset} $(msg back)"
+        echo ""
+        read -rp "$(msg choose)" choice
+        case $choice in
+            1)  installPsiphon ;;
+            2)
+                [ ! -f "$psiphonConfigFile" ] && { echo "${red}$(msg psiphon_not_installed)${reset}"; read -r; continue; }
+                echo "$(msg psiphon_mode_1)"
+                echo "$(msg psiphon_mode_2)"
+                echo "$(msg psiphon_mode_3)"
+                echo "$(msg back)"
+                read -rp "$(msg prompt_choice_plain)" mode
+                case "$mode" in
+                    1) togglePsiphonGlobal ;;
+                    2) applyPsiphonDomains ;;
+                    3) removePsiphonFromConfigs; echo "${green}$(msg psiphon_off_ok)${reset}" ;;
+                    0) continue ;;
+                esac
+                ;;
+            3)
+                [ ! -f "$psiphonConfigFile" ] && { echo "${red}$(msg psiphon_not_installed)${reset}"; read -r; continue; }
+                read -rp "$(msg psiphon_domain_prompt)" domain
+                [ -z "$domain" ] && continue
+                echo "$domain" >> "$psiphonDomainsFile"
+                sort -u "$psiphonDomainsFile" -o "$psiphonDomainsFile"
+                applyPsiphonDomains
+                echo "${green}$(msg psiphon_domain_added)${reset}"
+                ;;
+            4)
+                [ ! -f "$psiphonDomainsFile" ] && { echo "$(msg warp_list_empty)"; read -r; continue; }
+                nl "$psiphonDomainsFile"
+                read -rp "$(msg warp_domain_del)" num
+                [[ "$num" =~ ^[0-9]+$ ]] && sed -i "${num}d" "$psiphonDomainsFile" && applyPsiphonDomains
+                ;;
+            5)
+                [ ! -f "$psiphonDomainsFile" ] && touch "$psiphonDomainsFile"
+                nano "$psiphonDomainsFile"
+                applyPsiphonDomains
+                ;;
+            6)  changeCountry ;;
+            7)  checkPsiphonIP ;;
+            8)  systemctl restart psiphon && echo "${green}$(msg restarted)${reset}" ;;
+            9)  tail -n 50 /var/log/psiphon/psiphon.log 2>/dev/null || journalctl -u psiphon -n 50 --no-pager ;;
+            10) removePsiphon ;;
+            11) switchPsiphonTunnelMode ;;
+            0)  break ;;
+        esac
+        [ "${choice}" = "0" ] && continue
+        echo -e "\n${cyan}$(msg press_enter)${reset}"
+        read -r
+    done
+}

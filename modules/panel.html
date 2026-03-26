@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VWN Panel</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500&display=swap');
+:root{
+  --bg:#0d1117;--bg2:#161b22;--bg3:#1c2128;--bg4:#21262d;
+  --border:#30363d;--border2:#3d444d;
+  --text:#e6edf3;--text2:#8b949e;--text3:#6e7681;
+  --green:#3fb950;--green2:#1a4a2a;--green3:#0d2818;
+  --red:#f85149;--red2:#4a1a1a;
+  --yellow:#d29922;--yellow2:#3d2e0a;
+  --blue:#58a6ff;--blue2:#0d2340;
+  --cyan:#39d353;--purple:#bc8cff;
+  --accent:#58a6ff;--radius:6px;--radius2:10px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-size:14px;min-height:100vh}
+code,pre,.mono{font-family:'JetBrains Mono',monospace}
+/* Login */
+#login-screen{display:flex;align-items:center;justify-content:center;min-height:100vh}
+.login-box{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius2);padding:40px;width:380px;max-width:92vw}
+.login-logo{text-align:center;margin-bottom:32px}
+.login-logo .logo-mark{font-family:'JetBrains Mono',monospace;font-size:32px;font-weight:700;color:var(--accent);letter-spacing:-2px}
+.login-logo .logo-sub{font-size:11px;color:var(--text3);letter-spacing:3px;text-transform:uppercase;margin-top:4px}
+.login-box label{display:block;font-size:12px;color:var(--text2);margin-bottom:6px;letter-spacing:.5px}
+.login-box input[type=password]{width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);padding:10px 14px;font-family:inherit;font-size:14px;outline:none;transition:border .15s}
+.login-box input[type=password]:focus{border-color:var(--accent)}
+.btn-primary{width:100%;background:var(--accent);color:#000;border:none;border-radius:var(--radius);padding:11px;font-weight:600;font-size:14px;cursor:pointer;margin-top:18px;transition:opacity .15s}
+.btn-primary:hover{opacity:.85}
+.login-error{color:var(--red);font-size:12px;margin-top:10px;text-align:center;min-height:18px}
+/* App */
+#app{display:none;min-height:100vh;flex-direction:column}
+#app.visible{display:flex}
+/* Sidebar */
+.sidebar{width:220px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;position:fixed;top:0;left:0;height:100vh;z-index:100}
+.sidebar-logo{padding:18px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+.sidebar-logo .mark{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:18px;color:var(--accent)}
+.sidebar-logo .version{font-size:11px;color:var(--text3)}
+.nav{flex:1;padding:10px 0;overflow-y:auto}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 20px;cursor:pointer;color:var(--text2);font-size:13px;transition:all .12s;border-left:2px solid transparent;user-select:none}
+.nav-item:hover{color:var(--text);background:var(--bg3)}
+.nav-item.active{color:var(--accent);background:var(--blue2);border-left-color:var(--accent)}
+.nav-item svg{width:15px;height:15px;flex-shrink:0;opacity:.7}
+.nav-item.active svg{opacity:1}
+.nav-sep{height:1px;background:var(--border);margin:6px 20px}
+.sidebar-bottom{padding:12px 20px;border-top:1px solid var(--border);font-size:12px;color:var(--text3)}
+.sidebar-bottom a{color:var(--text2);cursor:pointer;text-decoration:none}
+.sidebar-bottom a:hover{color:var(--red)}
+/* Main */
+.main{margin-left:220px;flex:1;display:flex;flex-direction:column;min-height:100vh}
+.topbar{background:var(--bg2);border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;justify-content:space-between}
+.topbar-title{font-weight:600;font-size:15px}
+.topbar-right{display:flex;align-items:center;gap:12px}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.content{padding:24px;flex:1}
+/* Cards */
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius2);padding:20px;margin-bottom:16px}
+.card-title{font-size:12px;font-weight:600;color:var(--text3);letter-spacing:.8px;text-transform:uppercase;margin-bottom:16px}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+/* Stat cards */
+.stat-card{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+.stat-label{font-size:11px;color:var(--text3);letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px}
+.stat-val{font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:var(--text)}
+.stat-sub{font-size:11px;color:var(--text2);margin-top:4px}
+.bar{height:4px;background:var(--border);border-radius:2px;margin-top:8px;overflow:hidden}
+.bar-fill{height:100%;border-radius:2px;background:var(--accent);transition:width .6s ease}
+.bar-fill.warn{background:var(--yellow)}
+.bar-fill.danger{background:var(--red)}
+/* Services */
+.svc-list{display:flex;flex-direction:column;gap:8px}
+.svc-row{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--bg3);border-radius:var(--radius);border:1px solid var(--border)}
+.svc-name{font-size:13px;font-weight:500}
+.svc-right{display:flex;align-items:center;gap:10px}
+.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600;font-family:'JetBrains Mono',monospace}
+.badge.on{background:var(--green3);color:var(--green);border:1px solid var(--green2)}
+.badge.off{background:var(--red2);color:var(--red);border:1px solid #5a2020}
+.badge.warn{background:var(--yellow2);color:var(--yellow)}
+.btn-sm{background:var(--bg4);border:1px solid var(--border2);color:var(--text2);border-radius:var(--radius);padding:4px 10px;font-size:11px;cursor:pointer;transition:all .12s}
+.btn-sm:hover{border-color:var(--accent);color:var(--accent)}
+.btn-sm.danger:hover{border-color:var(--red);color:var(--red)}
+.btn-sm.success:hover{border-color:var(--green);color:var(--green)}
+/* Tables */
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{text-align:left;padding:8px 12px;font-size:11px;color:var(--text3);letter-spacing:.5px;text-transform:uppercase;border-bottom:1px solid var(--border);font-weight:500}
+.tbl td{padding:10px 12px;border-bottom:1px solid var(--border);color:var(--text);vertical-align:middle}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tr:hover td{background:var(--bg3)}
+/* Pages */
+.page{display:none}
+.page.active{display:block}
+/* Log output */
+.log-out{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:14px;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text2);white-space:pre-wrap;word-break:break-all;max-height:500px;overflow-y:auto;margin-top:12px}
+/* Editor */
+.editor-area{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:12px;padding:12px;resize:vertical;min-height:300px;outline:none}
+.editor-area:focus{border-color:var(--accent)}
+/* Input row */
+.input-row{display:flex;gap:8px;margin-bottom:12px}
+.inp{background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);padding:8px 12px;font-family:inherit;font-size:13px;outline:none;flex:1}
+.inp:focus{border-color:var(--accent)}
+/* Toast */
+#toast{position:fixed;bottom:24px;right:24px;background:var(--bg4);border:1px solid var(--border2);border-radius:var(--radius);padding:12px 18px;font-size:13px;z-index:9999;display:none;max-width:340px}
+#toast.ok{border-color:var(--green);color:var(--green)}
+#toast.err{border-color:var(--red);color:var(--red)}
+/* Modal */
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:500;align-items:center;justify-content:center}
+.modal-bg.open{display:flex}
+.modal{background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius2);padding:28px;width:400px;max-width:92vw}
+.modal h3{font-size:16px;font-weight:600;margin-bottom:18px}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
+/* Domain list */
+.domain-tag{display:inline-flex;align-items:center;gap:6px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:3px 8px;font-size:12px;margin:3px}
+.domain-tag .del-d{cursor:pointer;color:var(--text3);font-size:14px;line-height:1}
+.domain-tag .del-d:hover{color:var(--red)}
+@media(max-width:800px){
+  .sidebar{display:none}
+  .main{margin-left:0}
+  .grid-4,.grid-3{grid-template-columns:1fr 1fr}
+  .grid-2{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<!-- Login -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">
+      <div class="logo-mark">VWN</div>
+      <div class="logo-sub">Management Panel</div>
+    </div>
+    <label>Password</label>
+    <input type="password" id="login-pass" placeholder="Enter password" autocomplete="current-password">
+    <button class="btn-primary" id="login-btn">Sign In</button>
+    <div class="login-error" id="login-err"></div>
+  </div>
+</div>
+
+<!-- App -->
+<div id="app">
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div class="sidebar-logo">
+      <span class="mark">VWN</span>
+      <span class="version" id="ver-label">v3.1</span>
+    </div>
+    <div class="nav" id="nav">
+      <div class="nav-item active" data-page="dashboard">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M0 1.75A.75.75 0 01.75 1h5.5a.75.75 0 010 1.5H.75A.75.75 0 010 1.75zm0 5A.75.75 0 01.75 6h5.5a.75.75 0 010 1.5H.75A.75.75 0 010 6.75zm9 0a.75.75 0 01.75-.75h5.5a.75.75 0 010 1.5h-5.5A.75.75 0 019 6.75zm0 5a.75.75 0 01.75-.75h5.5a.75.75 0 010 1.5h-5.5a.75.75 0 01-.75-.75zM0 11.75A.75.75 0 01.75 11h5.5a.75.75 0 010 1.5H.75a.75.75 0 01-.75-.75z"/></svg>
+        Dashboard
+      </div>
+      <div class="nav-item" data-page="users">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M10.561 8.073a6.005 6.005 0 011.439 3.677H4a6.005 6.005 0 011.439-3.677L3 7.5A7.978 7.978 0 000 14.5h16a7.978 7.978 0 00-3-7L10.561 8.073zM8 8a3 3 0 100-6 3 3 0 000 6z"/></svg>
+        Users
+      </div>
+      <div class="nav-sep"></div>
+      <div class="nav-item" data-page="warp">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0z"/><path d="M8 3.5a.5.5 0 01.5.5v4a.5.5 0 01-.5.5H4a.5.5 0 010-1h3.5V4a.5.5 0 01.5-.5z"/></svg>
+        WARP Domains
+      </div>
+      <div class="nav-item" data-page="relay">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.5A2.5 2.5 0 014.5 0h7A2.5 2.5 0 0114 2.5v11a2.5 2.5 0 01-2.5 2.5h-7A2.5 2.5 0 012 13.5v-11zm2.5-1a1 1 0 000 2h7a1 1 0 000-2h-7z"/></svg>
+        Relay Domains
+      </div>
+      <div class="nav-item" data-page="tor">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM4 8h8a4 4 0 11-8 0z"/></svg>
+        Tor Domains
+      </div>
+      <div class="nav-sep"></div>
+      <div class="nav-item" data-page="logs">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.75a.75.75 0 000 1.5h13a.75.75 0 000-1.5h-13zm0 4a.75.75 0 000 1.5h13a.75.75 0 000-1.5h-13zm0 4a.75.75 0 000 1.5h9a.75.75 0 000-1.5h-9z"/></svg>
+        Logs
+      </div>
+      <div class="nav-item" data-page="xray">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0z"/><path d="M8 3.5a.5.5 0 01.5.5v4a.5.5 0 01-.5.5H4a.5.5 0 010-1h3.5V4a.5.5 0 01.5-.5z"/></svg>
+        Xray Config
+      </div>
+      <div class="nav-item" data-page="editor">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 2A1.5 1.5 0 002 3.5v9A1.5 1.5 0 003.5 14h9a1.5 1.5 0 001.5-1.5V7.75a.75.75 0 00-1.5 0V12.5a.25.25 0 01-.25.25h-9a.25.25 0 01-.25-.25v-9a.25.25 0 01.25-.25H8.5a.75.75 0 000-1.5H3.5zm9.26-1.267L9.1 4.4 8 7l2.6-1.1 3.667-3.667a.48.48 0 000-.68l-.654-.653a.48.48 0 00-.68 0z"/></svg>
+        Config Editor
+      </div>
+      <div class="nav-item" data-page="backup">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        Backup
+      </div>
+      <div class="nav-sep"></div>
+      <div class="nav-item" data-page="settings">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M7.429 1.525a6.593 6.593 0 011.142 0c.036.003.108.036.137.146l.289 1.105c.147.56.55.967.997 1.189.174.086.341.178.502.278.433.268.97.começ372 1.539.245l1.105-.29c.109-.028.199.009.232.039.208.204.39.424.544.655.154.232.276.48.365.740.03.088-.004.196-.095.247l-.978.573c-.483.284-.73.77-.73 1.27 0 .5.247.986.73 1.27l.978.573c.09.052.124.16.095.247-.09.26-.21.508-.365.74a3.502 3.502 0 01-.544.655c-.033.03-.123.067-.232.039l-1.105-.29c-.57-.127-1.106-.023-1.54.245-.16.1-.327.192-.5.278-.449.222-.851.628-.998 1.188l-.289 1.105c-.029.11-.1.143-.137.146a6.605 6.605 0 01-1.142 0c-.036-.003-.108-.037-.137-.146l-.289-1.105c-.147-.56-.55-.966-.997-1.188a5.081 5.081 0 01-.501-.278c-.433-.268-.97-.372-1.539-.245l-1.105.29c-.109.028-.199-.009-.232-.039a3.5 3.5 0 01-.544-.655 3.484 3.484 0 01-.365-.74c-.03-.087.004-.196.095-.247l.978-.573c.483-.284.73-.77.73-1.27 0-.5-.247-.985-.73-1.27l-.978-.572c-.09-.052-.124-.16-.095-.248.09-.26.21-.508.365-.74a3.5 3.5 0 01.544-.655c.033-.03.123-.067.232-.039l1.105.29c.57.127 1.106.023 1.54-.245.16-.1.326-.192.5-.278.449-.222.851-.628.998-1.189l.289-1.105c.029-.11.1-.143.137-.146zM8 10.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z"/></svg>
+        Settings
+      </div>
+    </div>
+    <div class="sidebar-bottom">
+      <a id="logout-btn">⏻ Logout</a>
+    </div>
+  </nav>
+
+  <!-- Main -->
+  <div class="main">
+    <div class="topbar">
+      <span class="topbar-title" id="page-title">Dashboard</span>
+      <div class="topbar-right">
+        <span style="font-size:12px;color:var(--text3)" id="server-ip-top">—</span>
+        <span class="status-dot" id="conn-dot"></span>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- Dashboard -->
+      <div class="page active" id="page-dashboard">
+        <div class="grid-4" id="stat-cards">
+          <div class="stat-card"><div class="stat-label">RAM</div><div class="stat-val" id="stat-ram">—</div><div class="stat-sub" id="stat-ram-sub"></div><div class="bar"><div class="bar-fill" id="bar-ram" style="width:0%"></div></div></div>
+          <div class="stat-card"><div class="stat-label">Disk Free</div><div class="stat-val" id="stat-disk">—</div><div class="stat-sub" id="stat-disk-sub"></div><div class="bar"><div class="bar-fill" id="bar-disk" style="width:0%"></div></div></div>
+          <div class="stat-card"><div class="stat-label">SSL Cert</div><div class="stat-val" id="stat-ssl">—</div><div class="stat-sub" id="stat-ssl-sub"></div></div>
+          <div class="stat-card"><div class="stat-label">Uptime</div><div class="stat-val" id="stat-uptime" style="font-size:16px">—</div><div class="stat-sub" id="stat-domain-lbl"></div></div>
+        </div>
+
+        <div class="grid-2" style="margin-top:16px">
+          <div class="card">
+            <div class="card-title">Services</div>
+            <div class="svc-list" id="svc-list"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Users <button class="btn-sm" id="btn-add-user" style="float:right;margin-top:-2px">+ Add</button></div>
+            <table class="tbl">
+              <thead><tr><th>Name</th><th>UUID</th><th></th></tr></thead>
+              <tbody id="users-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Users -->
+      <div class="page" id="page-users">
+        <div class="card">
+          <div class="card-title">User Management
+            <button class="btn-sm" id="btn-add-user2" style="float:right;margin-top:-2px">+ Add User</button>
+          </div>
+          <table class="tbl">
+            <thead><tr><th>Name</th><th>UUID</th><th>Token / Sub</th><th></th></tr></thead>
+            <tbody id="users-tbody-full"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- WARP domains -->
+      <div class="page" id="page-warp">
+        <div class="card">
+          <div class="card-title">WARP Domains</div>
+          <div class="input-row">
+            <input class="inp" id="warp-new-domain" placeholder="e.g. openai.com">
+            <button class="btn-sm" onclick="addDomainUI('warp')">Add</button>
+          </div>
+          <div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn-sm" onclick="cmdAction('warp_mode_global')">Global</button>
+            <button class="btn-sm" onclick="cmdAction('warp_mode_split')">Split</button>
+            <button class="btn-sm danger" onclick="cmdAction('warp_mode_off')">OFF</button>
+          </div>
+          <div id="warp-domains-list"></div>
+        </div>
+      </div>
+
+      <!-- Relay domains -->
+      <div class="page" id="page-relay">
+        <div class="card">
+          <div class="card-title">Relay Domains</div>
+          <div class="input-row">
+            <input class="inp" id="relay-new-domain" placeholder="e.g. netflix.com">
+            <button class="btn-sm" onclick="addDomainUI('relay')">Add</button>
+          </div>
+          <div id="relay-domains-list"></div>
+        </div>
+      </div>
+
+      <!-- Tor domains -->
+      <div class="page" id="page-tor">
+        <div class="card">
+          <div class="card-title">Tor Domains</div>
+          <div class="input-row">
+            <input class="inp" id="tor-new-domain" placeholder="e.g. rutracker.org">
+            <button class="btn-sm" onclick="addDomainUI('tor')">Add</button>
+          </div>
+          <div id="tor-domains-list"></div>
+        </div>
+      </div>
+
+      <!-- Logs -->
+      <div class="page" id="page-logs">
+        <div class="card">
+          <div class="card-title">Logs</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+            <button class="btn-sm active-log" onclick="loadLog('log_xray','Xray Error')">Xray Error</button>
+            <button class="btn-sm" onclick="loadLog('log_xray_access','Xray Access')">Xray Access</button>
+            <button class="btn-sm" onclick="loadLog('log_nginx','Nginx Error')">Nginx Error</button>
+            <button class="btn-sm" onclick="loadLog('log_nginx_access','Nginx Access')">Nginx Access</button>
+            <button class="btn-sm" onclick="loadLog('log_warp','WARP')">WARP</button>
+            <button class="btn-sm" onclick="loadLog('log_psiphon','Psiphon')">Psiphon</button>
+            <button class="btn-sm danger" onclick="clearLogsUI()">🗑 Clear All</button>
+          </div>
+          <div class="log-out" id="log-out">Select a log above...</div>
+        </div>
+      </div>
+
+      <!-- Xray Config -->
+      <div class="page" id="page-xray">
+        <div class="card">
+          <div class="card-title">Xray VLESS Configuration</div>
+          <div class="grid-2">
+            <div>
+              <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">Port</label>
+              <div class="input-row">
+                <input class="inp" id="xray-port" placeholder="loading..." readonly>
+                <button class="btn-sm" onclick="changeXrayField('port')">Change</button>
+              </div>
+            </div>
+            <div>
+              <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">WS Path</label>
+              <div class="input-row">
+                <input class="inp" id="xray-path" placeholder="loading..." readonly>
+                <button class="btn-sm" onclick="changeXrayField('path')">Change</button>
+              </div>
+            </div>
+            <div>
+              <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">Domain</label>
+              <div class="input-row">
+                <input class="inp" id="xray-domain" placeholder="loading..." readonly>
+                <button class="btn-sm" onclick="changeXrayField('domain')">Change</button>
+              </div>
+            </div>
+            <div>
+              <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">CDN Host</label>
+              <div class="input-row">
+                <input class="inp" id="xray-cdn" placeholder="loading..." readonly>
+                <button class="btn-sm" onclick="changeXrayField('cdn')">Change</button>
+              </div>
+            </div>
+          </div>
+          <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn-sm danger" onclick="changeXrayField('uuid')">Rotate All UUIDs</button>
+            <button class="btn-sm" onclick="loadXrayConfig()">Refresh</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Users & Subscriptions</div>
+          <table class="tbl">
+            <thead><tr><th>Name</th><th>UUID</th><th>Sub URL</th><th></th></tr></thead>
+            <tbody id="xray-users-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Config Editor -->
+      <div class="page" id="page-editor">
+        <div class="card">
+          <div class="card-title">Config Editor</div>
+          <div class="input-row" style="margin-bottom:16px">
+            <select class="inp" id="file-select" style="max-width:240px">
+              <option value="xray_config">xray config.json</option>
+              <option value="reality_config">reality.json</option>
+              <option value="nginx_config">nginx xray.conf</option>
+              <option value="warp_domains">warp_domains.txt</option>
+              <option value="relay_domains">relay_domains.txt</option>
+              <option value="tor_domains">tor_domains.txt</option>
+              <option value="vwn_conf">vwn.conf</option>
+              <option value="users">users.conf</option>
+            </select>
+            <button class="btn-sm" onclick="loadFile()">Load</button>
+            <button class="btn-sm success" onclick="saveFile()">Save</button>
+            <span id="editor-status" style="font-size:12px;color:var(--text3);align-self:center"></span>
+          </div>
+          <textarea class="editor-area" id="editor-content" spellcheck="false"></textarea>
+        </div>
+      </div>
+
+      <!-- Backup -->
+      <div class="page" id="page-backup">
+        <div class="card">
+          <div class="card-title">Backup & Restore
+            <button class="btn-sm" id="btn-create-backup" style="float:right;margin-top:-2px" onclick="createBackup()">+ Create Backup</button>
+          </div>
+          <table class="tbl">
+            <thead><tr><th>File</th><th>Size</th><th></th></tr></thead>
+            <tbody id="backup-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Settings -->
+      <div class="page" id="page-settings">
+        <div class="card" style="max-width:420px">
+          <div class="card-title">Change Password</div>
+          <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">New Password</label>
+          <input class="inp" type="password" id="new-pass" placeholder="Min 8 characters" style="margin-bottom:8px">
+          <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">Confirm</label>
+          <input class="inp" type="password" id="new-pass2" placeholder="Repeat password" style="margin-bottom:16px">
+          <button class="btn-sm success" onclick="changePassword()">Change Password</button>
+        </div>
+        <div class="card" style="max-width:420px;margin-top:0">
+          <div class="card-title">Update VWN</div>
+          <p style="color:var(--text2);font-size:13px;margin-bottom:12px">Download and apply latest module updates from GitHub.</p>
+          <button class="btn-sm" onclick="cmdAction('vwn_update')">Run Update</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<!-- Add User Modal -->
+<div class="modal-bg" id="modal-user">
+  <div class="modal">
+    <h3>Add User</h3>
+    <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">Name (a-z, 0-9, _ -)</label>
+    <input class="inp" id="new-user-name" placeholder="e.g. iPhone_Alice" style="margin-bottom:12px">
+    <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">UUID (leave blank to auto-generate)</label>
+    <input class="inp" id="new-user-uuid" placeholder="auto">
+    <div class="modal-actions">
+      <button class="btn-sm" onclick="closeModal('modal-user')">Cancel</button>
+      <button class="btn-sm success" onclick="submitAddUser()">Add</button>
+    </div>
+  </div>
+</div>
+
+<!-- Cmd output modal -->
+<div class="modal-bg" id="modal-cmd">
+  <div class="modal" style="width:580px;max-width:96vw">
+    <h3 id="modal-cmd-title">Output</h3>
+    <div class="log-out" id="modal-cmd-out" style="max-height:340px"></div>
+    <div class="modal-actions">
+      <button class="btn-sm" onclick="closeModal('modal-cmd')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Input modal -->
+<div class="modal-bg" id="modal-input">
+  <div class="modal">
+    <h3 id="modal-input-title">Input</h3>
+    <label id="modal-input-label" style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px"></label>
+    <input class="inp" id="modal-input-value" placeholder="">
+    <div class="modal-actions">
+      <button class="btn-sm" onclick="closeModal('modal-input')">Cancel</button>
+      <button class="btn-sm success" id="modal-input-ok">OK</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────
+let token = localStorage.getItem('vwn_token') || '';
+let tokenExp = parseInt(localStorage.getItem('vwn_token_exp') || '0');
+let csrfToken = localStorage.getItem('vwn_csrf') || '';
+let sseSource = null;
+let currentPage = 'dashboard';
+
+// ── API ──────────────────────────────────────────────────────────
+async function api(method, path, body) {
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json' }
+  };
+  if (token) opts.headers['Authorization'] = 'Bearer ' + token;
+  if (csrfToken) opts.headers['X-CSRF-Token'] = csrfToken;
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  try {
+    const r = await fetch(path, opts);
+    if (r.status === 401) { logout(); return null; }
+    return await r.json();
+  } catch(e) {
+    toast('Network error: ' + e.message, 'err');
+    return null;
+  }
+}
+
+// ── Auth ─────────────────────────────────────────────────────────
+function isLoggedIn() {
+  return token && Date.now() / 1000 < tokenExp;
+}
+
+function saveToken(t, ttl) {
+  token = t;
+  tokenExp = Math.floor(Date.now() / 1000) + ttl;
+  localStorage.setItem('vwn_token', t);
+  localStorage.setItem('vwn_token_exp', tokenExp);
+}
+
+function logout() {
+  token = '';
+  tokenExp = 0;
+  localStorage.removeItem('vwn_token');
+  localStorage.removeItem('vwn_token_exp');
+  if (sseSource) { sseSource.close(); sseSource = null; }
+  document.getElementById('app').classList.remove('visible');
+  document.getElementById('login-screen').style.display = '';
+}
+
+// ── Login ────────────────────────────────────────────────────────
+async function doLogin() {
+  const pass = document.getElementById('login-pass').value;
+  const err  = document.getElementById('login-err');
+  err.textContent = '';
+  if (!pass) { err.textContent = 'Enter password'; return; }
+  const btn = document.getElementById('login-btn');
+  btn.disabled = true; btn.textContent = 'Signing in...';
+  const r = await fetch('/api/login', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({password: pass})
+  }).then(r => r.json()).catch(() => null);
+  btn.disabled = false; btn.textContent = 'Sign In';
+  if (!r || !r.ok) {
+    err.textContent = (r && r.error) ? r.error : 'Login failed';
+    return;
+  }
+  saveToken(r.token, r.ttl);
+  if (r.csrf) {
+    csrfToken = r.csrf;
+    localStorage.setItem('vwn_csrf', r.csrf);
+  }
+  showApp();
+}
+
+// ── App init ─────────────────────────────────────────────────────
+function showApp() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').classList.add('visible');
+  document.getElementById('login-pass').value = '';
+  initSSE();
+  loadDashboard();
+  navigateTo('dashboard');
+}
+
+function navigateTo(page) {
+  currentPage = page;
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.page === page));
+  document.querySelectorAll('.page').forEach(el => el.classList.toggle('active', el.id === 'page-' + page));
+  document.getElementById('page-title').textContent = page.charAt(0).toUpperCase() + page.slice(1).replace('-', ' ');
+  // Lazy load on navigate
+  if (page === 'users')   loadUsersPage();
+  if (page === 'warp')    loadDomainsUI('warp');
+  if (page === 'relay')   loadDomainsUI('relay');
+  if (page === 'tor')     loadDomainsUI('tor');
+  if (page === 'backup')  loadBackups();
+  if (page === 'xray')    loadXrayConfig();
+}
+
+// ── SSE ──────────────────────────────────────────────────────────
+function initSSE() {
+  if (sseSource) sseSource.close();
+  sseSource = new EventSource('/api/stream?token=' + encodeURIComponent(token));
+  sseSource.onmessage = e => {
+    try { renderDashboard(JSON.parse(e.data)); } catch(_) {}
+  };
+  sseSource.onerror = () => {
+    document.getElementById('conn-dot').style.background = 'var(--red)';
+  };
+}
+
+// ── Dashboard ────────────────────────────────────────────────────
+async function loadDashboard() {
+  const d = await api('POST', '/api/dashboard');
+  if (d) renderDashboard(d);
+}
+
+function renderDashboard(d) {
+  if (!d || !d.ok) return;
+  document.getElementById('conn-dot').style.background = 'var(--green)';
+
+  // Stats
+  const ramPct = d.ram.total ? Math.round((1 - d.ram.avail / d.ram.total) * 100) : 0;
+  document.getElementById('stat-ram').textContent = d.ram.avail + ' MB';
+  document.getElementById('stat-ram-sub').textContent = `free of ${d.ram.total} MB`;
+  const br = document.getElementById('bar-ram');
+  br.style.width = ramPct + '%';
+  br.className = 'bar-fill' + (ramPct > 90 ? ' danger' : ramPct > 75 ? ' warn' : '');
+
+  const diskPct = d.disk.total ? Math.round((1 - d.disk.free / d.disk.total) * 100) : 0;
+  document.getElementById('stat-disk').textContent = d.disk.free + ' MB';
+  document.getElementById('stat-disk-sub').textContent = `free of ${d.disk.total} MB`;
+  const bd = document.getElementById('bar-disk');
+  bd.style.width = diskPct + '%';
+  bd.className = 'bar-fill' + (diskPct > 90 ? ' danger' : diskPct > 75 ? ' warn' : '');
+
+  const ssl = document.getElementById('stat-ssl');
+  if (d.cert_days < 0) { ssl.textContent = 'MISSING'; ssl.style.color = 'var(--red)'; }
+  else if (d.cert_days < 15) { ssl.textContent = d.cert_days + 'd'; ssl.style.color = 'var(--red)'; }
+  else { ssl.textContent = d.cert_days + 'd'; ssl.style.color = 'var(--green)'; }
+  document.getElementById('stat-ssl-sub').textContent = d.cert_days >= 0 ? 'days remaining' : '';
+
+  document.getElementById('stat-uptime').textContent = d.uptime;
+  document.getElementById('stat-domain-lbl').textContent = d.domain || '';
+  document.getElementById('server-ip-top').textContent = d.server_ip;
+
+  // Services
+  const svcs = [
+    ['xray',         'Xray WS'],
+    ['xray_reality', 'Xray Reality'],
+    ['nginx',        'Nginx'],
+    ['warp',         'WARP'],
+    ['psiphon',      'Psiphon'],
+    ['tor',          'Tor'],
+    ['fail2ban',     'Fail2Ban'],
+  ];
+  const svcList = document.getElementById('svc-list');
+  svcList.innerHTML = svcs.map(([k, label]) => {
+    const on = d.services[k];
+    const restartKey = {
+      'xray': 'restart_xray', 'xray_reality': 'restart_xray_reality',
+      'nginx': 'restart_nginx', 'warp': 'restart_warp',
+      'psiphon': 'restart_psiphon', 'tor': 'restart_tor',
+      'fail2ban': 'restart_fail2ban'
+    }[k] || '';
+    return `<div class="svc-row">
+      <span class="svc-name">${label}</span>
+      <div class="svc-right">
+        <span class="badge ${on ? 'on' : 'off'}">${on ? '● RUNNING' : '● STOPPED'}</span>
+        ${restartKey ? `<button class="btn-sm" onclick="svcRestart('${restartKey}','${label}')">Restart</button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  // Users in dashboard
+  renderUsersTable(d.users, 'users-tbody', true);
+}
+
+// ── Services ─────────────────────────────────────────────────────
+async function svcRestart(action, label) {
+  toast(`Restarting ${label}...`);
+  const r = await api('POST', '/api/cmd', {action});
+  if (r) toast(r.output || 'Done', r.ok ? 'ok' : 'err');
+}
+
+// ── Users ────────────────────────────────────────────────────────
+async function loadUsersPage() {
+  const r = await api('POST', '/api/users');
+  if (r && r.ok) renderUsersTable(r.users, 'users-tbody-full', false);
+}
+
+function renderUsersTable(users, tbodyId, compact) {
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody) return;
+  if (!users || users.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="4" style="color:var(--text3)">No users</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = users.map(u => {
+    const shortUuid = u.uuid ? u.uuid.substring(0, 8) + '...' : '';
+    if (compact) {
+      return `<tr>
+        <td><strong>${esc(u.name)}</strong></td>
+        <td class="mono" style="font-size:11px;color:var(--text3)">${shortUuid}</td>
+        <td><button class="btn-sm danger" onclick="delUserUI('${esc(u.name)}')">Del</button></td>
+      </tr>`;
+    }
+    return `<tr>
+      <td><strong>${esc(u.name)}</strong></td>
+      <td class="mono" style="font-size:11px;color:var(--text3)" title="${esc(u.uuid)}">${shortUuid}</td>
+      <td class="mono" style="font-size:11px;color:var(--text3)">${esc(u.token || '')}</td>
+      <td><button class="btn-sm danger" onclick="delUserUI('${esc(u.name)}')">Delete</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function openAddUser() {
+  document.getElementById('new-user-name').value = '';
+  document.getElementById('new-user-uuid').value = '';
+  openModal('modal-user');
+}
+
+async function submitAddUser() {
+  const name = document.getElementById('new-user-name').value.trim();
+  const uuid = document.getElementById('new-user-uuid').value.trim();
+  if (!name) { toast('Enter a name', 'err'); return; }
+  const r = await api('POST', '/api/users/add', {name, uuid});
+  closeModal('modal-user');
+  if (r && r.ok) {
+    toast('User added: ' + name, 'ok');
+    loadDashboard();
+    if (currentPage === 'users') loadUsersPage();
+  } else {
+    toast((r && r.msg) || 'Failed', 'err');
+  }
+}
+
+async function delUserUI(name) {
+  if (!confirm(`Delete user "${name}"?`)) return;
+  const r = await api('POST', '/api/users/del', {name});
+  if (r && r.ok) {
+    toast('User deleted', 'ok');
+    loadDashboard();
+    if (currentPage === 'users') loadUsersPage();
+  } else {
+    toast((r && r.msg) || 'Failed', 'err');
+  }
+}
+
+// ── Domains ──────────────────────────────────────────────────────
+async function loadDomainsUI(list) {
+  const r = await api('POST', '/api/cmd', {action: list + '_domains_list'});
+  const container = document.getElementById(list + '-domains-list');
+  if (!container) return;
+  const domains = (r && r.output) ? r.output.split('\n').filter(Boolean) : [];
+  if (domains.length === 0) {
+    container.innerHTML = '<span style="color:var(--text3);font-size:13px">No domains</span>';
+    return;
+  }
+  container.innerHTML = domains.map(d =>
+    `<span class="domain-tag">${esc(d)}<span class="del-d" onclick="delDomainUI('${list}','${esc(d)}')">×</span></span>`
+  ).join('');
+}
+
+async function addDomainUI(list) {
+  const inp = document.getElementById(list + '-new-domain');
+  const domain = inp.value.trim();
+  if (!domain) return;
+  const r = await api('POST', '/api/domain/add', {list, domain});
+  if (r && r.ok) {
+    inp.value = '';
+    toast('Domain added', 'ok');
+    loadDomainsUI(list);
+  } else {
+    toast((r && r.msg) || 'Failed', 'err');
+  }
+}
+
+async function delDomainUI(list, domain) {
+  const r = await api('POST', '/api/domain/del', {list, domain});
+  if (r && r.ok) {
+    toast('Removed', 'ok');
+    loadDomainsUI(list);
+  } else {
+    toast((r && r.msg) || 'Failed', 'err');
+  }
+}
+
+// ── Cmd action (shows output modal) ──────────────────────────────
+async function cmdAction(action) {
+  const title = action.replace(/_/g, ' ');
+  document.getElementById('modal-cmd-title').textContent = title;
+  document.getElementById('modal-cmd-out').textContent = 'Running...';
+  openModal('modal-cmd');
+  const r = await api('POST', '/api/cmd', {action});
+  document.getElementById('modal-cmd-out').textContent = (r && r.output) || (r ? 'Done' : 'Error');
+}
+
+// ── Logs ─────────────────────────────────────────────────────────
+async function loadLog(action, label) {
+  document.getElementById('log-out').textContent = `Loading ${label}...`;
+  const r = await api('POST', '/api/cmd', {action});
+  document.getElementById('log-out').textContent = (r && r.output) || 'No logs';
+}
+
+async function clearLogsUI() {
+  if (!confirm('Clear all logs?')) return;
+  const r = await api('POST', '/api/cmd', {action: 'clear_logs'});
+  toast((r && r.output) || 'Cleared', r && r.ok ? 'ok' : 'err');
+}
+
+// ── Config Editor ─────────────────────────────────────────────────
+async function loadFile() {
+  const name = document.getElementById('file-select').value;
+  document.getElementById('editor-status').textContent = 'Loading...';
+  const r = await api('POST', '/api/file/read', {name});
+  if (r && r.ok) {
+    document.getElementById('editor-content').value = r.content;
+    document.getElementById('editor-status').textContent = 'Loaded';
+  } else {
+    document.getElementById('editor-status').textContent = 'Error';
+    toast('Failed to load', 'err');
+  }
+}
+
+async function saveFile() {
+  const name = document.getElementById('file-select').value;
+  const content = document.getElementById('editor-content').value;
+  document.getElementById('editor-status').textContent = 'Saving...';
+  const r = await api('POST', '/api/file/write', {name, content});
+  if (r && r.ok) {
+    document.getElementById('editor-status').textContent = 'Saved ✓';
+    toast('Saved', 'ok');
+  } else {
+    document.getElementById('editor-status').textContent = 'Error';
+    toast((r && r.msg) || 'Failed', 'err');
+  }
+}
+
+// ── Backup ────────────────────────────────────────────────────────
+async function loadBackups() {
+  const d = await api('POST', '/api/dashboard');
+  const backups = d && d.backups ? d.backups : [];
+  const tbody = document.getElementById('backup-tbody');
+  if (backups.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="3" style="color:var(--text3)">No backups</td></tr>';
+    return;
+  }
+  tbody.innerHTML = backups.map(b => {
+    const sizeMb = (b.size / 1048576).toFixed(1);
+    return `<tr>
+      <td class="mono" style="font-size:12px">${esc(b.name)}</td>
+      <td style="color:var(--text2)">${sizeMb} MB</td>
+      <td><a href="/api/backup/download/${esc(b.name)}" class="btn-sm" download style="text-decoration:none;display:inline-block">⬇ Download</a></td>
+    </tr>`;
+  }).join('');
+}
+
+async function createBackup() {
+  const btn = document.getElementById('btn-create-backup');
+  btn.disabled = true; btn.textContent = 'Creating...';
+  const r = await api('POST', '/api/cmd', {action: 'backup_create'});
+  btn.disabled = false; btn.textContent = '+ Create Backup';
+  toast((r && r.output) || 'Done', r && r.ok ? 'ok' : 'err');
+  loadBackups();
+}
+
+// ── Settings ──────────────────────────────────────────────────────
+async function changePassword() {
+  const p1 = document.getElementById('new-pass').value;
+  const p2 = document.getElementById('new-pass2').value;
+  if (p1.length < 8) { toast('Min 8 characters', 'err'); return; }
+  if (p1 !== p2) { toast('Passwords do not match', 'err'); return; }
+  const r = await api('POST', '/api/panel/passwd', {password: p1});
+  if (r && r.ok) {
+    toast('Password changed', 'ok');
+    document.getElementById('new-pass').value = '';
+    document.getElementById('new-pass2').value = '';
+  } else {
+    toast((r && r.msg) || 'Failed', 'err');
+  }
+}
+
+// ── Modals ────────────────────────────────────────────────────────
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+function showInputModal(title, label, placeholder, callback) {
+  document.getElementById('modal-input-title').textContent = title;
+  document.getElementById('modal-input-label').textContent = label;
+  document.getElementById('modal-input-value').placeholder = placeholder || '';
+  document.getElementById('modal-input-value').value = '';
+  openModal('modal-input');
+  const okBtn = document.getElementById('modal-input-ok');
+  const handler = () => {
+    const val = document.getElementById('modal-input-value').value.trim();
+    closeModal('modal-input');
+    okBtn.removeEventListener('click', handler);
+    if (val) callback(val);
+  };
+  okBtn.addEventListener('click', handler);
+  document.getElementById('modal-input-value').addEventListener('keydown', e => {
+    if (e.key === 'Enter') handler();
+  });
+}
+
+// ── Toast ─────────────────────────────────────────────────────────
+let _toastTimer = null;
+function toast(msg, type = '') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = type;
+  el.style.display = 'block';
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { el.style.display = 'none'; }, 3500);
+}
+
+// ── Utilities ─────────────────────────────────────────────────────
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ── Event wiring ──────────────────────────────────────────────────
+document.getElementById('login-btn').addEventListener('click', doLogin);
+document.getElementById('login-pass').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+document.getElementById('logout-btn').addEventListener('click', logout);
+document.getElementById('btn-add-user').addEventListener('click', openAddUser);
+document.getElementById('btn-add-user2').addEventListener('click', openAddUser);
+
+// Nav
+document.querySelectorAll('.nav-item[data-page]').forEach(el => {
+  el.addEventListener('click', () => navigateTo(el.dataset.page));
+});
+
+// Close modals on backdrop click
+document.querySelectorAll('.modal-bg').forEach(bg => {
+  bg.addEventListener('click', e => { if(e.target === bg) bg.classList.remove('open'); });
+});
+
+// ── Xray Config ──────────────────────────────────────────────────
+async function loadXrayConfig() {
+  const r = await api('POST', '/api/cmd', {action: 'xray_config_get'});
+  if (!r || !r.ok) return;
+  try {
+    const cfg = JSON.parse(r.output);
+    const port = cfg.inbounds[0].port;
+    const ss = cfg.inbounds[0].streamSettings || {};
+    const ws = ss.wsSettings || {};
+    const xh = ss.xhttpSettings || {};
+    const path = ws.path || xh.path || '';
+    const host = ws.host || xh.host || '';
+    document.getElementById('xray-port').value = port;
+    document.getElementById('xray-path').value = path;
+    document.getElementById('xray-domain').value = host;
+    // CDN host
+    const cdnR = await api('POST', '/api/cmd', {action: 'server_ip'});
+    document.getElementById('xray-cdn').value = host || (cdnR ? cdnR.output : '');
+  } catch(e) {}
+  // Load users with sub URLs
+  loadXrayUsers();
+}
+
+async function loadXrayUsers() {
+  const r = await api('POST', '/api/users');
+  if (!r || !r.ok) return;
+  const tbody = document.getElementById('xray-users-tbody');
+  if (!r.users || r.users.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text3)">No users</td></tr>';
+    return;
+  }
+  // Get domain for sub URL
+  const domain = document.getElementById('xray-domain').value || '';
+  tbody.innerHTML = r.users.map(u => {
+    const safe = u.name.replace(/[^A-Za-z0-9_-]/g, '');
+    const subUrl = domain ? `https://${domain}/sub/${safe}_${u.token}.txt` : '(set domain first)';
+    const htmlUrl = domain ? `https://${domain}/sub/${safe}_${u.token}.html` : '';
+    return `<tr>
+      <td><strong>${esc(u.name)}</strong></td>
+      <td class="mono" style="font-size:11px;color:var(--text3)">${esc(u.uuid.substring(0,8))}...</td>
+      <td class="mono" style="font-size:11px;word-break:break-all">${esc(subUrl)}</td>
+      <td style="white-space:nowrap">
+        ${htmlUrl ? `<button class="btn-sm" onclick="navigator.clipboard.writeText('${esc(subUrl)}');toast('Copied','ok')">📋 Sub</button> ` : ''}
+        ${htmlUrl ? `<a href="${esc(htmlUrl)}" target="_blank" class="btn-sm" style="text-decoration:none;display:inline-block">🌐 HTML</a>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function changeXrayField(field) {
+  const actionMap = {
+    'port': 'xray_change_port',
+    'path': 'xray_change_path',
+    'domain': 'xray_change_domain',
+    'cdn': 'xray_change_cdn',
+    'uuid': 'xray_change_uuid'
+  };
+  const action = actionMap[field];
+  if (!action) return;
+  if (field === 'uuid' && !confirm('Rotate ALL user UUIDs? This will break existing connections.')) return;
+  if (field !== 'uuid') {
+    const labels = {
+      'port': 'New port number',
+      'path': 'New WS path (e.g. /ws)',
+      'domain': 'New domain (e.g. example.com)',
+      'cdn': 'New CDN host'
+    };
+    showInputModal('Change ' + field, labels[field] || 'New value', '', async (val) => {
+      toast('Changing ' + field + '...');
+      const r = await api('POST', '/api/cmd', {action, val});
+      if (r) toast(r.output || 'Done', r.ok ? 'ok' : 'err');
+      if (r && r.ok) loadXrayConfig();
+    });
+    return;
+  }
+  toast('Changing ' + field + '...');
+  const r = await api('POST', '/api/cmd', {action});
+  if (r) toast(r.output || 'Done', r.ok ? 'ok' : 'err');
+  if (r && r.ok) loadXrayConfig();
+}
+
+// ── Init ──────────────────────────────────────────────────────────
+if (isLoggedIn()) {
+  showApp();
+} else {
+  document.getElementById('login-screen').style.display = '';
+}
+</script>
+</body>
+</html>
