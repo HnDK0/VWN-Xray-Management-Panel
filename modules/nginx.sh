@@ -306,7 +306,7 @@ configCert() {
         if curl -fsSL --connect-timeout 30 --proto '=https' --tlsv1.2 \
             "https://get.acme.sh" -o "$acme_tmpfile" 2>/dev/null \
             && head -1 "$acme_tmpfile" | grep -qE '^#!.*(sh|bash)'; then
-            sh "$acme_tmpfile" --install-online -m "acme@${userDomain}"
+            sh "$acme_tmpfile" --install -m "acme@${userDomain}"
         else
             echo "${red}$(msg acme_install_fail)${reset}"
             rm -f "$acme_tmpfile"; return 1
