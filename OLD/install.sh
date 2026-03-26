@@ -10,7 +10,7 @@ set -e
 
 VWN_LIB="/usr/local/lib/vwn"
 VWN_BIN="/usr/local/bin/vwn"
-GITHUB_RAW="https://raw.githubusercontent.com/HnDK0/VWN-Xray-Management-Panel/main"
+GITHUB_RAW="https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main"
 
 # Цвета
 red=$(tput setaf 1 && tput bold 2>/dev/null || echo "")
@@ -18,7 +18,7 @@ green=$(tput setaf 2 && tput bold 2>/dev/null || echo "")
 cyan=$(tput setaf 6 && tput bold 2>/dev/null || echo "")
 reset=$(tput sgr0 2>/dev/null || echo "")
 
-MODULES="lang core xray nginx warp reality relay psiphon tor security logs backup users diag menu panel"
+MODULES="lang core xray nginx warp reality relay psiphon tor security logs backup users diag menu"
 UPDATE_ONLY=false
 
 # Fallback msg() — works BEFORE lang.sh is loaded.
@@ -88,46 +88,16 @@ download_modules() {
 
     for module in $MODULES; do
         echo -n "  $(msg loading) ${module}.sh... "
-        local tmpfile
-        tmpfile=$(mktemp)
         if curl -fsSL --connect-timeout 15 \
             "${GITHUB_RAW}/modules/${module}.sh" \
-            -o "$tmpfile" 2>/dev/null; then
-            if head -1 "$tmpfile" | grep -q '#!/bin/bash'; then
-                chmod 600 "$tmpfile"
-                mv -f "$tmpfile" "${VWN_LIB}/${module}.sh"
-                echo "${green}OK${reset}"
-            else
-                echo "${red}$(msg error) (bad content)${reset}"
-                rm -f "$tmpfile"; return 1
-            fi
-        else
-            echo "${red}$(msg error)${reset}"
-            echo "$(msg module_fail) ${module}.sh"
-            rm -f "$tmpfile"; return 1
-        fi
-    done
-
-    # Загружаем файлы веб-панели
-    for fname in web_panel.py panel.html; do
-        echo -n "  $(msg loading) ${fname}... "
-        local tmpfile
-        tmpfile=$(mktemp)
-        if curl -fsSL --connect-timeout 15 \
-            "${GITHUB_RAW}/modules/${fname}" \
-            -o "$tmpfile" 2>/dev/null; then
-            if [ "$fname" = "web_panel.py" ]; then
-                chmod 700 "$tmpfile"
-            else
-                chmod 600 "$tmpfile"
-            fi
-            mv -f "$tmpfile" "${VWN_LIB}/${fname}"
+            -o "${VWN_LIB}/${module}.sh" 2>/dev/null; then
             echo "${green}OK${reset}"
         else
             echo "${red}$(msg error)${reset}"
-            echo "$(msg module_fail) ${fname}"
-            rm -f "$tmpfile"; return 1
+            echo "$(msg module_fail) ${module}.sh"
+            return 1
         fi
+        chmod 644 "${VWN_LIB}/${module}.sh"
     done
 }
 
@@ -149,24 +119,10 @@ case "${1:-}" in
         ufw status numbered | grep 'ACME temp' | awk -F"[][]" '{print $2}' | sort -rn | while read -r n; do
             echo "y" | ufw delete "$n" &>/dev/null; done; exit 0 ;;
     "update")
-        if [ -f "$VWN_LIB/update.sh" ]; then
-            bash "$VWN_LIB/update.sh"
-        else
-            local _tmp
-            _tmp=$(mktemp)
-            if curl -fsSL --connect-timeout 15 --proto '=https' --tlsv1.2 \
-                "https://raw.githubusercontent.com/HnDK0/VWN-Xray-Management-Panel/main/install.sh" \
-                -o "$_tmp" 2>/dev/null && head -1 "$_tmp" | grep -q '#!/bin/bash'; then
-                bash "$_tmp" --update
-            else
-                echo "ERROR: Failed to download update script"
-                rm -f "$_tmp"; exit 1
-            fi
-            rm -f "$_tmp"
-        fi
+        bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh) --update
         exit 0 ;;
 esac
-for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag menu panel; do
+for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag menu; do
     [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh" || { echo "ERROR: module $module not found"; exit 1; }
 done
 VWN_CONF="/usr/local/etc/xray/vwn.conf"

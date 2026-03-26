@@ -278,11 +278,8 @@ _diagTunnels() {
     if [ -f "$relayConfigFile" ]; then
         any=true
         echo -e "${cyan}[ $(msg diag_section_relay) ]${reset}"
-        local _rp _rh _rpt
-        _rp=$(grep '^RELAY_PROTOCOL=' "$relayConfigFile" 2>/dev/null | cut -d= -f2-)
-        _rh=$(grep '^RELAY_HOST=' "$relayConfigFile" 2>/dev/null | cut -d= -f2-)
-        _rpt=$(grep '^RELAY_PORT=' "$relayConfigFile" 2>/dev/null | cut -d= -f2-)
-        _pass "$(msg diag_relay_configured): ${_rp}://${_rh}:${_rpt}"
+        source "$relayConfigFile" 2>/dev/null
+        _pass "$(msg diag_relay_configured): ${RELAY_PROTOCOL}://${RELAY_HOST}:${RELAY_PORT}"
         echo ""
     fi
 }

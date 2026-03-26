@@ -226,16 +226,7 @@ checkPsiphonIP() {
     echo "$(msg psiphon_ip) : $ip"
     if [ "$ip" != "$(msg unavailable)" ]; then
         local country
-        # API 1: ip-api.com
-        country=$(curl -s --connect-timeout 8 -x socks5://127.0.0.1:${PSIPHON_PORT} "https://ip-api.com/line/${ip}?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
-        # API 2: ipinfo.io
-        if [[ ! "$country" =~ ^[A-Z]{2}$ ]]; then
-            country=$(curl -s --connect-timeout 8 -x socks5://127.0.0.1:${PSIPHON_PORT} "https://ipinfo.io/${ip}/country" 2>/dev/null | tr -d '[:space:]')
-        fi
-        # API 3: country.is
-        if [[ ! "$country" =~ ^[A-Z]{2}$ ]]; then
-            country=$(curl -s --connect-timeout 8 -x socks5://127.0.0.1:${PSIPHON_PORT} "https://api.country.is/${ip}" 2>/dev/null | jq -r '.country' 2>/dev/null | tr -d '[:space:]')
-        fi
+        country=$(curl -s --connect-timeout 8 -x socks5://127.0.0.1:${PSIPHON_PORT}             "http://ip-api.com/line/${ip}?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
         echo "$(msg psiphon_exit_country) : ${country:-$(msg unknown)}"
     fi
 }

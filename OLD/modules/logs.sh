@@ -86,7 +86,7 @@ setupSslCron() {
 # SSL автообновление — каждые 35 дней в 03:00
 0 3 */35 * * root /root/.acme.sh/acme.sh --cron --home /root/.acme.sh --pre-hook "/usr/local/bin/vwn open-80" --post-hook "/usr/local/bin/vwn close-80" >> /var/log/acme_cron.log 2>&1
 EOF
-    chmod 600 /etc/cron.d/acme-renew
+    chmod 644 /etc/cron.d/acme-renew
     echo "${green}$(msg ssl_cron_enabled)${reset}"
 }
 
@@ -143,7 +143,7 @@ EOF
 # Очистка логов — каждое воскресенье в 04:00
 0 4 * * 0 root /usr/local/bin/clear-logs.sh
 EOF
-    chmod 600 /etc/cron.d/clear-logs
+    chmod 644 /etc/cron.d/clear-logs
     echo "${green}$(msg log_cron_enabled)${reset}"
 }
 

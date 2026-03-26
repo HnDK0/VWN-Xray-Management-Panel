@@ -252,6 +252,6 @@ WDOG
 # Проверка WARP каждые 5 минут
 */5 * * * * root /usr/local/bin/warp-watchdog.sh
 EOF
-    chmod 600 /etc/cron.d/warp-watchdog
+    chmod 644 /etc/cron.d/warp-watchdog
     echo "${green}$(msg warp_watchdog_ok)${reset}"
 }

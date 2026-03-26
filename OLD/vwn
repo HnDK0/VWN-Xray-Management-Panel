@@ -1,0 +1,80 @@
+#!/bin/bash
+# =================================================================
+# vwn — Загрузчик модулей
+# =================================================================
+
+VWN_LIB="/usr/local/lib/vwn"
+
+# Хуки для acme.sh (должны работать без загрузки всех модулей)
+case "${1:-}" in
+    "open-80")
+        ufw status | grep -q inactive && exit 0
+        ufw allow from any to any port 80 proto tcp comment 'ACME temp' &>/dev/null
+        exit 0
+        ;;
+    "close-80")
+        ufw status | grep -q inactive && exit 0
+        ufw status numbered | grep 'ACME temp' | awk -F"[][]" '{print $2}' | sort -rn | while read -r n; do
+            echo "y" | ufw delete "$n" &>/dev/null
+        done
+        exit 0
+        ;;
+    "update")
+        bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh) --update
+        exit 0
+        ;;
+    "status")
+        for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag menu; do
+            [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh"
+        done
+        _initLang
+        runFullDiag
+        exit 0
+        ;;
+    "backup")
+        for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag menu; do
+            [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh"
+        done
+        _initLang
+        createBackup
+        exit 0
+        ;;
+    "restore")
+        for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag menu; do
+            [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh"
+        done
+        _initLang
+        restoreBackup
+        exit 0
+        ;;
+    "qr")
+        for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag menu; do
+            [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh"
+        done
+        _initLang
+        getQrCode
+        exit 0
+        ;;
+esac
+
+# Загружаем модули
+for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag menu; do
+    if [ -f "$VWN_LIB/${module}.sh" ]; then
+        # shellcheck source=/dev/null
+        source "$VWN_LIB/${module}.sh"
+    else
+        echo "ERROR: Module ${module}.sh not found in $VWN_LIB"
+        echo "Reinstall: bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh)"
+        exit 1
+    fi
+done
+
+# Выбор языка при первом запуске
+VWN_CONF="/usr/local/etc/xray/vwn.conf"
+if [ ! -f "$VWN_CONF" ] || ! grep -q "VWN_LANG=" "$VWN_CONF" 2>/dev/null; then
+    selectLang
+    _initLang
+fi
+
+isRoot
+menu "$@"
