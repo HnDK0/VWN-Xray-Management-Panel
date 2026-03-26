@@ -3,15 +3,15 @@
 # core.sh — Общие переменные, утилиты, статус-функции
 # =================================================================
 
-VWN_VERSION="4.0"
+VWN_VERSION="3.1"
 VWN_LIB="/usr/local/lib/vwn"
 
-# Цвета — безопасный fallback для non-interactive shell
-red=$(tput setaf 1 2>/dev/null && tput bold 2>/dev/null || printf '\033[1;31m')
-green=$(tput setaf 2 2>/dev/null && tput bold 2>/dev/null || printf '\033[1;32m')
-yellow=$(tput setaf 3 2>/dev/null && tput bold 2>/dev/null || printf '\033[1;33m')
-cyan=$(tput setaf 6 2>/dev/null && tput bold 2>/dev/null || printf '\033[1;36m')
-reset=$(tput sgr0 2>/dev/null || printf '\033[0m')
+# Цвета
+red=$(tput setaf 1)$(tput bold)
+green=$(tput setaf 2)$(tput bold)
+yellow=$(tput setaf 3)$(tput bold)
+cyan=$(tput setaf 6)$(tput bold)
+reset=$(tput sgr0)
 
 # Пути конфигов
 configPath='/usr/local/etc/xray/config.json'
@@ -25,7 +25,6 @@ psiphonDomainsFile='/usr/local/etc/xray/psiphon_domains.txt'
 psiphonConfigFile='/usr/local/etc/xray/psiphon.json'
 psiphonBin='/usr/local/bin/psiphon-tunnel-core'
 torDomainsFile='/usr/local/etc/xray/tor_domains.txt'
-CONNECT_HOST_FILE='/usr/local/etc/xray/connect_host'
 
 VWN_CONF='/usr/local/etc/xray/vwn.conf'
 USERS_FILE="/usr/local/etc/xray/users.conf"
@@ -40,49 +39,20 @@ vwn_conf_get() {
     grep "^${key}=" "$VWN_CONF" 2>/dev/null | cut -d= -f2-
 }
 
-# ИСПРАВЛЕНО: используем python3 для безопасной записи —
-# sed не справляется со спецсимволами (переносы строк, =) в значениях
 vwn_conf_set() {
     local key="$1" val="$2"
     mkdir -p "$(dirname "$VWN_CONF")"
     touch "$VWN_CONF"
-    python3 - "$VWN_CONF" "$key" "$val" << 'PYEOF'
-import sys
-path, key, val = sys.argv[1], sys.argv[2], sys.argv[3]
-try:
-    with open(path) as f:
-        lines = f.readlines()
-except FileNotFoundError:
-    lines = []
-found = False
-new_lines = []
-for line in lines:
-    if line.startswith(key + '='):
-        new_lines.append(f"{key}={val}\n")
-        found = True
-    else:
-        new_lines.append(line)
-if not found:
-    new_lines.append(f"{key}={val}\n")
-with open(path, 'w') as f:
-    f.writelines(new_lines)
-PYEOF
+    if grep -q "^${key}=" "$VWN_CONF" 2>/dev/null; then
+        sed -i "s|^${key}=.*|${key}=${val}|" "$VWN_CONF"
+    else
+        echo "${key}=${val}" >> "$VWN_CONF"
+    fi
 }
 
 vwn_conf_del() {
     local key="$1"
-    [ ! -f "$VWN_CONF" ] && return 0
-    python3 - "$VWN_CONF" "$key" << 'PYEOF'
-import sys
-path, key = sys.argv[1], sys.argv[2]
-try:
-    with open(path) as f:
-        lines = f.readlines()
-    with open(path, 'w') as f:
-        f.writelines(l for l in lines if not l.startswith(key + '='))
-except FileNotFoundError:
-    pass
-PYEOF
+    sed -i "/^${key}=/d" "$VWN_CONF" 2>/dev/null || true
 }
 
 # ============================================================
@@ -192,7 +162,6 @@ run_task() {
     echo -e "\n${yellow}>>> $m${reset}"
     if eval "$@"; then
         echo -e "[${green} DONE ${reset}] $m"
-        return 0
     else
         echo -e "[${red} FAIL ${reset}] $m"
         return 1
@@ -204,6 +173,7 @@ setupAlias() {
 }
 
 setupSwap() {
+    # Если swap уже есть — не трогаем
     local swap_total
     swap_total=$(free -m | awk '/^Swap:/{print $2}')
     if [ "${swap_total:-0}" -gt 256 ]; then
@@ -211,6 +181,7 @@ setupSwap() {
         return 0
     fi
 
+    # Определяем размер swap в зависимости от RAM
     local ram_mb swap_mb
     ram_mb=$(free -m | awk '/^Mem:/{print $2}')
     if   [ "$ram_mb" -le 512 ];  then swap_mb=1024
@@ -221,15 +192,18 @@ setupSwap() {
 
     echo -e "${cyan}$(msg swap_creating) ${swap_mb}MB...${reset}"
 
+    # Создаём swap-файл
     local swapfile="/swapfile"
     if fallocate -l "${swap_mb}M" "$swapfile" 2>/dev/null || \
        dd if=/dev/zero of="$swapfile" bs=1M count="$swap_mb" status=none; then
         chmod 600 "$swapfile"
         mkswap "$swapfile" &>/dev/null
         swapon "$swapfile"
+        # Прописываем в fstab чтобы swap выжил после перезагрузки
         if ! grep -q "$swapfile" /etc/fstab; then
             echo "$swapfile none swap sw 0 0" >> /etc/fstab
         fi
+        # Настраиваем swappiness — не злоупотреблять swap
         sysctl -w vm.swappiness=10 &>/dev/null
         grep -q "vm.swappiness" /etc/sysctl.conf || echo "vm.swappiness=10" >> /etc/sysctl.conf
         echo "${green}$(msg swap_created) ${swap_mb}MB${reset}"
@@ -246,51 +220,25 @@ generateRandomPath() {
 # СЕТЬ
 # ============================================================
 
-_getServerIPCached() {
-    local cached
-    cached=$(vwn_conf_get SERVER_IP 2>/dev/null)
-    if [[ "$cached" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        echo "$cached"
-    fi
-}
-
-_refreshServerIP() {
+getServerIP() {
     local ip
     for url in \
         "https://api.ipify.org" \
         "https://ipv4.icanhazip.com" \
-        "https://checkip.amazonaws.com"; do
-        ip=$(curl -s --connect-timeout 4 "$url" 2>/dev/null | tr -d '[:space:]')
+        "https://checkip.amazonaws.com" \
+        "https://api4.my-ip.io/ip" \
+        "https://ipv4.wtfismyip.com/text"; do
+        ip=$(curl -s --connect-timeout 5 "$url" 2>/dev/null | tr -d '[:space:]')
         if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            # Проверяем что это не приватный адрес
             if ! [[ "$ip" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
-                vwn_conf_set SERVER_IP "$ip" 2>/dev/null
-                echo "$ip"
-                return
+                echo "$ip"; return
             fi
         fi
     done
-    # Fallback через ip route
+    # Fallback: локальный маршрут — может вернуть приватный IP
     ip=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')
-    if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        vwn_conf_set SERVER_IP "$ip" 2>/dev/null
-        echo "$ip"
-        return
-    fi
-    echo "UNKNOWN"
-}
-
-getServerIP() {
-    # Сначала пробуем кэш (не блокирует)
-    local cached
-    cached=$(_getServerIPCached)
-    if [ -n "$cached" ] && [ "$cached" != "UNKNOWN" ]; then
-        echo "$cached"
-        # Обновляем кэш в фоне (не блокирует вызывающего)
-        _refreshServerIP &>/dev/null &
-        return
-    fi
-    # Кэша нет — получаем синхронно, но с уменьшенным таймаутом
-    _refreshServerIP
+    echo "${ip:-UNKNOWN}"
 }
 
 # ============================================================
@@ -305,6 +253,7 @@ getServiceStatus() {
     fi
 }
 
+# Определяем режим туннеля по конфигу Xray
 _getTunnelMode() {
     local tag="$1"
     local mode=""
@@ -386,6 +335,11 @@ checkCertExpiry() {
     fi
 }
 
+# ============================================================
+# УТИЛИТА: выравнивание текста по ширине колонки
+# Использование: _pad "строка" ширина
+# Корректно работает со строками содержащими ANSI escape коды
+# ============================================================
 _pad() {
     local v="$1" w="$2" vis
     vis=$(printf '%s' "$v" | sed 's/\x1b\[[0-9;]*[mABCDJKHf]//g; s/\x1b(B//g')
@@ -394,8 +348,7 @@ _pad() {
 
 # ============================================================
 # УТИЛИТА: конвертация файла доменов в JSON-массив для Xray
-# ИСПРАВЛЕНО: домен передаётся через аргумент sys.argv[1],
-# не через строковую интерполяцию — защита от Command Injection
+# Убирает префикс domain:, ведущую точку, конвертирует IDN
 # ============================================================
 domainsToJson() {
     local file="$1"
@@ -406,16 +359,8 @@ domainsToJson() {
         line="${line#.}"
         line=$(echo "$line" | tr -d '[:space:]')
         [ -z "$line" ] && continue
-        # Безопасная конвертация IDN через аргумент, не интерполяцию
         if echo "$line" | grep -qP '[^\x00-\x7F]' 2>/dev/null; then
-            line=$(python3 -c "
-import sys, encodings.idna
-parts = sys.argv[1].split('.')
-try:
-    print('.'.join(encodings.idna.ToASCII(p).decode() for p in parts))
-except Exception:
-    print(sys.argv[1])
-" -- "$line" 2>/dev/null || echo "$line")
+            line=$(python3 -c "import encodings.idna; parts=\'$line\'.split(\'.\'); print(\'.\'.join(encodings.idna.ToASCII(p).decode() for p in parts))" 2>/dev/null || echo "$line")
         fi
         [ -n "$result" ] && result="$result,"
         result="$result\"domain:$line\""

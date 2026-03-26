@@ -19,8 +19,6 @@ _BACKUP_PATHS=(
     /etc/sysctl.d/99-xray.conf
     /etc/fail2ban/jail.local
     /etc/fail2ban/filter.d/nginx-probe.conf
-    /usr/local/etc/xray/panel.conf
-    /etc/systemd/system/vwn-panel.service
 )
 
 createBackup() {
@@ -42,7 +40,7 @@ createBackup() {
         return 1
     fi
 
-    if tar --ignore-failed-read -czf "$archive" "${existing_paths[@]}" 2>/dev/null; then
+    if tar -czf "$archive" "${existing_paths[@]}" 2>/dev/null; then
         local size
         size=$(du -sh "$archive" | cut -f1)
         echo "${green}$(msg backup_done): $archive ($size)${reset}"
@@ -94,15 +92,15 @@ restoreBackup() {
     echo -e "${cyan}$(msg backup_restoring)...${reset}"
 
     # Останавливаем сервисы перед восстановлением
-    systemctl stop xray xray-reality nginx vwn-panel 2>/dev/null || true
+    systemctl stop xray xray-reality nginx 2>/dev/null || true
 
     if tar -xzf "$archive" -C / 2>/dev/null; then
         systemctl daemon-reload
-        systemctl restart xray xray-reality nginx vwn-panel 2>/dev/null || true
+        systemctl restart xray xray-reality nginx 2>/dev/null || true
         echo "${green}$(msg backup_restored)${reset}"
     else
         echo "${red}$(msg backup_restore_fail)${reset}"
-        systemctl start xray xray-reality nginx vwn-panel 2>/dev/null || true
+        systemctl start xray xray-reality nginx 2>/dev/null || true
         return 1
     fi
 }

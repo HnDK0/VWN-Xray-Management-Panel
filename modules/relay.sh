@@ -7,10 +7,8 @@ getRelayStatus() {
     if [ ! -f "$relayConfigFile" ]; then
         echo "${red}OFF${reset}"; return
     fi
-    local RELAY_PROTOCOL RELAY_HOST RELAY_PORT
-    RELAY_PROTOCOL=$(grep '^RELAY_PROTOCOL=' "$relayConfigFile" | cut -d= -f2-)
-    RELAY_HOST=$(grep '^RELAY_HOST=' "$relayConfigFile" | cut -d= -f2-)
-    RELAY_PORT=$(grep '^RELAY_PORT=' "$relayConfigFile" | cut -d= -f2-)
+    source "$relayConfigFile"
+    # Определяем режим по конфигу Xray
     local mode="маршрут OFF"
     if [ -f "$configPath" ]; then
         local relay_rule
@@ -40,7 +38,7 @@ parseRelayUrl() {
             pbk=$(echo "$url" | grep -oP "(?<=pbk=)[^&#]+")
             sid=$(echo "$url" | grep -oP "(?<=sid=)[^&#]+")
             net_type=$(echo "$url" | grep -oP "(?<=type=)[^&#]+")
-            path=$(python3 -c "import urllib.parse,sys; m=__import__('re').search(r'path=([^&#]+)', sys.argv[1]); print(urllib.parse.unquote(m.group(1))) if m else print('/')" -- "$url" 2>/dev/null)
+            path=$(python3 -c "import urllib.parse,re; m=re.search(r'path=([^&#]+)', '$url'); print(urllib.parse.unquote(m.group(1))) if m else print('/')" 2>/dev/null)
             ws_host=$(echo "$url" | grep -oP "(?<=host=)[^&#]+")
             ;;
         socks5|socks)
@@ -89,18 +87,7 @@ RELAYEOF
 
 buildRelayOutbound() {
     [ ! -f "$relayConfigFile" ] && return 1
-    local RELAY_PROTOCOL RELAY_HOST RELAY_PORT RELAY_UUID RELAY_SECURITY RELAY_SNI RELAY_PBK RELAY_SID RELAY_NET RELAY_PATH RELAY_WS_HOST
-    RELAY_PROTOCOL=$(grep '^RELAY_PROTOCOL=' "$relayConfigFile" | cut -d= -f2-)
-    RELAY_HOST=$(grep '^RELAY_HOST=' "$relayConfigFile" | cut -d= -f2-)
-    RELAY_PORT=$(grep '^RELAY_PORT=' "$relayConfigFile" | cut -d= -f2-)
-    RELAY_UUID=$(grep '^RELAY_UUID=' "$relayConfigFile" | cut -d= -f2-)
-    RELAY_SECURITY=$(grep '^RELAY_SECURITY=' "$relayConfigFile" | cut -d= -f2-)
-    RELAY_SNI=$(grep '^RELAY_SNI=' "$relayConfigFile" | cut -d= -f2-)
-    RELAY_PBK=$(grep '^RELAY_PBK=' "$relayConfigFile" | cut -d= -f2-)
-    RELAY_SID=$(grep '^RELAY_SID=' "$relayConfigFile" | cut -d= -f2-)
-    RELAY_NET=$(grep '^RELAY_NET=' "$relayConfigFile" | cut -d= -f2-)
-    RELAY_PATH=$(grep '^RELAY_PATH=' "$relayConfigFile" | cut -d= -f2-)
-    RELAY_WS_HOST=$(grep '^RELAY_WS_HOST=' "$relayConfigFile" | cut -d= -f2-)
+    source "$relayConfigFile"
 
     local stream_block=""
     if [ "$RELAY_PROTOCOL" != "socks" ]; then
@@ -161,6 +148,7 @@ applyRelayDomains() {
     local domains_json
     domains_json=$(awk 'NF {printf "\"domain:%s\",", $1}' "$relayDomainsFile" | sed 's/,$//')
 
+    # Если список доменов пуст — удаляем rule из конфигов, не применяем невалидный domain:[]
     if [ -z "$domains_json" ]; then
         echo "${yellow}$(msg relay_domains_empty)${reset}"
         removeRelayFromConfigs
@@ -202,10 +190,7 @@ removeRelayFromConfigs() {
 
 checkRelayIP() {
     [ ! -f "$relayConfigFile" ] && { echo "${red}$(msg relay_not_configured)${reset}"; return 1; }
-    local RELAY_PROTOCOL RELAY_HOST RELAY_PORT
-    RELAY_PROTOCOL=$(grep '^RELAY_PROTOCOL=' "$relayConfigFile" | cut -d= -f2-)
-    RELAY_HOST=$(grep '^RELAY_HOST=' "$relayConfigFile" | cut -d= -f2-)
-    RELAY_PORT=$(grep '^RELAY_PORT=' "$relayConfigFile" | cut -d= -f2-)
+    source "$relayConfigFile"
     echo "$(msg relay_real_ip) : $(getServerIP)"
     echo "$(msg relay_checking)"
 
@@ -215,15 +200,7 @@ checkRelayIP() {
     else
         local relay_outbound
         relay_outbound=$(buildRelayOutbound)
-
-        # ИСПРАВЛЕНО: используем mktemp в /root с chmod 700 — не /tmp
-        # Защита от symlink attack и race condition
-        local tmpdir
-        tmpdir=$(mktemp -d /root/.vwn-relay-XXXXXX)
-        chmod 700 "$tmpdir"
-        trap 'rm -rf "$tmpdir"' RETURN
-
-        cat > "$tmpdir/relay_test.json" << TESTEOF
+        cat > /tmp/relay_test.json << TESTEOF
 {
     "log": {"loglevel": "none"},
     "inbounds": [{
@@ -234,31 +211,14 @@ checkRelayIP() {
     "outbounds": [$relay_outbound]
 }
 TESTEOF
-        chmod 600 "$tmpdir/relay_test.json"
-        /usr/local/bin/xray run -config "$tmpdir/relay_test.json" &>/dev/null &
+        /usr/local/bin/xray run -config /tmp/relay_test.json &>/dev/null &
         local xray_pid=$!
         sleep 3
         relay_ip=$(curl -s --connect-timeout 10 -x socks5://127.0.0.1:19999 https://api.ipify.org 2>/dev/null || echo "$(msg unavailable)")
         kill $xray_pid 2>/dev/null
-        wait $xray_pid 2>/dev/null
+        rm -f /tmp/relay_test.json
     fi
     echo "$(msg relay_ip) : $relay_ip"
-    
-    # Определяем страну выхода
-    if [ "$relay_ip" != "$(msg unavailable)" ]; then
-        local country=""
-        # API 1: ip-api.com
-        country=$(curl -s --connect-timeout 5 "https://ip-api.com/line/${relay_ip}?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
-        # API 2: ipinfo.io
-        if [[ ! "$country" =~ ^[A-Z]{2}$ ]]; then
-            country=$(curl -s --connect-timeout 5 "https://ipinfo.io/${relay_ip}/country" 2>/dev/null | tr -d '[:space:]')
-        fi
-        # API 3: country.is
-        if [[ ! "$country" =~ ^[A-Z]{2}$ ]]; then
-            country=$(curl -s --connect-timeout 5 "https://api.country.is/${relay_ip}" 2>/dev/null | jq -r '.country' 2>/dev/null | tr -d '[:space:]')
-        fi
-        echo "$(msg relay_exit_country) : ${country:-$(msg unknown)}"
-    fi
 }
 
 manageRelay() {
@@ -273,11 +233,8 @@ manageRelay() {
         echo -e "${cyan}----------------------------------------------------------------${reset}"
         echo -e "  $(msg status): $s_relay"
         if [ -f "$relayConfigFile" ]; then
-            local _rp _rh _rpt
-            _rp=$(grep '^RELAY_PROTOCOL=' "$relayConfigFile" | cut -d= -f2-)
-            _rh=$(grep '^RELAY_HOST=' "$relayConfigFile" | cut -d= -f2-)
-            _rpt=$(grep '^RELAY_PORT=' "$relayConfigFile" | cut -d= -f2-)
-            echo -e "  $(msg relay_server): ${green}${_rp}://${_rh}:${_rpt}${reset},  $(msg domains_count): ${green}${s_domains:-0}${reset}"
+            source "$relayConfigFile"
+            echo -e "  $(msg relay_server): ${green}$RELAY_PROTOCOL://$RELAY_HOST:$RELAY_PORT${reset},  $(msg domains_count): ${green}${s_domains:-0}${reset}"
         fi
         echo ""
         echo -e "${green}1.${reset} $(msg relay_setup)"

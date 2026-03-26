@@ -11,16 +11,7 @@
 _getCountryFlag() {
     local ip="$1"
     local code
-    # API 1: ip-api.com
-    code=$(curl -s --connect-timeout 5 "https://ip-api.com/line/${ip}?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
-    # API 2: ipinfo.io
-    if [[ ! "$code" =~ ^[A-Z]{2}$ ]]; then
-        code=$(curl -s --connect-timeout 5 "https://ipinfo.io/${ip}/country" 2>/dev/null | tr -d '[:space:]')
-    fi
-    # API 3: country.is (работает в РФ)
-    if [[ ! "$code" =~ ^[A-Z]{2}$ ]]; then
-        code=$(curl -s --connect-timeout 5 "https://api.country.is/${ip}" 2>/dev/null | jq -r '.country' 2>/dev/null | tr -d '[:space:]')
-    fi
+    code=$(curl -s --connect-timeout 5 "http://ip-api.com/line/${ip}?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
     if [[ "$code" =~ ^[A-Z]{2}$ ]]; then
         # Конвертируем код страны в emoji флаг через региональные индикаторы
         # A=0x1F1E6, поэтому каждая буква = 0x1F1E6 + (ord - ord('A'))
@@ -51,29 +42,7 @@ _getConfigName() {
 
 installXray() {
     command -v xray &>/dev/null && { echo "info: xray already installed."; return; }
-    local tmpfile
-    tmpfile=$(mktemp)
-    echo -e "${cyan}Downloading Xray installer...${reset}"
-    if curl -fsSL --connect-timeout 30 --proto '=https' --tlsv1.2 \
-        "https://github.com/XTLS/Xray-install/raw/main/install-release.sh" \
-        -o "$tmpfile" 2>/dev/null; then
-        if head -1 "$tmpfile" | grep -qE '^#!.*(bash|sh)' && ! head -5 "$tmpfile" | grep -qi '<html'; then
-            bash "$tmpfile" install
-            # Проверяем что xray реально установился
-            if ! command -v xray &>/dev/null; then
-                echo "${red}ERROR: xray not found after install${reset}"
-                rm -f "$tmpfile"; return 1
-            fi
-        else
-            echo "${red}ERROR: invalid installer content${reset}"
-            echo "First line: $(head -1 "$tmpfile" 2>/dev/null)"
-            rm -f "$tmpfile"; return 1
-        fi
-    else
-        echo "${red}ERROR: failed to download Xray installer${reset}"
-        rm -f "$tmpfile"; return 1
-    fi
-    rm -f "$tmpfile"
+    bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
     create_xray_user
     fix_xray_service
     setup_xray_logs
@@ -314,7 +283,7 @@ getQrCode() {
     fi
 
     if [ -n "$html_url" ]; then
-        echo -e "${cyan}$(msg qr_html_title)${reset}"
+        echo -e "${cyan}[ HTML — все конфиги, QR, Clash ]${reset}"
         echo -e "${green}${html_url}${reset}"
     fi
 
@@ -364,7 +333,7 @@ modifyXrayUUID() {
         mv "$tmp" "$USERS_FILE"
         # Синхронизируем оба конфига
         _applyUsersToConfigs
-        echo "${green}$(msg users_all_updated)${reset}"
+        echo "${green}$(msg new_uuid) — все пользователи обновлены${reset}"
         cat "$USERS_FILE" | while IFS='|' read -r uuid label token; do
             echo "  $label → $uuid"
         done
@@ -466,53 +435,31 @@ modifyConnectHost() {
     local current
     current=$(cat "$CONNECT_HOST_FILE" 2>/dev/null | tr -d '[:space:]')
     if [ -n "$current" ]; then
-        echo "$(msg connect_host_current): ${green}${current}${reset}"
+        echo "Текущий адрес подключения: ${green}${current}${reset}"
     else
         getConfigInfo || return 1
-        echo "$(msg connect_host_current): ${green}${xray_userDomain}${reset} $(msg connect_host_main)"
+        echo "Текущий адрес подключения: ${green}${xray_userDomain}${reset} (основной домен)"
     fi
     echo ""
-    echo "$(msg connect_host_prompt)"
+    echo "Введите CDN домен для подключения (Enter = сбросить на основной домен):"
     read -rp "> " new_host
     if [ -z "$new_host" ]; then
         rm -f "$CONNECT_HOST_FILE"
-        echo "${green}$(msg connect_host_reset_ok)${reset}"
+        echo "${green}Адрес подключения сброшен на основной домен${reset}"
     else
         local validated
         if ! validated=$(_validateDomain "$new_host"); then
             echo "${red}$(msg invalid): '$new_host'${reset}"; return 1
         fi
         echo "$validated" > "$CONNECT_HOST_FILE"
-        echo "${green}$(msg connect_host_set_ok): $validated${reset}"
+        echo "${green}Адрес подключения: $validated${reset}"
     fi
     # Пересоздаём подписки с новым адресом
     rebuildAllSubFiles 2>/dev/null || true
 }
 
 updateXrayCore() {
-    local tmpfile
-    tmpfile=$(mktemp)
-    echo -e "${cyan}Downloading Xray installer...${reset}"
-    if curl -fsSL --connect-timeout 30 --proto '=https' --tlsv1.2 \
-        "https://github.com/XTLS/Xray-install/raw/main/install-release.sh" \
-        -o "$tmpfile" 2>/dev/null; then
-        if head -1 "$tmpfile" | grep -qE '^#!.*(bash|sh)' && ! head -5 "$tmpfile" | grep -qi '<html'; then
-            bash "$tmpfile" install
-            # Проверяем что xray реально обновился
-            if ! command -v xray &>/dev/null; then
-                echo "${red}$(msg xray_not_found)${reset}"
-                rm -f "$tmpfile"; return 1
-            fi
-        else
-            echo "${red}ERROR: invalid installer content${reset}"
-            echo "First line: $(head -1 "$tmpfile" 2>/dev/null)"
-            rm -f "$tmpfile"; return 1
-        fi
-    else
-        echo "${red}ERROR: failed to download Xray installer${reset}"
-        rm -f "$tmpfile"; return 1
-    fi
-    rm -f "$tmpfile"
+    bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
     systemctl restart xray xray-reality 2>/dev/null || true
     echo "${green}$(msg xray_updated)${reset}"
 }

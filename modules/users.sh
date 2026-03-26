@@ -105,7 +105,6 @@ _initUsersFile() {
 buildUserSubFile() {
     local uuid="$1" label="$2" token="$3"
     mkdir -p "$SUB_DIR"
-    chown www-data:www-data "$SUB_DIR" 2>/dev/null || true
     applyNginxSub 2>/dev/null || true
 
     local domain lines="" server_ip flag
@@ -149,8 +148,7 @@ buildUserSubFile() {
     # Удаляем старые файлы этого label (любой токен) перед записью нового
     rm -f "${SUB_DIR}/${safe}_"*.txt "${SUB_DIR}/${safe}_"*.html
     printf '%s' "$lines" | base64 -w 0 > "${SUB_DIR}/${filename}"
-    chmod 600 "${SUB_DIR}/${filename}"
-    chown www-data:www-data "${SUB_DIR}/${filename}" 2>/dev/null || true
+    chmod 644 "${SUB_DIR}/${filename}"
     buildUserHtmlPage "$uuid" "$label" "$token" "$lines" 2>/dev/null || true
 }
 
@@ -316,6 +314,7 @@ CLASHEOF
   <div class="qr-wrap" id="qrsub"><div class="qr-inner" id="qrcsub"></div></div>
 </div>
 <p style="margin-top:16px;font-size:10px;color:#45475a;text-align:center">v2rayNG / Hiddify: + → Subscription group → URL</p>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script>
 var Q={};
 function cp(id,btn){
@@ -329,24 +328,13 @@ function tqr(id){
   var open=w.classList.toggle('open');
   if(open&&!Q[id]){
     var el=document.getElementById(id==='sub'?'usub':'u'+id);
-    // Simple inline QR generator (no external CDN)
-    var qr=generateQR(el.textContent.trim());
-    document.getElementById('qrc'+id).innerHTML=qr;
+    new QRCode(document.getElementById('qrc'+id),{text:el.textContent.trim(),width:200,height:200,correctLevel:QRCode.CorrectLevel.M});
     Q[id]=true;
   }
 }
-// Minimal QR code generator (inline, no external dependencies)
-function generateQR(text){
-  // Simple placeholder - shows text in a styled box with XSS protection
-  var el=document.createElement('div');
-  el.style.cssText='background:#fff;padding:12px;border-radius:6px;font-family:monospace;font-size:10px;word-break:break-all;max-width:200px;text-align:center;color:#000';
-  el.textContent=text;
-  return el.outerHTML;
-}
 </script></body></html>
 SUBEOF
-    chmod 600 "$htmlfile"
-    chown www-data:www-data "$htmlfile" 2>/dev/null || true
+    chmod 644 "$htmlfile"
 }
 
 

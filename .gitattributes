@@ -1,4 +1,0 @@
-# Автоматическая конвертация CRLF -> LF для shell-файлов
-*.sh text eol=lf
-vwn text eol=lf
-*.py text eol=lf

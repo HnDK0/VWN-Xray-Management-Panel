@@ -7,27 +7,14 @@ prepareSoftware() {
     identifyOS
     echo "--- [1/3] $(msg install_deps) ---"
     run_task "Swap-файл"        setupSwap
-    run_task "Чистка пакетов"   "if ! pgrep -x dpkg >/dev/null && ! pgrep -x apt >/dev/null; then rm -f /var/lib/dpkg/lock* && dpkg --configure -a 2>/dev/null || true; fi"
+    run_task "Чистка пакетов"   "rm -f /var/lib/dpkg/lock* && dpkg --configure -a 2>/dev/null || true"
     run_task "Обновление репозиториев" "$PACKAGE_MANAGEMENT_UPDATE"
 
     echo "--- [2/3] $(msg install_deps) ---"
     for p in tar gpg unzip jq nano ufw socat curl qrencode python3; do
         run_task "Установка $p" "installPackage '$p'" || true
     done
-
-    # Критическая задача — Xray
-    run_task "Установка Xray-core" installXray
-    if [ $? -ne 0 ]; then
-        echo -e "${red}$(msg xray_install_fail)${reset}"
-        read -rp "$(msg xray_install_retry)" retry
-        if [[ "$retry" == "y" ]]; then
-            run_task "$(msg xray_install_retry_title)" installXray || { echo "${red}$(msg xray_install_aborted)${reset}"; return 1; }
-        else
-            echo "${red}$(msg xray_install_aborted)${reset}"
-            return 1
-        fi
-    fi
-
+    run_task "Установка Xray-core"       installXray
     run_task "Установка Cloudflare WARP" installWarp
 }
 
@@ -71,32 +58,12 @@ YUMEOF
 }
 
 prepareSoftwareWs() {
-    prepareSoftware || return 1
-
-    # Критическая задача — Nginx
+    prepareSoftware
     run_task "Установка Nginx (mainline)" _installNginxMainline
-    if [ $? -ne 0 ]; then
-        echo -e "${red}$(msg nginx_install_fail)${reset}"
-        read -rp "$(msg nginx_install_retry)" retry
-        if [[ "$retry" == "y" ]]; then
-            run_task "$(msg nginx_install_retry_title)" _installNginxMainline || { echo "${red}$(msg nginx_install_aborted)${reset}"; return 1; }
-        else
-            echo "${red}$(msg nginx_install_aborted)${reset}"
-            return 1
-        fi
-    fi
 
     echo "--- [3/3] $(msg menu_sep_sec) ---"
     run_task "Настройка UFW" "ufw allow 22/tcp && ufw allow 443/tcp && ufw allow 443/udp && echo 'y' | ufw enable"
-    if [ $? -ne 0 ]; then
-        echo -e "${red}$(msg ufw_not_configured)${reset}"
-        read -rp "$(msg ufw_continue)" cont_ufw
-        if [[ "$cont_ufw" != "y" ]]; then
-            echo "${red}$(msg xray_install_aborted)${reset}"
-            return 1
-        fi
-    fi
-    run_task "Системные параметры" applySysctl || true
+    run_task "Системные параметры" applySysctl
 }
 
 # Установка VLESS + WebSocket + TLS + Nginx + WARP + CDN
@@ -165,7 +132,7 @@ installWsTls() {
         echo "2) www.apple.com:443"
         echo "3) www.amazon.com:443"
         echo "$(msg reality_dest_custom)"
-        read -rp "$(msg prompt_choice)" dest_choice
+        read -rp "Выбор [1]: " dest_choice
         case "${dest_choice:-1}" in
             1) realityDest="microsoft.com:443" ;;
             2) realityDest="www.apple.com:443" ;;
@@ -177,7 +144,7 @@ installWsTls() {
         read -rp "$(msg reality_port_prompt)" realityPort
         [ -z "$realityPort" ] && realityPort=8443
         if ! [[ "$realityPort" =~ ^[0-9]+$ ]] || [ "$realityPort" -lt 1024 ] || [ "$realityPort" -gt 65535 ]; then
-            echo "${yellow}$(msg reality_port_fallback)${reset}"
+            echo "${yellow}$(msg invalid_port) — использую 8443${reset}"
             realityPort=8443
         fi
     fi
@@ -190,24 +157,13 @@ installWsTls() {
     systemctl enable --now nginx
     systemctl start nginx 2>/dev/null || true
 
-    run_task "Настройка WARP"          configWarp || true
-
-    # Критическая задача — SSL
-    run_task "Выпуск SSL" "userDomain='$userDomain' configCert"
-    if [ $? -ne 0 ]; then
-        echo -e "${red}$(msg ssl_not_issued)${reset}"
-        read -rp "$(msg ssl_continue)" cont_ssl
-        if [[ "$cont_ssl" != "y" ]]; then
-            echo "${red}$(msg xray_install_aborted)${reset}"
-            return 1
-        fi
-    fi
-
-    run_task "Применение правил WARP"  applyWarpDomains || true
-    run_task "Ротация логов"           setupLogrotate || true
-    run_task "Автоочистка логов"       setupLogClearCron || true
-    run_task "Автообновление SSL"      setupSslCron || true
-    run_task "WARP Watchdog"           setupWarpWatchdog || true
+    run_task "Настройка WARP"          configWarp
+    run_task "Выпуск SSL"              "userDomain='$userDomain' configCert"
+    run_task "Применение правил WARP"  applyWarpDomains
+    run_task "Ротация логов"           setupLogrotate
+    run_task "Автоочистка логов"       setupLogClearCron
+    run_task "Автообновление SSL"      setupSslCron
+    run_task "WARP Watchdog"           setupWarpWatchdog
 
     systemctl enable --now xray
     systemctl restart xray nginx
@@ -265,15 +221,7 @@ fullRemove() {
         [ -z "${PACKAGE_MANAGEMENT_REMOVE:-}" ] && identifyOS
         uninstallPackage 'nginx*' || true
         uninstallPackage 'cloudflare-warp' || true
-        local xray_tmpfile
-        xray_tmpfile=$(mktemp)
-        if curl -fsSL --connect-timeout 15 --proto '=https' --tlsv1.2 \
-            "https://github.com/XTLS/Xray-install/raw/main/install-release.sh" \
-            -o "$xray_tmpfile" 2>/dev/null \
-            && head -1 "$xray_tmpfile" | grep -qE '^#!.*(bash|sh)' && ! head -5 "$xray_tmpfile" | grep -qi '<html'; then
-            bash "$xray_tmpfile" @ remove || true
-        fi
-        rm -f "$xray_tmpfile"
+        bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove || true
         systemctl disable xray-reality psiphon 2>/dev/null || true
         rm -f /etc/systemd/system/xray-reality.service
         rm -f /etc/systemd/system/psiphon.service
@@ -297,15 +245,7 @@ removeWs() {
     systemctl disable nginx xray 2>/dev/null || true
     [ -z "${PACKAGE_MANAGEMENT_REMOVE:-}" ] && identifyOS
     uninstallPackage 'nginx*' || true
-    local xray_tmpfile2
-    xray_tmpfile2=$(mktemp)
-    if curl -fsSL --connect-timeout 15 --proto '=https' --tlsv1.2 \
-        "https://github.com/XTLS/Xray-install/raw/main/install-release.sh" \
-        -o "$xray_tmpfile2" 2>/dev/null \
-        && head -1 "$xray_tmpfile2" | grep -qE '^#!.*(bash|sh)' && ! head -5 "$xray_tmpfile2" | grep -qi '<html'; then
-        bash "$xray_tmpfile2" @ remove || true
-    fi
-    rm -f "$xray_tmpfile2"
+    bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove || true
     rm -rf /etc/nginx /usr/local/etc/xray/config.json \
            /usr/local/etc/xray/sub /usr/local/etc/xray/users.conf \
            /etc/cron.d/acme-renew /etc/cron.d/clear-logs \
@@ -400,11 +340,10 @@ menu() {
         s_relay=$(getRelayStatus)
         s_psiphon=$(getPsiphonStatus)
         s_tor=$(getTorStatus)
-        s_panel=$(getPanelStatus 2>/dev/null || echo "${red}STOPPED${reset}")
         s_connect=$(cat "$CONNECT_HOST_FILE" 2>/dev/null | tr -d '[:space:]')
         [ ${#s_connect} -gt 35 ] && s_connect="${s_connect:0:32}..."
         # Чистые версии (без ANSI) для printf %-Ns выравнивания
-        _strip() { printf '%s' "$1" | sed 's/\x1b\[[0-9;]*[mABCDJKHf]//g; s/\x1b(B//g'; }
+        _strip() { printf '%s' "$1" | sed 's/\[[0-9;]*[mABCDJKHf]//g; s/(B//g'; }
         _pval() {
             local val="$1" w="$2" clean
             clean=$(_strip "$val")
@@ -414,7 +353,7 @@ menu() {
         s_reality_c=$(_pval "$s_reality" 7)
         s_nginx_c=$(_pval "$s_nginx" 7)
         # Чистые значения для правой колонки и туннелей (без ANSI — printf %-Ns не считает escape)
-        _plain() { printf '%s' "$1" | sed 's/\x1b\[[0-9;]*[mABCDJKHf]//g; s/\x1b(B//g'; }
+        _plain() { printf '%s' "$1" | sed 's/\[[0-9;]*[mABCDJKHf]//g; s/(B//g'; }
         s_warp_plain=$(_plain "$s_warp")
         s_ssl_plain=$(_plain "$s_ssl")
         s_cfguard_plain=$(_plain "$s_cfguard")
@@ -435,8 +374,6 @@ menu() {
         [ -n "$s_connect" ] && echo -e "  CDN: ${green}${s_connect}${reset}"
         echo -e "  ${cyan}── $(msg menu_sep_tun_short) ───────────────────────────────────────────${reset}"
         echo -e "  Relay: $s_relay,  Psiphon: $s_psiphon,  Tor: $s_tor"
-        echo -e "  ${cyan}── Panel ──────────────────────────────────────────${reset}"
-        echo -e "  Panel: $s_panel"
         echo -e "  ${cyan}── $(msg menu_sep_sec_short) ────────────────────────────────────────────${reset}"
         echo -e "  BBR: $s_bbr,  F2B: $s_f2b,  Jail: $s_jail,  IPv6: $(getIPv6Status),  CPU Guard: $(getCpuGuardStatus)"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
@@ -477,8 +414,7 @@ menu() {
         echo -e "  ${green}28.${reset} $(msg menu_diag)"
         echo -e "  ${green}29.${reset} $(msg menu_backup)"
         echo -e "  ${green}30.${reset} $(msg menu_lang)"
-        echo -e "  ${green}31.${reset} $(msg menu_panel)"
-        echo -e "  ${green}32.${reset} $(msg menu_remove)"
+        echo -e "  ${green}31.${reset} $(msg menu_remove)"
         echo -e "  $(msg menu_sep_exit)"
         echo -e "  ${green}0.${reset}  $(msg menu_exit)"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
@@ -516,8 +452,7 @@ menu() {
             28) manageDiag ;;
             29) manageBackup ;;
             30) selectLang; _initLang ;;
-            31) managePanel ;;
-            32) fullRemove ;;
+            31) fullRemove ;;
             0)  exit 0 ;;
             *)  echo -e "${red}$(msg invalid)${reset}"; sleep 1 ;;
         esac
