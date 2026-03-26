@@ -403,12 +403,15 @@ managePanel() {
             1) installPanel ;;
             2)
                 local domain saved_path
-                domain=$(grep -E '^\s*server_name\s+' "$nginxPath" 2>/dev/null | grep -v '_' | awk '{print $2}' | tr -d ';' | head -1)
+                # Пробуем получить домен из nginx конфига
+                [ -f "$nginxPath" ] && domain=$(grep -E '^\s*server_name\s+' "$nginxPath" 2>/dev/null | grep -v '_' | awk '{print $2}' | tr -d ';' | head -1)
+                # Если не нашли в nginx — пробуем из конфига Xray
+                [ -z "$domain" ] && [ -f "$configPath" ] && domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // .inbounds[0].streamSettings.xhttpSettings.host // ""' "$configPath" 2>/dev/null)
                 saved_path=$(grep "^PANEL_PATH=" "$PANEL_CONF" 2>/dev/null | cut -d= -f2-)
                 if [ -n "$domain" ] && [ -n "$saved_path" ]; then
                     echo "${green}https://${domain}${saved_path}/${reset}"
-                elif [ -n "$domain" ]; then
-                    echo "${green}https://${domain}/panel/${reset}"
+                elif [ -n "$saved_path" ]; then
+                    echo "${yellow}Домен не найден. Path: ${green}${saved_path}/${reset}"
                 else
                     echo "${yellow}$(msg panel_url_later)${reset}"
                 fi
