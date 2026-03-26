@@ -752,7 +752,7 @@ class PanelHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Security-Policy",
-            f"default-src 'self'; connect-src 'self'; script-src 'nonce-{nonce}'; "
+            "default-src 'self'; connect-src 'self'; script-src 'self' 'unsafe-inline'; "
             "style-src 'unsafe-inline'; "
             "font-src 'self'; img-src 'self' data:;")
         self.end_headers()
