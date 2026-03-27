@@ -8,7 +8,6 @@ changeSshPort() {
     if ! [[ "$new_ssh_port" =~ ^[0-9]+$ ]] || [ "$new_ssh_port" -lt 1 ] || [ "$new_ssh_port" -gt 65535 ]; then
         echo "${red}$(msg invalid_port)${reset}"; return 1
     fi
-    cp /etc/ssh/sshd_config "/etc/ssh/sshd_config.bak.$(date +%s)"
     ufw allow "$new_ssh_port"/tcp comment 'SSH'
     sed -i "s/^#\?Port [0-9]*/Port $new_ssh_port/" /etc/ssh/sshd_config
     systemctl restart sshd 2>/dev/null || systemctl restart ssh
@@ -145,13 +144,6 @@ toggleIPv6() {
         sed -i '/ipv6.*icmp.*ignore/d' /etc/sysctl.d/99-xray.conf 2>/dev/null || true
         echo "${green}$(msg ipv6_enabled)${reset}"
     else
-        # ИСПРАВЛЕНО: проверяем что у сервера есть IPv4 адрес перед отключением IPv6
-        local has_ipv4
-        has_ipv4=$(ip -4 addr show scope global 2>/dev/null | grep -c inet || echo 0)
-        if [ "${has_ipv4:-0}" -eq 0 ]; then
-            echo "${red}Warning: no IPv4 address detected — keeping IPv6 enabled to avoid losing connectivity.${reset}"
-            return 1
-        fi
         sysctl -w net.ipv6.conf.all.disable_ipv6=1 &>/dev/null
         sysctl -w net.ipv6.conf.default.disable_ipv6=1 &>/dev/null
         sysctl -w net.ipv6.conf.lo.disable_ipv6=1 &>/dev/null
@@ -241,32 +233,19 @@ removeCpuGuard() {
 }
 
 applySysctl() {
-    # Проверяем что у сервера есть IPv4 адрес перед отключением IPv6
-    local has_ipv4
-    has_ipv4=$(ip -4 addr show scope global 2>/dev/null | grep -c inet || echo 0)
-    
-    cat > /etc/sysctl.d/99-xray.conf << SYSCTL
+    cat > /etc/sysctl.d/99-xray.conf << 'SYSCTL'
 net.ipv4.icmp_echo_ignore_all = 1
+net.ipv6.icmp.echo_ignore_all = 1
 net.core.somaxconn = 65535
 net.ipv4.tcp_max_syn_backlog = 65535
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
 # TCP keepalive — держит WS соединения живыми через NAT мобильных операторов
 net.ipv4.tcp_keepalive_time = 120
 net.ipv4.tcp_keepalive_intvl = 10
 net.ipv4.tcp_keepalive_probes = 3
 SYSCTL
-
-    if [ "${has_ipv4:-0}" -gt 0 ]; then
-        cat >> /etc/sysctl.d/99-xray.conf << 'SYSCTL'
-# IPv6 disabled (server has IPv4)
-net.ipv6.icmp.echo_ignore_all = 1
-net.ipv6.conf.all.disable_ipv6 = 1
-net.ipv6.conf.default.disable_ipv6 = 1
-net.ipv6.conf.lo.disable_ipv6 = 1
-SYSCTL
-    else
-        echo "${yellow}Warning: no IPv4 address detected — keeping IPv6 enabled.${reset}"
-    fi
-
     sysctl --system &>/dev/null
     sysctl -p /etc/sysctl.d/99-xray.conf &>/dev/null
     echo "${green}$(msg sysctl_ok)${reset}"

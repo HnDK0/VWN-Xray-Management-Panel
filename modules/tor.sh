@@ -206,16 +206,7 @@ checkTorIP() {
         if [ -n "$ip" ]; then
             echo "$ip"
             local country
-            # API 1: ip-api.com
-            country=$(curl -s --connect-timeout 5 -x socks5://127.0.0.1:${TOR_PORT} "https://ip-api.com/line/${ip}?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
-            # API 2: ipinfo.io
-            if [[ ! "$country" =~ ^[A-Z]{2}$ ]]; then
-                country=$(curl -s --connect-timeout 5 -x socks5://127.0.0.1:${TOR_PORT} "https://ipinfo.io/${ip}/country" 2>/dev/null | tr -d '[:space:]')
-            fi
-            # API 3: country.is
-            if [[ ! "$country" =~ ^[A-Z]{2}$ ]]; then
-                country=$(curl -s --connect-timeout 5 -x socks5://127.0.0.1:${TOR_PORT} "https://api.country.is/${ip}" 2>/dev/null | jq -r '.country' 2>/dev/null | tr -d '[:space:]')
-            fi
+            country=$(curl -s --connect-timeout 5 -x socks5://127.0.0.1:${TOR_PORT}                 "http://ip-api.com/line/${ip}?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
             echo "$(msg tor_exit_country) : ${country:-$(msg unknown)}"
             return 0
         fi
@@ -239,54 +230,33 @@ renewTorCircuit() {
 
 changeTorCountry() {
     echo -e "${cyan}$(msg tor_country_select)${reset}"
-    echo " 🇩🇪 1) DE  🇳🇱 2) NL  🇫🇷 3) FR  🇬🇧 4) GB  🇮🇹 5) IT"
-    echo " 🇪🇸 6) ES  🇵🇹 7) PT  🇵🇱 8) PL  🇨🇿 9) CZ  🇦🇹 10) AT"
-    echo " 🇧🇪 11) BE  🇩🇰 12) DK  🇳🇴 13) NO  🇸🇪 14) SE  🇫🇮 15) FI"
-    echo " 🇨🇭 16) CH  🇮🇪 17) IE  🇺🇸 18) US  🇨🇦 19) CA  🇲🇽 20) MX"
-    echo " 🇧🇷 21) BR  🇦🇷 22) AR  🇦🇺 23) AU  🇳🇿 24) NZ  🇯🇵 25) JP"
-    echo " 🇰🇷 26) KR  🇸🇬 27) SG  🇭🇰 28) HK  🇹🇼 29) TW  🇮🇳 30) IN"
-    echo " 🇿🇦 31) ZA  🇮🇱 32) IL  🇹🇷 33) TR  🇷🇴 34) RO  🇭🇺 35) HU"
-    echo " 🇬🇷 36) GR  🇺🇦 37) UA  🇷🇺 38) RU  🇨🇱 39) CL  🇨🇴 40) CO"
-    echo " 🌐 Auto  📝 Manual"
+    echo " $(msg country_de)"
+    echo " $(msg country_nl)"
+    echo " $(msg country_us)"
+    echo " $(msg country_gb)"
+    echo " $(msg country_fr)"
+    echo " $(msg country_se)"
+    echo " $(msg country_ch)"
+    echo " $(msg country_fi)"
+    echo " $(msg tor_country_auto)"
+    echo "$(msg tor_country_manual)"
     read -rp "$(msg prompt_choice_plain)" c
     local country
     case "$c" in
-        1) country="DE" ;; 2) country="NL" ;; 3) country="FR" ;;
-        4) country="GB" ;; 5) country="IT" ;; 6) country="ES" ;;
-        7) country="PT" ;; 8) country="PL" ;; 9) country="CZ" ;;
-        10) country="AT" ;; 11) country="BE" ;; 12) country="DK" ;;
-        13) country="NO" ;; 14) country="SE" ;; 15) country="FI" ;;
-        16) country="CH" ;; 17) country="IE" ;; 18) country="US" ;;
-        19) country="CA" ;; 20) country="MX" ;; 21) country="BR" ;;
-        22) country="AR" ;; 23) country="AU" ;; 24) country="NZ" ;;
-        25) country="JP" ;; 26) country="KR" ;; 27) country="SG" ;;
-        28) country="HK" ;; 29) country="TW" ;; 30) country="IN" ;;
-        31) country="ZA" ;; 32) country="IL" ;; 33) country="TR" ;;
-        34) country="RO" ;; 35) country="HU" ;; 36) country="GR" ;;
-        37) country="UA" ;; 38) country="RU" ;; 39) country="CL" ;;
-        40) country="CO" ;;
-        "a"|"auto"|"") country="" ;;
-        "m"|"manual") read -rp "$(msg tor_country_prompt)" country ;;
+        1) country="DE" ;; 2) country="NL" ;; 3) country="US" ;;
+        4) country="GB" ;; 5) country="FR" ;; 6) country="SE" ;;
+        7) country="CH" ;; 8) country="FI" ;; 9) country="" ;;
+        10) read -rp "$(msg tor_country_prompt)" country ;;
         *) return ;;
     esac
 
-    # Валидация кода страны
-    if [ -n "$country" ] && ! [[ "$country" =~ ^[A-Z]{2}$ ]]; then
-        echo "${red}$(msg invalid) country code: '$country' (expected 2 uppercase letters)${reset}"; return 1
-    fi
-
     # Обновляем конфиг
-    # ИСПРАВЛЕНО: используем mktemp вместо /tmp для защиты от symlink attack
-    local tmpfile
-    tmpfile=$(mktemp /root/.vwn-torrc-XXXXXX)
-    chmod 600 "$tmpfile"
-    trap 'rm -f "$tmpfile"' RETURN
-    grep -v "^ExitNodes\|^StrictNodes" "$TOR_CONFIG" > "$tmpfile"
+    grep -v "^ExitNodes\|^StrictNodes" "$TOR_CONFIG" > /tmp/torrc.tmp
     if [ -n "$country" ]; then
-        echo "ExitNodes {${country}}" >> "$tmpfile"
-        echo "StrictNodes 1" >> "$tmpfile"
+        echo "ExitNodes {${country}}" >> /tmp/torrc.tmp
+        echo "StrictNodes 1" >> /tmp/torrc.tmp
     fi
-    mv "$tmpfile" "$TOR_CONFIG"
+    mv /tmp/torrc.tmp "$TOR_CONFIG"
     systemctl restart tor
     echo "${green}$(msg tor_country_changed) ${country:-$(msg auto)}. $(msg tor_country_restarting)${reset}"
 }
@@ -422,13 +392,8 @@ addTorBridges() {
     fi
 
     # Удаляем старые настройки мостов
-    # ИСПРАВЛЕНО: используем mktemp вместо /tmp для защиты от symlink attack
-    local tmpfile
-    tmpfile=$(mktemp /root/.vwn-torrc-XXXXXX)
-    chmod 600 "$tmpfile"
-    trap 'rm -f "$tmpfile"' RETURN
-    grep -v "^UseBridges\|^ClientTransportPlugin\|^Bridge " "$TOR_CONFIG" > "$tmpfile"
-    mv "$tmpfile" "$TOR_CONFIG"
+    grep -v "^UseBridges\|^ClientTransportPlugin\|^Bridge " "$TOR_CONFIG" > /tmp/torrc.tmp
+    mv /tmp/torrc.tmp "$TOR_CONFIG"
 
     # Добавляем новые
     echo "UseBridges 1" >> "$TOR_CONFIG"
@@ -454,13 +419,8 @@ addTorBridges() {
 }
 
 removeTorBridges() {
-    # ИСПРАВЛЕНО: используем mktemp вместо /tmp для защиты от symlink attack
-    local tmpfile
-    tmpfile=$(mktemp /root/.vwn-torrc-XXXXXX)
-    chmod 600 "$tmpfile"
-    trap 'rm -f "$tmpfile"' RETURN
-    grep -v "^UseBridges\|^ClientTransportPlugin\|^Bridge " "$TOR_CONFIG" > "$tmpfile"
-    mv "$tmpfile" "$TOR_CONFIG"
+    grep -v "^UseBridges\|^ClientTransportPlugin\|^Bridge " "$TOR_CONFIG" > /tmp/torrc.tmp
+    mv /tmp/torrc.tmp "$TOR_CONFIG"
     systemctl restart tor
     echo "${green}$(msg tor_bridge_removed)${reset}"
 }

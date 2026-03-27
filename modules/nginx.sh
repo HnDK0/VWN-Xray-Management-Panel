@@ -6,7 +6,7 @@
 _getCountryCode() {
     local ip="$1"
     local code
-    code=$(curl -s --connect-timeout 5 "https://ip-api.com/line/${ip}?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
+    code=$(curl -s --connect-timeout 5 "http://ip-api.com/line/${ip}?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
     if [[ "$code" =~ ^[A-Z]{2}$ ]]; then
         echo "[$code]"
     else
@@ -99,11 +99,6 @@ server {
     ssl_ciphers         HIGH:!aNULL:!MD5;
     ssl_session_cache   shared:SSL:10m;
     ssl_session_timeout 10m;
-
-    # Security headers
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header Referrer-Policy "no-referrer" always;
 
     # Отключаем буферизацию глобально для этого сервера
     proxy_buffering off;
@@ -301,10 +296,7 @@ configCert() {
 
 
     if [ ! -f ~/.acme.sh/acme.sh ]; then
-        curl https://get.acme.sh | sh -s email="acme@${userDomain}" 2>/dev/null || {
-            echo "${red}$(msg acme_install_fail)${reset}"
-            return 1
-        }
+        curl -fsSL https://get.acme.sh | sh -s email="acme@${userDomain}"
     fi
 
     # Проверяем что acme.sh установился

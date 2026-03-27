@@ -7,11 +7,10 @@ VWN_CONF="/usr/local/etc/xray/vwn.conf"
 VWN_LANG="${VWN_LANG:-}"
 
 # Загружаем сохранённый язык если не задан
-if [ -z "$VWN_LANG" ] && [ -f "$VWN_CONF" ]; then
-    # Безопасное чтение: grep только строку VWN_LANG=, cut значение
-    VWN_LANG=$(grep '^VWN_LANG=' "$VWN_CONF" 2>/dev/null | cut -d= -f2- | tr -d '[:space:]')
+if [ -z "$VWN_LANG" ]; then
+    [ -f "$VWN_CONF" ] && source "$VWN_CONF"
+    VWN_LANG="${VWN_LANG:-ru}"
 fi
-VWN_LANG="${VWN_LANG:-ru}"
 
 selectLang() {
     clear
@@ -76,19 +75,6 @@ _initLang() {
     MSG[enabled]=$(           [ "$VWN_LANG" = en ] && echo "ENABLED"         || echo "ВКЛЮЧЕНО")
     MSG[disabled]=$(          [ "$VWN_LANG" = en ] && echo "DISABLED"        || echo "ВЫКЛЮЧЕНО")
     MSG[all_services_restarted]=$( [ "$VWN_LANG" = en ] && echo "All services restarted." || echo "Все сервисы перезапущены.")
-    MSG[xray_install_fail]=$(    [ "$VWN_LANG" = en ] && echo "Xray not installed! Installation impossible." || echo "Xray не установлен! Установка невозможна.")
-    MSG[xray_install_retry]=$(   [ "$VWN_LANG" = en ] && echo "Retry? (y/n): " || echo "Повторить попытку? (y/n): ")
-    MSG[xray_install_aborted]=$( [ "$VWN_LANG" = en ] && echo "Installation aborted." || echo "Установка прервана.")
-    MSG[xray_install_retry_title]=$([ "$VWN_LANG" = en ] && echo "Installing Xray-core (retry)" || echo "Установка Xray-core (повтор)")
-    MSG[xray_not_found]=$(       [ "$VWN_LANG" = en ] && echo "ERROR: xray not found after install" || echo "ОШИБКА: xray не найден после установки")
-    MSG[nginx_install_fail]=$(   [ "$VWN_LANG" = en ] && echo "Nginx not installed! Installation impossible." || echo "Nginx не установлен! Установка невозможна.")
-    MSG[nginx_install_retry]=$(  [ "$VWN_LANG" = en ] && echo "Retry? (y/n): " || echo "Повторить попытку? (y/n): ")
-    MSG[nginx_install_aborted]=$( [ "$VWN_LANG" = en ] && echo "Installation aborted." || echo "Установка прервана.")
-    MSG[nginx_install_retry_title]=$([ "$VWN_LANG" = en ] && echo "Installing Nginx (retry)" || echo "Установка Nginx (повтор)")
-    MSG[ufw_not_configured]=$(   [ "$VWN_LANG" = en ] && echo "UFW not configured! Ports 22 and 443 may be closed." || echo "UFW не настроен! Порты 22 и 443 могут быть закрыты.")
-    MSG[ufw_continue]=$(         [ "$VWN_LANG" = en ] && echo "Continue without UFW? (y/n): " || echo "Продолжить без UFW? (y/n): ")
-    MSG[ssl_not_issued]=$(       [ "$VWN_LANG" = en ] && echo "SSL certificate not issued!" || echo "SSL сертификат не выпущен!")
-    MSG[ssl_continue]=$(         [ "$VWN_LANG" = en ] && echo "Continue without SSL? (y/n): " || echo "Продолжить без SSL? (y/n): ")
 
     # ── INSTALL ───────────────────────────────────────────────────
     MSG[install_deps]=$(      [ "$VWN_LANG" = en ] && echo "Installing dependencies..." || echo "Установка зависимостей...")
@@ -173,7 +159,6 @@ _initLang() {
     MSG[menu_diag]=$(         [ "$VWN_LANG" = en ] && echo "Diagnostics"               || echo "Диагностика")
     MSG[menu_users]=$(        [ "$VWN_LANG" = en ] && echo "Manage users"              || echo "Управление пользователями")
     MSG[menu_backup]=$(       [ "$VWN_LANG" = en ] && echo "Backup & Restore"          || echo "Бэкап и восстановление")
-    MSG[menu_panel]=$(        [ "$VWN_LANG" = en ] && echo "Web Panel"                  || echo "Веб-панель")
     MSG[menu_sub]=$(         [ "$VWN_LANG" = en ] && echo "Rebuild subscription files" || echo "Пересоздать файлы подписки")
     MSG[menu_cf_update_ip]=$( [ "$VWN_LANG" = en ] && echo "Update Cloudflare IPs"     || echo "Обновить IP Cloudflare")
     MSG[menu_sep_exit]=$(     [ "$VWN_LANG" = en ] && echo "─── Exit ────────────────────────────" || echo "─────────────── Выход ────────────────────")
@@ -501,8 +486,8 @@ _initLang() {
     MSG[country_at]=$(  [ "$VWN_LANG" = en ] && echo " 6) AT — Austria"      || echo " 6) AT — Австрия")
     MSG[country_ca]=$(  [ "$VWN_LANG" = en ] && echo " 7) CA — Canada"       || echo " 7) CA — Канада")
     MSG[country_se]=$(  [ "$VWN_LANG" = en ] && echo " 8) SE — Sweden"       || echo " 8) SE — Швеция")
-    MSG[country_ch]=$(  [ "$VWN_LANG" = en ] && echo " 9) CH — Switzerland"  || echo " 9) CH — Швейцария")
-    MSG[country_fi]=$(  [ "$VWN_LANG" = en ] && echo "10) FI — Finland"      || echo "10) FI — Финляндия")
+    MSG[country_ch]=$(  [ "$VWN_LANG" = en ] && echo " 7) CH — Switzerland"  || echo " 7) CH — Швейцария")
+    MSG[country_fi]=$(  [ "$VWN_LANG" = en ] && echo " 8) FI — Finland"      || echo " 8) FI — Финляндия")
 
     # ── CONNECT HOST / CDN ────────────────────────────────────────
     MSG[connect_host_current]=$(  [ "$VWN_LANG" = en ] && echo "Current connection address" || echo "Текущий адрес подключения")
@@ -510,11 +495,6 @@ _initLang() {
     MSG[connect_host_prompt]=$(   [ "$VWN_LANG" = en ] && echo "Enter CDN domain (Enter = reset to main domain):" || echo "Введите CDN домен для подключения (Enter = сбросить на основной домен):")
     MSG[connect_host_reset]=$(    [ "$VWN_LANG" = en ] && echo "Connection address reset to main domain." || echo "Адрес подключения сброшен на основной домен.")
     MSG[connect_host_set]=$(      [ "$VWN_LANG" = en ] && echo "Connection address"         || echo "Адрес подключения")
-    MSG[connect_host_reset_ok]=$( [ "$VWN_LANG" = en ] && echo "Connection address reset to main domain." || echo "Адрес подключения сброшен на основной домен.")
-    MSG[connect_host_set_ok]=$(   [ "$VWN_LANG" = en ] && echo "Connection address"         || echo "Адрес подключения")
-    MSG[qr_html_title]=$(         [ "$VWN_LANG" = en ] && echo "[ HTML — all configs, QR, Clash ]" || echo "[ HTML — все конфиги, QR, Clash ]")
-    MSG[users_all_updated]=$(     [ "$VWN_LANG" = en ] && echo "New UUID — all users updated" || echo "Новый UUID — все пользователи обновлены")
-    MSG[reality_port_fallback]=$( [ "$VWN_LANG" = en ] && echo "$(msg invalid_port) — using 8443" || echo "$(msg invalid_port) — использую 8443")
 
     # ── USERS / QR ────────────────────────────────────────────────
     MSG[qr_uri_title]=$(          [ "$VWN_LANG" = en ] && echo "[ 1. URI link (v2rayNG / Hiddify / Nekoray) ]" || echo "[ 1. URI ссылка (v2rayNG / Hiddify / Nekoray) ]")
@@ -542,30 +522,6 @@ _initLang() {
     MSG[obfs4_installing]=$( [ "$VWN_LANG" = en ] && echo "Installing obfs4proxy..." || echo "Установка obfs4proxy...")
     MSG[obfs4_already]=$(   [ "$VWN_LANG" = en ] && echo "obfs4proxy already installed." || echo "obfs4proxy уже установлен.")
     MSG[tor_already]=$(     [ "$VWN_LANG" = en ] && echo "tor already installed." || echo "tor уже установлен.")
-
-    # ── PANEL ─────────────────────────────────────────────────────
-    MSG[panel_install]=$(         [ "$VWN_LANG" = en ] && echo "Install panel"                  || echo "Установить панель")
-    MSG[panel_menu_title]=$(      [ "$VWN_LANG" = en ] && echo "=== Web Panel ==="              || echo "=== Веб-панель ===")
-    MSG[panel_installing]=$(      [ "$VWN_LANG" = en ] && echo "Installing web panel..."        || echo "Установка веб-панели...")
-    MSG[panel_downloading]=$(     [ "$VWN_LANG" = en ] && echo "Downloading panel files..."     || echo "Загрузка файлов панели...")
-    MSG[panel_installed]=$(       [ "$VWN_LANG" = en ] && echo "Web panel installed!"           || echo "Веб-панель установлена!")
-    MSG[panel_not_installed]=$(   [ "$VWN_LANG" = en ] && echo "Panel not installed."           || echo "Панель не установлена.")
-    MSG[panel_start_fail]=$(      [ "$VWN_LANG" = en ] && echo "Panel failed to start!"         || echo "Панель не запустилась!")
-    MSG[panel_nginx_setup]=$(     [ "$VWN_LANG" = en ] && echo "Adding nginx location..."       || echo "Добавление nginx location...")
-    MSG[panel_nginx_later]=$(     [ "$VWN_LANG" = en ] && echo "Nginx not found — add location manually later." || echo "Nginx не найден — добавьте location вручную позже.")
-    MSG[panel_url_later]=$(       [ "$VWN_LANG" = en ] && echo "Install nginx to get panel URL." || echo "Установите nginx для получения URL панели.")
-    MSG[panel_open]=$(            [ "$VWN_LANG" = en ] && echo "Show panel URL"                 || echo "Показать URL панели")
-    MSG[panel_change_pass]=$(     [ "$VWN_LANG" = en ] && echo "Change password"                || echo "Сменить пароль")
-    MSG[panel_restart]=$(         [ "$VWN_LANG" = en ] && echo "Restart panel"                  || echo "Перезапустить панель")
-    MSG[panel_view_log]=$(        [ "$VWN_LANG" = en ] && echo "View panel log"                 || echo "Логи панели")
-    MSG[panel_reinstall]=$(       [ "$VWN_LANG" = en ] && echo "Reinstall panel"                || echo "Переустановить панель")
-    MSG[panel_remove]=$(          [ "$VWN_LANG" = en ] && echo "Remove panel"                   || echo "Удалить панель")
-    MSG[panel_remove_confirm]=$(  [ "$VWN_LANG" = en ] && echo "Remove web panel?"              || echo "Удалить веб-панель?")
-    MSG[panel_enter_password]=$(  [ "$VWN_LANG" = en ] && echo "Panel password (min 8 chars)"   || echo "Пароль панели (мин. 8 символов)")
-    MSG[panel_confirm_password]=$( [ "$VWN_LANG" = en ] && echo "Confirm password"              || echo "Подтвердите пароль")
-    MSG[panel_pass_short]=$(      [ "$VWN_LANG" = en ] && echo "Password too short (min 8)."    || echo "Пароль слишком короткий (мин. 8).")
-    MSG[panel_pass_mismatch]=$(   [ "$VWN_LANG" = en ] && echo "Passwords do not match."        || echo "Пароли не совпадают.")
-    MSG[panel_pass_changed]=$(    [ "$VWN_LANG" = en ] && echo "Password changed."              || echo "Пароль изменён.")
     # ── BACKUP ────────────────────────────────────────────────────
     MSG[backup_title]=$(          [ "$VWN_LANG" = en ] && echo "=== Backup & Restore ===" || echo "=== Бэкап и восстановление ===")
     MSG[backup_dir]=$(            [ "$VWN_LANG" = en ] && echo "Backup directory"   || echo "Директория бэкапов")
