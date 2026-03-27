@@ -99,6 +99,17 @@ download_modules() {
         fi
         chmod 600 "${VWN_LIB}/${module}.sh"
     done
+    
+    # Скачиваем xray_web_edit.py для веб-редактирования Xray
+    echo -n "  $(msg loading) xray_web_edit.py... "
+    if curl -fsSL --connect-timeout 15 \
+        "${GITHUB_RAW}/modules/xray_web_edit.py" \
+        -o "${VWN_LIB}/xray_web_edit.py" 2>/dev/null; then
+        echo "${green}OK${reset}"
+    else
+        echo "${red}$(msg error)${reset}"
+    fi
+    chmod 700 "${VWN_LIB}/xray_web_edit.py"
 }
 
 install_vwn_binary() {

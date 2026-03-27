@@ -42,8 +42,8 @@ for module in $MODULES; do
     fi
 done
 
-# Обновляем web_panel.py и panel.html
-for fname in web_panel.py panel.html; do
+# Обновляем web_panel.py, panel.html и xray_web_edit.py
+for fname in web_panel.py panel.html xray_web_edit.py; do
     printf "  Updating %-12s ... " "$fname"
     tmpfile=$(mktemp)
     if curl -fsSL --connect-timeout 15 \

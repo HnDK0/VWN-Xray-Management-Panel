@@ -228,6 +228,18 @@ select.inp{cursor:pointer}
             <button class="btn-sm" data-action="start_all">▶ Start All</button>
             <button class="btn-sm" id="btn-refresh-dashboard">↻ Refresh</button>
           </div>
+          <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn-sm" data-action="enable_xray">✅ Enable Xray</button>
+            <button class="btn-sm" data-action="disable_xray">❌ Disable Xray</button>
+            <button class="btn-sm" data-action="enable_nginx">✅ Enable Nginx</button>
+            <button class="btn-sm" data-action="disable_nginx">❌ Disable Nginx</button>
+            <button class="btn-sm" data-action="enable_warp">✅ Enable WARP</button>
+            <button class="btn-sm" data-action="disable_warp">❌ Disable WARP</button>
+            <button class="btn-sm" data-action="enable_psiphon">✅ Enable Psiphon</button>
+            <button class="btn-sm" data-action="disable_psiphon">❌ Disable Psiphon</button>
+            <button class="btn-sm" data-action="enable_tor">✅ Enable Tor</button>
+            <button class="btn-sm" data-action="disable_tor">❌ Disable Tor</button>
+          </div>
           </div>
           <div class="card">
             <div class="card-title">Quick Actions</div>
@@ -467,11 +479,10 @@ select.inp{cursor:pointer}
             <button class="country-btn" data-action="tor_country_auto">🌐 Auto</button>
           </div>
           <div class="card-title">Tor Bridges</div>
-          <p class="section-desc">Use bridges to bypass censorship. obfs4 is recommended.</p>
+          <p class="section-desc">Use bridges to bypass censorship. Get bridges from <a href="https://bridges.torproject.org/" target="_blank" style="color:var(--accent)">bridges.torproject.org</a> and paste them below.</p>
+          <p style="color:var(--text2);font-size:11px;margin-bottom:12px">Example format: <code style="color:var(--cyan)">obfs4 1.2.3.4:443 FINGERPRINT cert=abc iat-mode=0</code></p>
           <div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn-sm" data-action="tor_bridges_obfs4">🔗 obfs4</button>
-            <button class="btn-sm" data-action="tor_bridges_snowflake">❄️ Snowflake</button>
-            <button class="btn-sm" data-action="tor_bridges_meek">🌐 Meek</button>
+            <button class="btn-sm" id="btn-add-bridges">🔗 Add Bridges</button>
             <button class="btn-sm danger" data-action="tor_bridges_remove">🗑 Remove Bridges</button>
           </div>
           <div class="card-title">Tor Domains</div>
@@ -812,9 +823,8 @@ function navigateTo(page){
   if(page==='backup')loadBackups();
   if(page==='xray')loadXrayConfig();
   if(page==='reality')loadRealityConfig();
-  if(page==='security')loadSecurityStatus();
+  if(page==='security'){loadSecurityStatus();ufwTimer=setInterval(()=>{if(currentPage==='security')loadUFWStatus();},10000);}
 }
-
 // SSE
 function initSSE(){
   if(sseSource)sseSource.close();
@@ -846,8 +856,10 @@ function renderDashboard(d){
   document.getElementById('stat-domain-lbl').textContent=d.domain||'';
   document.getElementById('server-ip-top').textContent=d.server_ip;
   const svcs=[['xray','Xray WS'],['xray_reality','Xray Reality'],['nginx','Nginx'],['warp','WARP'],['psiphon','Psiphon'],['tor','Tor'],['fail2ban','Fail2Ban']];
-  const restartKey={'xray':'restart_xray','xray_reality':'restart_xray_reality','nginx':'restart_nginx','warp':'restart_warp','psiphon':'restart_psiphon','tor':'restart_tor','fail2ban':'restart_fail2ban'};
-  document.getElementById('svc-list').innerHTML=svcs.map(([k,label])=>{const on=d.services[k];return`<div class="svc-row"><span class="svc-name">${label}</span><div class="svc-right"><span class="badge ${on?'on':'off'}">${on?'● RUNNING':'● STOPPED'}</span>${restartKey[k]?`<button class="btn-sm" data-action="${restartKey[k]}" data-label="${label}">Restart</button>`:''}</div></div>`;}).join('');
+  document.getElementById('svc-list').innerHTML=svcs.map(([k,label])=>{
+    const on=d.services[k];
+    return`<div class="svc-row"><span class="svc-name">${label}</span><div class="svc-right"><span class="badge ${on?'on':'off'}">${on?'● RUNNING':'● STOPPED'}</span><button class="btn-sm" data-action="stop_${k}" data-label="${label}">⏹</button><button class="btn-sm" data-action="start_${k}" data-label="${label}">▶</button><button class="btn-sm" data-action="restart_${k}" data-label="${label}">🔄</button></div></div>`;
+  }).join('');
 }
 
 // Services
@@ -1036,18 +1048,9 @@ async function loadXrayConfig(){
     document.getElementById('xray-port').value=port;
     document.getElementById('xray-path').value=path;
     document.getElementById('xray-domain').value=host;
-    // Читаем connect_host из vwn.conf для CDN
-    const confR=await api('POST','./api/cmd',{action:'vwn_conf_get'});
-    let cdnHost=host;
-    if(confR&&confR.ok){
-      const lines=confR.output.split('\n');
-      for(const line of lines){
-        if(line.startsWith('CONNECT_HOST=')){
-          cdnHost=line.split('=')[1]||host;
-          break;
-        }
-      }
-    }
+    // Читаем CDN host из файла connect_host
+    const cdnR=await api('POST','./api/cmd',{action:'connect_host_get'});
+    const cdnHost=(cdnR&&cdnR.ok&&cdnR.output.trim())?cdnR.output.trim():host;
     document.getElementById('xray-cdn').value=cdnHost;
   }catch(e){}
   loadXrayUsers();
@@ -1115,13 +1118,14 @@ async function loadUFWStatus(){
 }
 
 // Auto-refresh timers
-let warpTimer=null, relayTimer=null, psiphonTimer=null, torTimer=null;
+let warpTimer=null, relayTimer=null, psiphonTimer=null, torTimer=null, ufwTimer=null;
 
 function clearServiceTimers(){
   if(warpTimer){clearInterval(warpTimer);warpTimer=null;}
   if(relayTimer){clearInterval(relayTimer);relayTimer=null;}
   if(psiphonTimer){clearInterval(psiphonTimer);psiphonTimer=null;}
   if(torTimer){clearInterval(torTimer);torTimer=null;}
+  if(ufwTimer){clearInterval(ufwTimer);ufwTimer=null;}
 }
 
 // WARP Status
@@ -1232,6 +1236,19 @@ function initEventHandlers(){
   
   // Xray
   document.getElementById('btn-load-xray').addEventListener('click',loadXrayConfig);
+  
+  // Tor bridges
+  document.getElementById('btn-add-bridges').addEventListener('click',()=>{
+    const instruction='Paste bridge lines from https://bridges.torproject.org/\nOne bridge per line.\nExample:\nobfs4 1.2.3.4:443 FINGERPRINT cert=abc iat-mode=0';
+    showInputModal('Add Tor Bridges',instruction,'obfs4 1.2.3.4:443 ...',async(val)=>{
+      const bridges=val.split('\n').filter(b=>b.trim()).join('\n');
+      if(!bridges){toast('No bridges entered','err');return;}
+      toast('Adding bridges...');
+      const r=await api('POST','./api/cmd',{action:'tor_bridges_add',value:bridges});
+      if(r&&r.ok){toast('Bridges added!','ok');loadTorStatus();}
+      else toast((r&&r.output)||'Failed','err');
+    });
+  });
   
   // Xray change buttons
   document.querySelectorAll('[data-action="change-xray"]').forEach(btn=>{

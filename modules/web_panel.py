@@ -274,7 +274,7 @@ COMMANDS: dict = {
     "restart_tor":        (["systemctl", "restart", "tor"], "write"),
     "restart_fail2ban":   (["systemctl", "restart", "fail2ban"], "write"),
 
-    # Управление сервисами — stop
+    # Управление сервисами — stop (имена сервисов для dashboard)
     "stop_xray":          (["systemctl", "stop", "xray"], "write"),
     "stop_xray_reality":  (["systemctl", "stop", "xray-reality"], "write"),
     "stop_nginx":         (["systemctl", "stop", "nginx"], "write"),
@@ -386,28 +386,33 @@ COMMANDS: dict = {
     "start_all":          (["bash", "-c", 'systemctl start xray xray-reality nginx warp-svc psiphon tor 2>/dev/null; sleep 2; warp-cli connect 2>/dev/null || true; echo "All services started"'], "write"),
 
     # ── WARP watchdog ────────────────────────────────────────────
+    "warp_install":       (["bash", "-c", 'source /usr/local/lib/vwn/core.sh 2>/dev/null; source /usr/local/lib/vwn/lang.sh 2>/dev/null; source /usr/local/lib/vwn/warp.sh 2>/dev/null; installWarp'], "admin"),
     "warp_watchdog_setup":(["bash", "-c", 'source /usr/local/lib/vwn/core.sh 2>/dev/null; source /usr/local/lib/vwn/lang.sh 2>/dev/null; source /usr/local/lib/vwn/warp.sh 2>/dev/null; setupWarpWatchdog'], "write"),
+    "warp_watchdog_status": (["bash", "-c", 'systemctl is-active warp-watchdog 2>/dev/null || echo inactive'], "read"),
+    "warp_mode_status":   (["bash", "-c", 'source /usr/local/lib/vwn/core.sh 2>/dev/null; source /usr/local/lib/vwn/lang.sh 2>/dev/null; source /usr/local/lib/vwn/warp.sh 2>/dev/null; getWarpMode 2>/dev/null || echo "OFF"'], "read"),
 
-    # ── Xray change with value ──────────────────────────────────
-    "xray_set_port":      ("/usr/local/lib/vwn/xray.sh set_port", "write"),
-    "xray_set_path":      ("/usr/local/lib/vwn/xray.sh set_path", "write"),
-    "xray_set_domain":    ("/usr/local/lib/vwn/xray.sh set_domain", "write"),
-    "xray_set_cdn":       ("/usr/local/lib/vwn/xray.sh set_cdn", "write"),
-    "xray_set_uuid":      ("/usr/local/lib/vwn/xray.sh set_uuid", "write"),
-
-    # VLESS config (read)
+    # ── Xray config read ────────────────────────────────────────
     "xray_config_get":    (f"cat {XRAY_CONFIG} 2>/dev/null || echo '{{}}'", "read"),
     "vwn_conf_get":       (f"cat {VWN_CONF} 2>/dev/null || echo ''", "read"),
-    "xray_change_port":   ("/usr/local/lib/vwn/xray.sh change_port", "write"),
-    "xray_change_path":   ("/usr/local/lib/vwn/xray.sh change_path", "write"),
-    "xray_change_domain": ("/usr/local/lib/vwn/xray.sh change_domain", "write"),
-    "xray_change_uuid":   ("/usr/local/lib/vwn/xray.sh change_uuid", "write"),
-    "xray_change_cdn":    ("/usr/local/lib/vwn/xray.sh change_cdn", "write"),
+    "connect_host_get":   ("cat /usr/local/etc/xray/connect_host 2>/dev/null || echo ''", "read"),
+
+    # ── Xray change with value (веб-версии через python3) ──────
+    "xray_change_port":   (["bash", "-c", "read val; python3 /usr/local/lib/vwn/xray_web_edit.py port \"$val\" 2>&1 && systemctl restart xray 2>/dev/null || true"], "write"),
+    "xray_change_path":   (["bash", "-c", "read val; python3 /usr/local/lib/vwn/xray_web_edit.py path \"$val\" 2>&1 && systemctl restart xray 2>/dev/null || true"], "write"),
+    "xray_change_domain": (["bash", "-c", "read val; python3 /usr/local/lib/vwn/xray_web_edit.py domain \"$val\" 2>&1 && systemctl restart xray nginx 2>/dev/null || true"], "write"),
+    "xray_change_cdn":    (["bash", "-c", "read val; echo \"$val\" > /usr/local/etc/xray/connect_host; echo 'CDN host set to' \"$val\""], "write"),
+    "xray_change_uuid":   (["bash", "-c", "python3 /usr/local/lib/vwn/xray_web_edit.py uuid 2>&1 && systemctl restart xray 2>/dev/null || true"], "write"),
+
+    # ── Tor мосты (веб-версия) ─────────────────────────────────
+    "tor_bridges_add":    (["bash", "-c", "cat > /tmp/vwn_bridges.txt; source /usr/local/lib/vwn/core.sh 2>/dev/null; installObfs4 2>/dev/null; TOR_CONFIG=/etc/tor/torrc; tmpfile=$(mktemp /root/.vwn-torrc-XXXXXX); chmod 600 \"$tmpfile\"; grep -v '^UseBridges\\|^ClientTransportPlugin\\|^Bridge ' \"$TOR_CONFIG\" > \"$tmpfile\"; echo 'UseBridges 1' >> \"$tmpfile\"; obfs4_bin=$(command -v obfs4proxy || command -v lyrebird || echo obfs4proxy); echo \"ClientTransportPlugin obfs4 exec ${obfs4_bin}\" >> \"$tmpfile\"; cat /tmp/vwn_bridges.txt | while read -r line; do [ -n \"$line\" ] && echo \"Bridge $line\" >> \"$tmpfile\"; done; mv \"$tmpfile\" \"$TOR_CONFIG\"; systemctl restart tor 2>/dev/null; echo 'Bridges added and Tor restarted'"], "write"),
 
     # Reality (read)
     "reality_config_get": (f"cat {REALITY_CONF} 2>/dev/null || echo '{{}}'", "read"),
 
     # ── Relay modes ──────────────────────────────────────────────
+    "relay_install":      (["bash", "-c", 'source /usr/local/lib/vwn/core.sh 2>/dev/null; source /usr/local/lib/vwn/lang.sh 2>/dev/null; source /usr/local/lib/vwn/relay.sh 2>/dev/null; installRelay'], "admin"),
+    "relay_restart":      (["systemctl", "restart", "xray"], "write"),
+    "relay_remove":       (["bash", "-c", 'source /usr/local/lib/vwn/core.sh 2>/dev/null; source /usr/local/lib/vwn/lang.sh 2>/dev/null; source /usr/local/lib/vwn/relay.sh 2>/dev/null; echo "y" | removeRelay'], "admin"),
     "relay_mode_global":  (["bash", "-c", 'source /usr/local/lib/vwn/core.sh 2>/dev/null; source /usr/local/lib/vwn/lang.sh 2>/dev/null; source /usr/local/lib/vwn/relay.sh 2>/dev/null; toggleRelayGlobal'], "write"),
     "relay_mode_split":   (["bash", "-c", 'source /usr/local/lib/vwn/core.sh 2>/dev/null; source /usr/local/lib/vwn/lang.sh 2>/dev/null; source /usr/local/lib/vwn/relay.sh 2>/dev/null; applyRelayDomains'], "write"),
     "relay_mode_off":     (["bash", "-c", 'source /usr/local/lib/vwn/core.sh 2>/dev/null; source /usr/local/lib/vwn/lang.sh 2>/dev/null; source /usr/local/lib/vwn/relay.sh 2>/dev/null; removeRelayFromConfigs'], "write"),
