@@ -49,12 +49,6 @@ events {
 }
 
 http {
-    # Нормализация Connection для WS/обычных запросов
-    map $http_upgrade $connection_upgrade {
-        default upgrade;
-        '' close;
-    }
-
     include /etc/nginx/mime.types;
     default_type application/octet-stream;
     sendfile on;
@@ -92,8 +86,6 @@ server {
 }
 DEFAULTCONF
 
-    # Основной конфиг без http2 — WS работает только на HTTP/1.1,
-    # http2 создаёт проблемы с upgrade на мобильных клиентах
     cat > "$nginxPath" << EOF
 server {
     listen 443 ssl;
@@ -106,28 +98,20 @@ server {
     ssl_session_cache   shared:SSL:10m;
     ssl_session_timeout 10m;
 
-    # Отключаем буферизацию глобально для этого сервера
-    proxy_buffering off;
-    proxy_cache off;
-    proxy_buffer_size 4k;
-
     location $wsPath {
-    if (\$http_upgrade != "websocket") {
-        rewrite ^ / break;
-    }
-        proxy_pass             http://127.0.0.1:${xrayPort};
-        proxy_http_version     1.1;
+        proxy_pass http://127.0.0.1:${xrayPort};
+        proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header       Connection \$connection_upgrade;
-        proxy_set_header       Host       \$host;
-        proxy_buffering        off;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_connect_timeout 10s;
         proxy_request_buffering off;
-        proxy_read_timeout     604800s;
-        proxy_send_timeout     604800s;
-        proxy_connect_timeout 5s;
         proxy_socket_keepalive on;
-        access_log             off;
-        error_log              /dev/null crit;
     }
 
     location ~ ^/sub/[A-Za-z0-9_-]+_[A-Za-z0-9]+\.html$ {

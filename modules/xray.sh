@@ -390,14 +390,32 @@ modifyProxyPassUrl() {
     if ! _validateUrl "$newUrl" &>/dev/null; then
         echo "${red}$(msg invalid) URL. $(msg enter_proxy_url)${reset}"; return 1
     fi
+
+    # Вычисляем новый host из URL
+    local newHost
+    newHost=$(echo "$newUrl" | sed 's|https://||;s|http://||;s|/.*||')
+
+    # Меняем proxy_pass
     local oldUrl
     oldUrl=$(grep "proxy_pass" "$nginxPath" | grep -v "127.0.0.1" | awk '{print $2}' | tr -d ';' | head -1)
     local oldUrlEscaped newUrlEscaped
     oldUrlEscaped=$(printf '%s\n' "$oldUrl" | sed 's|[[\.*^$()+?{|]|\\&|g')
     newUrlEscaped=$(printf '%s\n' "$newUrl" | sed 's|[[\.*^$()+?{|]|\\&|g')
     sed -i "s|${oldUrlEscaped}|${newUrlEscaped}|g" "$nginxPath"
-    systemctl reload nginx
-    echo "${green}$(msg proxy_updated)${reset}"
+
+    # Меняем proxy_set_header Host — старый host берём из текущего конфига
+    local oldHost
+    oldHost=$(grep "proxy_set_header Host" "$nginxPath" | grep -v '\$host' | awk '{print $3}' | tr -d ';' | head -1)
+    if [ -n "$oldHost" ] && [ -n "$newHost" ]; then
+        local oldHostEscaped newHostEscaped
+        oldHostEscaped=$(printf '%s\n' "$oldHost" | sed 's|[\[\].*^$()+?{|]|\\&|g')
+        newHostEscaped=$(printf '%s\n' "$newHost" | sed 's|[\[\].*^$()+?{|]|\\&|g')
+        # sed с \s* чтобы не зависеть от количества пробелов/табов перед директивой
+        sed -i "s|\(proxy_set_header Host\)[[:space:]]\+${oldHostEscaped};|\1 ${newHostEscaped};|g" "$nginxPath"
+    fi
+
+    nginx -t && systemctl reload nginx || { echo "${red}$(msg nginx_syntax_err)${reset}"; return 1; }
+    echo "${green}$(msg proxy_updated): $newUrl (Host: $newHost)${reset}"
 }
 
 modifyDomain() {
