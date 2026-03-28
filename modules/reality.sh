@@ -22,13 +22,30 @@ writeRealityConfig() {
     local keys privKey pubKey shortId new_uuid
     local USERS_FILE="${USERS_FILE:-/usr/local/etc/xray/users.conf}"
 
-    keys=$(/usr/local/bin/xray x25519 2>/dev/null) || { echo "${red}$(msg reality_keys_fail)${reset}"; return 1; }
+    # Находим xray — может быть в нескольких местах
+    local xray_bin
+    for _b in /usr/local/bin/xray /usr/bin/xray; do
+        [ -x "$_b" ] && xray_bin="$_b" && break
+    done
+    if [ -z "$xray_bin" ]; then
+        echo "${red}$(msg reality_keys_fail): xray binary not found${reset}"; return 1
+    fi
+
+    keys=$("$xray_bin" x25519 2>&1)
+    if [ $? -ne 0 ] || [ -z "$keys" ]; then
+        echo "${red}$(msg reality_keys_fail): $keys${reset}"; return 1
+    fi
+
+    # Формат 1 (xray < 1.8): "Private key: ..." / "Public key: ..."
     privKey=$(echo "$keys" | tr -d '\r' | awk '/^Private key:/{print $3}')
-    pubKey=$(echo "$keys"  | tr -d '\r' | awk '/^Public key:/{print $3}')
-    # Новый формат xray x25519
+    pubKey=$(echo  "$keys" | tr -d '\r' | awk '/^Public key:/{print $3}')
+    # Формат 2 (xray >= 1.8): "PrivateKey: ..." / "PublicKey: ..."
     [ -z "$privKey" ] && privKey=$(echo "$keys" | tr -d '\r' | awk '/^PrivateKey:/{print $2}')
-    [ -z "$pubKey"  ] && pubKey=$(echo "$keys"  | tr -d '\r' | awk '/^Password:/{print $2}')
-    [ -z "$privKey" ] || [ -z "$pubKey" ] && { echo "${red}$(msg reality_keys_err)${reset}"; return 1; }
+    [ -z "$pubKey"  ] && pubKey=$(echo  "$keys" | tr -d '\r' | awk '/^PublicKey:/{print $2}')
+
+    if [ -z "$privKey" ] || [ -z "$pubKey" ]; then
+        echo "${red}$(msg reality_keys_err). xray output: $keys${reset}"; return 1
+    fi
 
     shortId=$(cat /proc/sys/kernel/random/uuid | tr -d '-' | cut -c1-16)
     # Если users.conf уже есть — берём UUID первого пользователя
