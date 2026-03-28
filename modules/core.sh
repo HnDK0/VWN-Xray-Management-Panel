@@ -213,7 +213,9 @@ setupSwap() {
 }
 
 generateRandomPath() {
-    echo "/$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 12)"
+    local hex
+    hex=$(openssl rand -hex 16)
+    echo "/v2/api/${hex}"
 }
 
 # ============================================================
