@@ -42,6 +42,8 @@ writeRealityConfig() {
     # Формат 2 (xray >= 1.8): "PrivateKey: ..." / "PublicKey: ..."
     [ -z "$privKey" ] && privKey=$(echo "$keys" | tr -d '\r' | awk '/^PrivateKey:/{print $2}')
     [ -z "$pubKey"  ] && pubKey=$(echo  "$keys" | tr -d '\r' | awk '/^PublicKey:/{print $2}')
+    # Формат 3 (xray >= 24.x): "Password (PublicKey): ..."
+    [ -z "$pubKey"  ] && pubKey=$(echo  "$keys" | tr -d '\r' | awk '/^Password \(PublicKey\):/{print $3}')
 
     if [ -z "$privKey" ] || [ -z "$pubKey" ]; then
         echo "${red}$(msg reality_keys_err). xray output: $keys${reset}"; return 1
