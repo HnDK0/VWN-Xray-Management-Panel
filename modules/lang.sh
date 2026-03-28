@@ -125,7 +125,6 @@ _initLang() {
     MSG[menu_f2b]=$(          [ "$VWN_LANG" = en ] && echo "Enable Fail2Ban"           || echo "Включить Fail2Ban")
     MSG[menu_jail]=$(         [ "$VWN_LANG" = en ] && echo "Enable Web-Jail"           || echo "Включить Web-Jail")
     MSG[menu_ssh]=$(          [ "$VWN_LANG" = en ] && echo "Change SSH port"           || echo "Сменить SSH порт")
-    MSG[menu_watchdog]=$(     [ "$VWN_LANG" = en ] && echo "Install WARP Watchdog"     || echo "Установить WARP Watchdog")
     MSG[menu_sep_logs]=$(     [ "$VWN_LANG" = en ] && echo "─── Logs ────────────────────────────" || echo "─────────────── Логи ─────────────────────")
     MSG[menu_xray_acc]=$(     [ "$VWN_LANG" = en ] && echo "Xray logs (access)"        || echo "Логи Xray (access)")
     MSG[menu_xray_err]=$(     [ "$VWN_LANG" = en ] && echo "Xray logs (error)"         || echo "Логи Xray (error)")
@@ -227,7 +226,6 @@ _initLang() {
     MSG[warp_domain_del]=$(   [ "$VWN_LANG" = en ] && echo "Enter number to delete: "  || echo "Введите номер для удаления: ")
     MSG[warp_domain_removed]=$( [ "$VWN_LANG" = en ] && echo "Domain removed."         || echo "Домен удален.")
     MSG[warp_list_empty]=$(   [ "$VWN_LANG" = en ] && echo "List is empty."            || echo "Список пуст.")
-    MSG[warp_watchdog_ok]=$(  [ "$VWN_LANG" = en ] && echo "WARP watchdog installed."  || echo "WARP watchdog установлен.")
     MSG[warp_real_ip]=$(      [ "$VWN_LANG" = en ] && echo "Server real IP"            || echo "Реальный IP сервера")
     MSG[warp_ip]=$(           [ "$VWN_LANG" = en ] && echo "IP via WARP SOCKS"         || echo "IP через WARP SOCKS")
 

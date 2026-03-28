@@ -13,8 +13,6 @@ _BACKUP_PATHS=(
     /root/.cloudflare_api
     /etc/cron.d/acme-renew
     /etc/cron.d/clear-logs
-    /etc/cron.d/warp-watchdog
-    /usr/local/bin/warp-watchdog.sh
     /usr/local/bin/clear-logs.sh
     /etc/sysctl.d/99-xray.conf
     /etc/fail2ban/jail.local

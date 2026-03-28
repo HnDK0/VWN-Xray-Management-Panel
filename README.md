@@ -94,7 +94,6 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
 - ✅ **CPU Guard** — prioritises xray/nginx over background processes, prevents host throttling
 - ✅ **Backup & Restore** — manual backup/restore of all configs
 - ✅ **Diagnostics** — full system check with per-component breakdown
-- ✅ **WARP Watchdog** — auto-reconnect WARP on failure (lockfile, double-check, hard restart fallback)
 - ✅ **Fail2Ban + Web-Jail** — brute-force and scanner protection
 - ✅ **BBR** — TCP acceleration
 - ✅ **Anti-Ping** — ICMP disabled
@@ -174,31 +173,30 @@ vwn update           # Update modules (no config changes)
   10. Remove domain from WARP
   11. Edit WARP list (Nano)
   12. Check IP (Real vs WARP)
-  13. Install WARP Watchdog
 
   ── Security ───────────────────────────────────────────
-  14. Enable BBR
-  15. Enable Fail2Ban
-  16. Enable Web-Jail
-  17. Change SSH port
-  18. Manage UFW
-  19. Toggle IPv6
-  20. CPU Guard (priority)
+  13. Enable BBR
+  14. Enable Fail2Ban
+  15. Enable Web-Jail
+  16. Change SSH port
+  17. Manage UFW
+  18. Toggle IPv6
+  19. CPU Guard (priority)
 
   ── Logs ───────────────────────────────────────────────
-  21. Xray logs (access)
-  22. Xray logs (error)
-  23. Nginx logs (access)
-  24. Nginx logs (error)
-  25. Clear all logs
+  20. Xray logs (access)
+  21. Xray logs (error)
+  22. Nginx logs (access)
+  23. Nginx logs (error)
+  24. Clear all logs
 
   ── Services ───────────────────────────────────────────
-  26. Restart all services
-  27. Update Xray-core
-  28. Diagnostics
-  29. Backup & Restore
-  30. Change language
-  31. Full removal
+  25. Restart all services
+  26. Update Xray-core
+  27. Diagnostics
+  28. Backup & Restore
+  29. Change language
+  30. Full removal
 
   ── Exit ───────────────────────────────────────────────
   0.  Exit
@@ -309,8 +307,6 @@ Exit country via `ExitNodes`. Bridge support: obfs4, snowflake, meek-azure.
 
 **Global** — all traffic via WARP. **OFF** — removed from routing.
 
-**WARP Watchdog (item 13)** — cron every 5 minutes. Checks port 40000, double-verifies before action, soft reconnect first, hard restart only as last resort. Prevents parallel runs via lockfile.
-
 ## SSL Certificates
 
 **Method 1 — Cloudflare DNS API** (recommended): port 80 not needed.  
@@ -356,7 +352,6 @@ Output: `✓` / `✗` per check, summary of issues at the end.
 ├── core.sh       # Variables, utilities, status, vwn_conf_*
 ├── xray.sh       # Xray WS+TLS config
 ├── nginx.sh      # Nginx, CDN, SSL, subscriptions
-├── warp.sh       # WARP management + watchdog
 ├── reality.sh    # VLESS+Reality
 ├── relay.sh      # External outbound
 ├── psiphon.sh    # Psiphon tunnel
@@ -536,7 +531,6 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
 - ✅ **CPU Guard** — приоритет xray/nginx над фоновыми процессами, защита от ограничений хостера
 - ✅ **Бэкап и восстановление** — ручной бэкап/восстановление всех конфигов
 - ✅ **Диагностика** — полная проверка системы с детализацией по компонентам
-- ✅ **WARP Watchdog** — автовосстановление WARP при обрыве (lockfile, двойная проверка, hard restart в крайнем случае)
 - ✅ **Fail2Ban + Web-Jail** — защита от брутфорса и сканеров
 - ✅ **BBR** — ускорение TCP
 - ✅ **Anti-Ping** — отключение ICMP
@@ -616,31 +610,30 @@ vwn update           # Обновить модули (без изменения 
   10. Удалить домен из WARP
   11. Редактировать список WARP (Nano)
   12. Проверить IP (Real vs WARP)
-  13. Установить WARP Watchdog
 
   ── Безопасность ───────────────────────────────────────
-  14. Включить BBR
-  15. Включить Fail2Ban
-  16. Включить Web-Jail
-  17. Сменить SSH порт
-  18. Управление UFW
-  19. Вкл/Выкл IPv6
-  20. CPU Guard (приоритеты)
+  13. Включить BBR
+  14. Включить Fail2Ban
+  15. Включить Web-Jail
+  16. Сменить SSH порт
+  17. Управление UFW
+  18. Вкл/Выкл IPv6
+  19. CPU Guard (приоритеты)
 
   ── Логи ───────────────────────────────────────────────
-  21. Логи Xray (access)
-  22. Логи Xray (error)
-  23. Логи Nginx (access)
-  24. Логи Nginx (error)
-  25. Очистить все логи
+  20. Логи Xray (access)
+  21. Логи Xray (error)
+  22. Логи Nginx (access)
+  23. Логи Nginx (error)
+  24. Очистить все логи
 
   ── Сервисы ────────────────────────────────────────────
-  26. Перезапустить все сервисы
-  27. Обновить Xray-core
-  28. Диагностика
-  29. Бэкап и восстановление
-  30. Сменить язык / Change language
-  31. Полное удаление
+  25. Перезапустить все сервисы
+  26. Обновить Xray-core
+  27. Диагностика
+  28. Бэкап и восстановление
+  29. Сменить язык / Change language
+  30. Полное удаление
 
   ── Выход ──────────────────────────────────────────────
   0.  Выйти
@@ -751,8 +744,6 @@ vless://UUID@IP:8443?security=reality&sni=microsoft.com&fp=chrome&pbk=KEY&sid=SI
 
 **Global** — весь трафик через WARP. **OFF** — отключён от роутинга.
 
-**WARP Watchdog (пункт 13)** — cron каждые 5 минут. Проверяет порт 40000, двойная проверка перед действием, сначала мягкое переподключение, жёсткий рестарт только в крайнем случае. Защита от параллельных запусков через lockfile.
-
 ## SSL сертификаты
 
 **Метод 1 — Cloudflare DNS API** (рекомендуется): порт 80 не нужен.  
@@ -798,7 +789,6 @@ Nginx запускается до выпуска сертификата — relo
 ├── core.sh       # Переменные, утилиты, статусы, vwn_conf_*
 ├── xray.sh       # Xray WS+TLS конфиг
 ├── nginx.sh      # Nginx, CDN, SSL, подписки
-├── warp.sh       # WARP управление + watchdog
 ├── reality.sh    # VLESS+Reality
 ├── relay.sh      # Внешний outbound
 ├── psiphon.sh    # Psiphon туннель

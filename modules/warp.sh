@@ -1,6 +1,6 @@
 #!/bin/bash
 # =================================================================
-# warp.sh — Cloudflare WARP: установка, домены, watchdog
+# warp.sh — Cloudflare WARP: установка, домены
 # =================================================================
 
 installWarp() {
@@ -171,87 +171,3 @@ deleteDomainFromWarpProxy() {
     fi
 }
 
-setupWarpWatchdog() {
-    cat > /usr/local/bin/warp-watchdog.sh << 'WDOG'
-#!/bin/bash
-CHECK_URL="https://www.cloudflare.com/cdn-cgi/trace/"
-PROXY="socks5://127.0.0.1:40000"
-MAX_LATENCY=8
-LOG_TAG="warp-watchdog"
-LOCKFILE="/tmp/warp-watchdog.lock"
-
-if [ -f "$LOCKFILE" ]; then
-    lock_pid=$(cat "$LOCKFILE" 2>/dev/null)
-    if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
-        exit 0
-    fi
-    rm -f "$LOCKFILE"
-fi
-echo $$ > "$LOCKFILE"
-trap 'rm -f "$LOCKFILE"' EXIT
-
-_wc() {
-    if warp-cli --help 2>&1 | grep -q "accept-tos"; then
-        warp-cli --accept-tos "$@"
-    else
-        warp-cli "$@"
-    fi
-}
-
-command -v warp-cli &>/dev/null || exit 0
-
-if ! systemctl is-active --quiet warp-svc 2>/dev/null; then
-    logger -t "$LOG_TAG" "warp-svc not running, starting..."
-    systemctl start warp-svc
-    sleep 5
-    _wc connect 2>/dev/null
-    exit 0
-fi
-
-if ! ss -tlnp 2>/dev/null | grep -q ':40000'; then
-    logger -t "$LOG_TAG" "port 40000 not listening, reconnecting..."
-    _wc disconnect 2>/dev/null
-    sleep 2
-    _wc connect 2>/dev/null
-    sleep 5
-fi
-
-result=$(curl -s --connect-timeout "$MAX_LATENCY" -x "$PROXY" "$CHECK_URL" 2>/dev/null)
-if echo "$result" | grep -q "warp=on\|warp=plus"; then exit 0; fi
-
-logger -t "$LOG_TAG" "first check failed, retrying in 20s..."
-sleep 20
-
-result=$(curl -s --connect-timeout "$MAX_LATENCY" -x "$PROXY" "$CHECK_URL" 2>/dev/null)
-if echo "$result" | grep -q "warp=on\|warp=plus"; then
-    logger -t "$LOG_TAG" "WARP recovered on retry."
-    exit 0
-fi
-
-logger -t "$LOG_TAG" "WARP down — reconnecting (soft)..."
-_wc disconnect 2>/dev/null
-sleep 3
-_wc connect 2>/dev/null
-sleep 8
-
-result=$(curl -s --connect-timeout "$MAX_LATENCY" -x "$PROXY" "$CHECK_URL" 2>/dev/null)
-if echo "$result" | grep -q "warp=on\|warp=plus"; then
-    logger -t "$LOG_TAG" "WARP restored after soft reconnect."
-    exit 0
-fi
-
-logger -t "$LOG_TAG" "WARP still down — restarting warp-svc (hard)..."
-systemctl restart warp-svc
-sleep 10
-_wc connect 2>/dev/null
-WDOG
-
-    chmod +x /usr/local/bin/warp-watchdog.sh
-
-    cat > /etc/cron.d/warp-watchdog << 'EOF'
-# Проверка WARP каждые 5 минут
-*/5 * * * * root /usr/local/bin/warp-watchdog.sh
-EOF
-    chmod 644 /etc/cron.d/warp-watchdog
-    echo "${green}$(msg warp_watchdog_ok)${reset}"
-}

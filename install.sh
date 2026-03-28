@@ -437,7 +437,6 @@ _auto_install_ws() {
     echo -e "${cyan}[5/6] WARP domains + cron...${reset}"
     if ! $OPT_NO_WARP; then
         applyWarpDomains || true
-        setupWarpWatchdog
     fi
     setupLogrotate
     setupLogClearCron
