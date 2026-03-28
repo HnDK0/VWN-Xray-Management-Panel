@@ -112,6 +112,8 @@ server {
         proxy_connect_timeout 10s;
         proxy_request_buffering off;
         proxy_socket_keepalive on;
+        access_log             off;
+        error_log              /dev/null crit;
     }
 
     location ~ ^/sub/[A-Za-z0-9_-]+_[A-Za-z0-9]+\.html$ {
