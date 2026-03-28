@@ -49,6 +49,12 @@ events {
 }
 
 http {
+    # Нормализация Connection для WS/обычных запросов
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        '' close;
+    }
+
     include /etc/nginx/mime.types;
     default_type application/octet-stream;
     sendfile on;
@@ -106,13 +112,13 @@ server {
     proxy_buffer_size 4k;
 
     location $wsPath {
-    if ($http_upgrade != "websocket") {
+    if (\$http_upgrade != "websocket") {
         rewrite ^ / break;
     }
-        proxy_pass             http://127.0.0.1:${port};
+        proxy_pass             http://127.0.0.1:${xrayPort};
         proxy_http_version     1.1;
         proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header       Connection \$connection_upgrade;
         proxy_set_header       Host       \$host;
         proxy_buffering        off;
         proxy_request_buffering off;
