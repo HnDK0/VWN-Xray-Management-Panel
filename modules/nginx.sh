@@ -49,6 +49,12 @@ events {
 }
 
 http {
+    # Нормализация Connection для WS/обычных запросов
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        '' close;
+    }
+
     include /etc/nginx/mime.types;
     default_type application/octet-stream;
     sendfile on;
@@ -106,29 +112,22 @@ server {
     proxy_buffer_size 4k;
 
     location $wsPath {
-        proxy_pass http://127.0.0.1:$xrayPort;
-        proxy_http_version 1.1;
-
-        # Обязательные заголовки для WebSocket upgrade
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-
-        # Большие таймауты — мобильный может не слать данные долго
-        # (экран выключен, фон, слабый сигнал)
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-        proxy_connect_timeout 10s;
-
-        # Не буферизировать тело запроса — критично для WS
+    if ($http_upgrade != "websocket") {
+        rewrite ^ / break;
+    }
+        proxy_pass             http://127.0.0.1:${port};
+        proxy_http_version     1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header       Connection $connection_upgrade;
+        proxy_set_header       Host       \$host;
+        proxy_buffering        off;
         proxy_request_buffering off;
-
-        # TCP keepalive на уровне nginx к upstream
+        proxy_read_timeout     604800s;
+        proxy_send_timeout     604800s;
+        proxy_connect_timeout 5s;
         proxy_socket_keepalive on;
+        access_log             off;
+        error_log              /dev/null crit;
     }
 
     location ~ ^/sub/[A-Za-z0-9_-]+_[A-Za-z0-9]+\.html$ {
@@ -156,6 +155,14 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_ssl_server_name on;
         proxy_read_timeout 60s;
+
+        # Скрываем fingerprint-заголовки фейкового сайта
+        proxy_hide_header X-Powered-By;
+        proxy_hide_header Via;
+        proxy_hide_header X-Cache;
+        proxy_hide_header Content-Security-Policy;
+        proxy_hide_header X-Runtime;
+        proxy_hide_header Server;
     }
 
     access_log /var/log/nginx/access.log;
