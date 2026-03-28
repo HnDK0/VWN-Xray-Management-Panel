@@ -432,7 +432,11 @@ _auto_install_ws() {
     fi
 
     echo -e "${cyan}[4/6] SSL certificate ($OPT_CERT_METHOD)...${reset}"
+    set +e
     _auto_ssl "$OPT_DOMAIN"
+    _ssl_exit=$?
+    set -e
+    [ $_ssl_exit -ne 0 ] && echo -e "${yellow}SSL failed (exit $_ssl_exit) — skipping, run: vwn → SSL later${reset}"
 
     echo -e "${cyan}[5/6] WARP domains + cron...${reset}"
     if ! $OPT_NO_WARP; then
@@ -507,9 +511,13 @@ _run_auto() {
         _installNginxMainline 2>/dev/null || installPackage nginx
     fi
 
-    # WS установка
+    # WS установка — изолируем от set -e чтобы reality запустился в любом случае
     if ! $OPT_SKIP_WS; then
+        set +e
         _auto_install_ws
+        _ws_exit=$?
+        set -e
+        [ $_ws_exit -ne 0 ] && echo -e "${red}WS install failed (exit $_ws_exit), continuing to next steps...${reset}"
     else
         echo -e "${yellow}WS skipped (--skip-ws)${reset}"
         # Минимальный firewall
