@@ -55,7 +55,7 @@ yellow=$(_c setaf 3)$(_c bold)
 cyan=$(_c setaf 6)$(_c bold)
 reset=$(_c sgr0)
 
-MODULES="lang core xray nginx warp reality relay psiphon tor security logs backup users diag menu"
+MODULES="lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock menu"
 
 # ── Флаги режима ───────────────────────────────────────────────────
 UPDATE_ONLY=false
@@ -307,7 +307,7 @@ case "${1:-}" in
         bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh) --update
         exit 0 ;;
 esac
-for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag menu; do
+for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock menu; do
     [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh" || { echo "ERROR: module $module not found"; exit 1; }
 done
 VWN_CONF="/usr/local/etc/xray/vwn.conf"

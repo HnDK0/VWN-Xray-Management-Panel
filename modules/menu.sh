@@ -362,6 +362,8 @@ menu() {
         s_bbr_plain=$(_plain "$s_bbr")
         s_f2b_plain=$(_plain "$s_f2b")
         s_jail_plain=$(_plain "$s_jail")
+        s_privacy=$(getPrivacyStatus)
+        s_adblock=$(getAdblockStatus)
 
         echo -e "${cyan}================================================================${reset}"
         printf "   ${red}VWN — Xray Management Panel${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
@@ -374,7 +376,7 @@ menu() {
         echo -e "  ${cyan}── $(msg menu_sep_tun_short) ───────────────────────────────────────────${reset}"
         echo -e "  Relay: $s_relay,  Psiphon: $s_psiphon,  Tor: $s_tor"
         echo -e "  ${cyan}── $(msg menu_sep_sec_short) ────────────────────────────────────────────${reset}"
-        echo -e "  BBR: $s_bbr,  F2B: $s_f2b,  Jail: $s_jail,  IPv6: $(getIPv6Status),  CPU Guard: $(getCpuGuardStatus)"
+        echo -e "  BBR: $s_bbr,  F2B: $s_f2b,  Jail: $s_jail,  IPv6: $(getIPv6Status),  CPU Guard: $(getCpuGuardStatus),  Adblock: $s_adblock,  Privacy: $s_privacy"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
 
         echo -e "  ${green}1.${reset}  $(msg menu_install)"
@@ -400,19 +402,21 @@ menu() {
         echo -e "  ${green}17.${reset} $(msg menu_ufw)"
         echo -e "  ${green}18.${reset} $(msg menu_ipv6)"
         echo -e "  ${green}19.${reset} $(msg menu_cpuguard)"
+        echo -e "  ${green}20.${reset} $(msg menu_adblock)"
         echo -e "  $(msg menu_sep_logs)"
-        echo -e "  ${green}20.${reset} $(msg menu_xray_acc)"
-        echo -e "  ${green}21.${reset} $(msg menu_xray_err)"
-        echo -e "  ${green}22.${reset} $(msg menu_nginx_acc)"
-        echo -e "  ${green}23.${reset} $(msg menu_nginx_err)"
-        echo -e "  ${green}24.${reset} $(msg menu_clear_logs)"
+        echo -e "  ${green}21.${reset} $(msg menu_xray_acc)"
+        echo -e "  ${green}22.${reset} $(msg menu_xray_err)"
+        echo -e "  ${green}23.${reset} $(msg menu_nginx_acc)"
+        echo -e "  ${green}24.${reset} $(msg menu_nginx_err)"
+        echo -e "  ${green}25.${reset} $(msg menu_clear_logs)"
+        echo -e "  ${green}26.${reset} $(msg menu_privacy)"
         echo -e "  $(msg menu_sep_svc)"
-        echo -e "  ${green}25.${reset} $(msg menu_restart)"
-        echo -e "  ${green}26.${reset} $(msg menu_update_xray)"
-        echo -e "  ${green}27.${reset} $(msg menu_diag)"
-        echo -e "  ${green}28.${reset} $(msg menu_backup)"
-        echo -e "  ${green}29.${reset} $(msg menu_lang)"
-        echo -e "  ${green}30.${reset} $(msg menu_remove)"
+        echo -e "  ${green}27.${reset} $(msg menu_restart)"
+        echo -e "  ${green}28.${reset} $(msg menu_update_xray)"
+        echo -e "  ${green}29.${reset} $(msg menu_diag)"
+        echo -e "  ${green}30.${reset} $(msg menu_backup)"
+        echo -e "  ${green}31.${reset} $(msg menu_lang)"
+        echo -e "  ${green}32.${reset} $(msg menu_remove)"
         echo -e "  $(msg menu_sep_exit)"
         echo -e "  ${green}0.${reset}  $(msg menu_exit)"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
@@ -438,18 +442,20 @@ menu() {
             17) manageUFW ;;
             18) toggleIPv6 ;;
             19) setupCpuGuard ;;
-            20) tail -n 80 /var/log/xray/access.log 2>/dev/null || echo "$(msg no_logs)" ;;
-            21) tail -n 80 /var/log/xray/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
-            22) tail -n 80 /var/log/nginx/access.log 2>/dev/null || echo "$(msg no_logs)" ;;
-            23) tail -n 80 /var/log/nginx/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
-            24) clearLogs ;;
-            25) systemctl restart xray xray-reality nginx warp-svc psiphon tor 2>/dev/null || true
+            20) manageAdblock ;;
+            21) tail -n 80 /var/log/xray/access.log 2>/dev/null || echo "$(msg no_logs)" ;;
+            22) tail -n 80 /var/log/xray/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
+            23) tail -n 80 /var/log/nginx/access.log 2>/dev/null || echo "$(msg no_logs)" ;;
+            24) tail -n 80 /var/log/nginx/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
+            25) clearLogs ;;
+            26) managePrivacy ;;
+            27) systemctl restart xray xray-reality nginx warp-svc psiphon tor 2>/dev/null || true
                 echo "${green}$(msg all_services_restarted)${reset}" ;;
-            26) updateXrayCore ;;
-            27) manageDiag ;;
-            28) manageBackup ;;
-            29) selectLang; _initLang ;;
-            30) fullRemove ;;
+            28) updateXrayCore ;;
+            29) manageDiag ;;
+            30) manageBackup ;;
+            31) selectLang; _initLang ;;
+            32) fullRemove ;;
             0)  exit 0 ;;
             *)  echo -e "${red}$(msg invalid)${reset}"; sleep 1 ;;
         esac

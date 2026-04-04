@@ -35,6 +35,49 @@ selectLang() {
 }
 
 # Инициализация переводов
+
+# Privacy mode translations
+# Adblock translations
+_initAdblockLang() {
+    MSG[menu_adblock]=$(         [ "$VWN_LANG" = en ] && echo "Adblock (block ads)"                         || echo "Блокировка рекламы")
+    MSG[adblock_title]=$(        [ "$VWN_LANG" = en ] && echo "=== Adblock ==="                             || echo "=== Блокировка рекламы ===")
+    MSG[adblock_enable]=$(       [ "$VWN_LANG" = en ] && echo "Enable adblock"                              || echo "Включить блокировку рекламы")
+    MSG[adblock_disable]=$(      [ "$VWN_LANG" = en ] && echo "Disable adblock"                             || echo "Отключить блокировку рекламы")
+    MSG[adblock_status]=$(       [ "$VWN_LANG" = en ] && echo "Show adblock status"                         || echo "Показать статус блокировки")
+    MSG[adblock_enabling]=$(     [ "$VWN_LANG" = en ] && echo "Enabling adblock..."                         || echo "Включение блокировки рекламы...")
+    MSG[adblock_disabling]=$(    [ "$VWN_LANG" = en ] && echo "Disabling adblock..."                        || echo "Отключение блокировки рекламы...")
+    MSG[adblock_enabled]=$(      [ "$VWN_LANG" = en ] && echo "Adblock ENABLED."                            || echo "Блокировка рекламы ВКЛЮЧЕНА.")
+    MSG[adblock_disabled]=$(     [ "$VWN_LANG" = en ] && echo "Adblock disabled."                           || echo "Блокировка рекламы отключена.")
+    MSG[adblock_no_configs]=$(   [ "$VWN_LANG" = en ] && echo "No Xray configs found."                      || echo "Конфиги Xray не найдены.")
+    MSG[adblock_not_active]=$(   [ "$VWN_LANG" = en ] && echo "not active"                                  || echo "не активна")
+    MSG[adblock_disable_confirm]=$([ "$VWN_LANG" = en ] && echo "Disable adblock?"                          || echo "Отключить блокировку рекламы?")
+    MSG[adblock_status_title]=$( [ "$VWN_LANG" = en ] && echo "Adblock Status"                              || echo "Статус блокировки рекламы")
+    MSG[adblock_note]=$(         [ "$VWN_LANG" = en ] && echo "Blocks ads/trackers via geosite:category-ads-all (built into Xray)" || echo "Блокирует рекламу/трекеры через geosite:category-ads-all (встроено в Xray)")
+    MSG[adblock_covers]=$(       [ "$VWN_LANG" = en ] && echo "Covers"                                      || echo "Покрывает")
+}
+
+_initPrivacyLang() {
+    MSG[menu_privacy]=$(          [ "$VWN_LANG" = en ] && echo "Privacy mode (disable logging)"              || echo "Режим приватности (отключить логи)")
+    MSG[privacy_title]=$(         [ "$VWN_LANG" = en ] && echo "=== Privacy Mode ==="                        || echo "=== Режим приватности ===")
+    MSG[privacy_enable]=$(        [ "$VWN_LANG" = en ] && echo "Enable privacy mode"                         || echo "Включить режим приватности")
+    MSG[privacy_disable]=$(       [ "$VWN_LANG" = en ] && echo "Disable privacy mode"                        || echo "Отключить режим приватности")
+    MSG[privacy_shred_now]=$(     [ "$VWN_LANG" = en ] && echo "Shred existing logs now"                     || echo "Уничтожить существующие логи сейчас")
+    MSG[privacy_status]=$(        [ "$VWN_LANG" = en ] && echo "Show privacy status"                         || echo "Показать статус приватности")
+    MSG[privacy_enabling]=$(      [ "$VWN_LANG" = en ] && echo "Enabling privacy mode..."                    || echo "Включение режима приватности...")
+    MSG[privacy_disabling]=$(     [ "$VWN_LANG" = en ] && echo "Disabling privacy mode..."                   || echo "Отключение режима приватности...")
+    MSG[privacy_enabled]=$(       [ "$VWN_LANG" = en ] && echo "Privacy mode ENABLED."                       || echo "Режим приватности ВКЛЮЧЁН.")
+    MSG[privacy_disabled]=$(      [ "$VWN_LANG" = en ] && echo "Privacy mode disabled. Logs restored."       || echo "Режим приватности отключён. Логи восстановлены.")
+    MSG[privacy_already_on]=$(    [ "$VWN_LANG" = en ] && echo "Privacy mode is already ON."                 || echo "Режим приватности уже включён.")
+    MSG[privacy_already_off]=$(   [ "$VWN_LANG" = en ] && echo "Privacy mode is already OFF."                || echo "Режим приватности уже отключён.")
+    MSG[privacy_enable_confirm]=$([ "$VWN_LANG" = en ] && echo "Enable privacy mode?"                        || echo "Включить режим приватности?")
+    MSG[privacy_disable_confirm]=$([ "$VWN_LANG" = en ] && echo "Disable privacy mode?"                      || echo "Отключить режим приватности?")
+    MSG[privacy_shred_logs]=$(    [ "$VWN_LANG" = en ] && echo "Shredding log files..."                      || echo "Уничтожение лог-файлов...")
+    MSG[privacy_shred_done]=$(    [ "$VWN_LANG" = en ] && echo "Log files shredded and cleared."             || echo "Лог-файлы перезаписаны и очищены.")
+    MSG[privacy_shred_confirm]=$( [ "$VWN_LANG" = en ] && echo "Shred and clear all log files?"              || echo "Уничтожить и очистить все лог-файлы?")
+    MSG[privacy_status_title]=$(  [ "$VWN_LANG" = en ] && echo "Privacy / Logging Status"                    || echo "Статус приватности / логирования")
+    MSG[privacy_what_done]=$(     [ "$VWN_LANG" = en ] && echo "Applied"                                     || echo "Применено")
+}
+
 _initLang() {
     unset MSG
     declare -gA MSG
@@ -636,6 +679,8 @@ _initLang() {
     MSG[diag_domain_reachable]=$( [ "$VWN_LANG" = en ] && echo "Domain reachable"       || echo "Домен доступен")
     MSG[diag_domain_unreachable]=$( [ "$VWN_LANG" = en ] && echo "Domain unreachable!"  || echo "Домен недоступен!")
     MSG[diag_domain_code]=$(      [ "$VWN_LANG" = en ] && echo "Domain response"        || echo "Ответ домена")
+    _initAdblockLang
+    _initPrivacyLang
 }
 
 # Функция получения строки перевода
