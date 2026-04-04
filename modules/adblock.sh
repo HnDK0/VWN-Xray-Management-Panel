@@ -11,74 +11,73 @@
 # Правило которое вставляем в routing
 _ADBLOCK_RULE='{"type":"field","domain":["geosite:category-ads-all"],"outboundTag":"block"}'
 
+# ── Вспомогательный jq-запрос: считаем вхождения geosite в block-правилах ──
+
+_adblockCount() {
+    local cfg="$1"
+    jq -r '[
+        .routing.rules[] |
+        select(.outboundTag == "block") |
+        (.domain // [])[] |
+        select(. == "geosite:category-ads-all")
+    ] | length' "$cfg" 2>/dev/null
+}
+
 # ── Статус ────────────────────────────────────────────────────────
 
 getAdblockStatus() {
-    local enabled=false
+    local cnt=0
     for cfg in "$configPath" "$realityConfigPath"; do
         [ -f "$cfg" ] || continue
-        if jq -e '.routing.rules[] | select(.outboundTag=="block") | .domain // [] | map(select(. == "geosite:category-ads-all")) | length > 0' \
-            "$cfg" &>/dev/null 2>&1; then
-            enabled=true
-            break
-        fi
+        cnt=$(_adblockCount "$cfg")
+        [ "${cnt:-0}" -gt 0 ] && { echo "${green}ON${reset}"; return; }
     done
-    $enabled && echo "${green}ON${reset}" || echo "${red}OFF${reset}"
+    echo "${red}OFF${reset}"
 }
 
 _adblockIsEnabled() {
     [ -f "$configPath" ] || return 1
-    jq -e '.routing.rules[] | select(.outboundTag=="block") | .domain // [] | map(select(. == "geosite:category-ads-all")) | length > 0' \
-        "$configPath" &>/dev/null 2>&1
+    local cnt
+    cnt=$(_adblockCount "$configPath")
+    [ "${cnt:-0}" -gt 0 ]
 }
 
-# ── Применение / удаление ─────────────────────────────────────────
+# ── Применение ────────────────────────────────────────────────────
 
 _adblockApplyToConfig() {
     local cfg="$1"
     [ -f "$cfg" ] || return 0
 
-    # Проверяем — уже есть?
+    # Уже включено?
     local already
-    already=$(jq -r '
-        .routing.rules[] |
-        select(.outboundTag=="block") |
-        .domain // [] |
-        map(select(. == "geosite:category-ads-all")) |
-        length' "$cfg" 2>/dev/null | head -1)
+    already=$(_adblockCount "$cfg")
     [ "${already:-0}" -gt 0 ] && return 0
 
-    # Ищем существующее block-правило с domain (если есть — добавляем туда)
-    local has_block_domain
-    has_block_domain=$(jq -r '
-        .routing.rules[] |
-        select(.outboundTag=="block" and (.domain != null)) |
-        .outboundTag' "$cfg" 2>/dev/null | head -1)
-
-    if [ -n "$has_block_domain" ]; then
-        # Добавляем geosite в существующий domain-список block-правила
-        jq '(.routing.rules[] | select(.outboundTag=="block" and (.domain != null))) |=
-            .domain += ["geosite:category-ads-all"]' \
-            "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
-    else
-        # Вставляем новое правило сразу после первого block-правила (geoip:private)
-        jq --argjson r "$_ADBLOCK_RULE" '
-            .routing.rules = [.routing.rules[0], $r] + .routing.rules[1:]' \
-            "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
-    fi
+    # Вставляем отдельное правило: все block-правила → наше правило → остальные.
+    # Не используем += / //= — несовместимо с jq < 1.6.
+    jq --argjson r "$_ADBLOCK_RULE" '
+        .routing.rules = (
+            [ .routing.rules[] | select(.outboundTag == "block") ] +
+            [ $r ] +
+            [ .routing.rules[] | select(.outboundTag != "block") ]
+        )' "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
 }
+
+# ── Удаление ──────────────────────────────────────────────────────
 
 _adblockRemoveFromConfig() {
     local cfg="$1"
     [ -f "$cfg" ] || return 0
 
-    # Удаляем geosite:category-ads-all из всех domain-массивов block-правил
-    jq '(.routing.rules[] | select(.outboundTag=="block") | .domain) //= map(select(. != "geosite:category-ads-all"))' \
-        "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
-
-    # Если у block-правила domain стал пустым массивом — удаляем поле domain
-    jq '(.routing.rules[] | select(.outboundTag=="block" and (.domain | length == 0))) |= del(.domain)' \
-        "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
+    # Удаляем только правило с geosite:category-ads-all — остальные block-правила не трогаем
+    jq '
+        .routing.rules = [
+            .routing.rules[] |
+            select(
+                (.outboundTag != "block") or
+                (((.domain // []) | map(select(. == "geosite:category-ads-all")) | length) == 0)
+            )
+        ]' "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
 }
 
 # ── Включение / выключение ────────────────────────────────────────
@@ -145,12 +144,7 @@ showAdblockStatus() {
         [[ "$cfg" == *reality* ]] && label="Reality" || label="WS"
 
         local found
-        found=$(jq -r '
-            .routing.rules[] |
-            select(.outboundTag=="block") |
-            .domain // [] |
-            map(select(. == "geosite:category-ads-all")) |
-            length' "$cfg" 2>/dev/null | head -1)
+        found=$(_adblockCount "$cfg")
 
         if [ "${found:-0}" -gt 0 ]; then
             echo -e "  ${green}✓${reset}  Xray $label: geosite:category-ads-all → block"
