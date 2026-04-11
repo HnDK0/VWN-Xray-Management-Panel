@@ -291,9 +291,11 @@ manageWs() {
         echo -e "  ${green}9.${reset}  $(msg menu_ssl_cron)"
         echo -e "  ${green}10.${reset} $(msg menu_log_cron)"
         echo -e "  ${green}11.${reset} $(msg menu_uuid)"
+        echo -e "  ${green}12.${reset} $(msg menu_sub_auth)"
+        echo -e "  ${green}13.${reset} $(msg menu_stream_sni)"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
-        echo -e "  ${green}12.${reset} $(msg menu_install)"
-        echo -e "  ${green}13.${reset} $(msg menu_remove)"
+        echo -e "  ${green}14.${reset} $(msg menu_install)"
+        echo -e "  ${green}15.${reset} $(msg menu_remove)"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
         echo -e "  ${green}0.${reset}  $(msg back)"
         echo -e "${cyan}================================================================${reset}"
@@ -310,8 +312,10 @@ manageWs() {
             9)  manageSslCron ;;
             10) manageLogClearCron ;;
             11) modifyXrayUUID ;;
-            12) install ;;
-            13) removeWs ;;
+            12) manageSubAuth ;;
+            13) setupStreamSNI ;;
+            14) install ;;
+            15) removeWs ;;
             0)  break ;;
         esac
         [ "$choice" = "0" ] && continue

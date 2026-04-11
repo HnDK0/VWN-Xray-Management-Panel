@@ -429,6 +429,7 @@ manageReality() {
         echo -e "${green}7.${reset} $(msg reality_restart)"
         echo -e "${green}8.${reset} $(msg reality_logs)"
         echo -e "${green}9.${reset} $(msg reality_remove)"
+        echo -e "${green}10.${reset} $(msg menu_stream_sni)"
         echo -e "${green}0.${reset} $(msg back)"
         echo ""
         read -rp "$(msg choose)" choice
@@ -444,6 +445,7 @@ manageReality() {
                echo "---"
                tail -n 30 /var/log/xray/reality-error.log 2>/dev/null || true ;;
             9) removeReality ;;
+            10) setupStreamSNI ;;
             0) break ;;
         esac
         [ "${choice}" = "0" ] && continue

@@ -100,6 +100,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
 - ✅ **BBR** — TCP acceleration
 - ✅ **Anti-Ping** — ICMP disabled
 - ✅ **IPv6 toggle** — enable/disable system-wide IPv6
+- ✅ **Subscription auth** — `/sub/` pages protected by HTTP basic auth, auto-generated credentials, manageable via menu
+- ✅ **Stream SNI** — optionally serve both Nginx (WS) and Reality on port 443 via SNI multiplexing, no extra ports exposed
 - ✅ **Unattended install** — full setup via CLI flags, no interactive prompts
 - ✅ **RU / EN interface** — language selector on first run
 
@@ -110,7 +112,8 @@ Client (CDN/mobile)
     └── Cloudflare CDN → 443/HTTPS → Nginx → VLESS+WS → Xray → outbound
 
 Client (router/Clash/direct)
-    └── IP:8443/TCP → VLESS+Reality → Xray → outbound
+    └── IP:8443/TCP → VLESS+Reality → Xray → outbound        (default)
+    └── IP:443/TCP  → stream SNI → VLESS+Reality → Xray      (with Stream SNI enabled)
 
 outbound (by routing rules):
     ├── free    — direct exit (default)
@@ -126,12 +129,16 @@ outbound (by routing rules):
 | Port  | Purpose                           |
 |-------|-----------------------------------|
 | 22    | SSH (configurable)                |
-| 443   | VLESS+WS+TLS via Nginx            |
-| 8443  | VLESS+Reality (default)           |
+| 443   | VLESS+WS+TLS via Nginx (+ Reality when Stream SNI enabled) |
+| 8443  | VLESS+Reality (default, external) |
+| 8443¹ | Nginx HTTP (internal, Stream SNI mode) |
+| 10443¹| VLESS+Reality (internal, Stream SNI mode) |
 | 40000 | WARP SOCKS5 (warp-cli, local)     |
 | 40002 | Psiphon SOCKS5 (local)            |
 | 40003 | Tor SOCKS5 (local)                |
 | 40004 | Tor Control Port (local)          |
+
+¹ Internal ports when Stream SNI is enabled via item 4 → 10.
 
 ## CLI Commands
 
@@ -245,6 +252,7 @@ The `.html` page shows each link with a **copy button** and a **QR code on click
 - URL does not change when configs are updated — only the content changes
 - URL changes only when the user is renamed
 - Manage via item 2 → item 3 (QR + Subscription URL) or item 2 → item 5 (Rebuild all)
+- **Protected by basic auth** — credentials are auto-generated on first install and stored in `vwn.conf`. Manage via item 3 → 12.
 
 ## WS + CDN Management (item 3)
 
@@ -261,6 +269,8 @@ The `.html` page shows each link with a **copy button** and a **QR code on click
 | 9 | Manage SSL auto-renewal |
 | 10 | Manage log auto-clear |
 | 11 | Change UUID |
+| 12 | Subscription auth (basic auth) |
+| 13 | Stream SNI — Reality on port 443 |
 
 ## Adblock (item 20)
 
@@ -318,6 +328,8 @@ Can also be added via `--auto --reality` flag in unattended mode.
 ```
 vless://UUID@IP:8443?security=reality&sni=microsoft.com&fp=chrome&pbk=KEY&sid=SID&type=tcp&flow=xtls-rprx-vision
 ```
+
+**Stream SNI (item 4 → 10):** optionally move Reality to port 443, sharing it with Nginx via SNI multiplexing. Nginx reads the SNI before the TLS handshake and routes your domain to nginx HTTP (internally on 8443) and all other SNI names to xray-reality (internally on 10443). Requires `nginx-full` or `nginx-extras` (built with `--with-stream`).
 
 ## Tunnels (items 5–7)
 
@@ -458,6 +470,9 @@ tail -50 /var/log/tor/notices.log
 # Subscription not updating
 vwn  # item 2 → item 5 (Rebuild all subscription files)
 
+# Forgot subscription password
+vwn  # item 3 → 12 (shows current credentials or set new ones)
+
 # CPU Guard — check priorities
 systemctl show xray.service -p CPUWeight
 
@@ -594,6 +609,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
 - ✅ **BBR** — ускорение TCP
 - ✅ **Anti-Ping** — отключение ICMP
 - ✅ **Переключение IPv6** — включить/отключить IPv6 системно
+- ✅ **Защита подписок** — страницы `/sub/` защищены HTTP basic auth, пароль генерируется автоматически, управление через меню
+- ✅ **Stream SNI** — опционально: nginx (WS) и Reality на одном порту 443 через SNI-мультиплексирование
 - ✅ **Автоматическая установка** — полная настройка через аргументы CLI без интерактивных вопросов
 - ✅ **RU / EN интерфейс** — выбор языка при первом запуске
 
@@ -604,7 +621,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
     └── Cloudflare CDN → 443/HTTPS → Nginx → VLESS+WS → Xray → outbound
 
 Клиент (роутер/Clash/прямое)
-    └── IP:8443/TCP → VLESS+Reality → Xray → outbound
+    └── IP:8443/TCP → VLESS+Reality → Xray → outbound        (по умолчанию)
+    └── IP:443/TCP  → stream SNI → VLESS+Reality → Xray      (при включённом Stream SNI)
 
 outbound (по routing rules):
     ├── free    — прямой выход (default)
@@ -620,12 +638,16 @@ outbound (по routing rules):
 | Порт  | Назначение                        |
 |-------|-----------------------------------|
 | 22    | SSH (изменяемый)                  |
-| 443   | VLESS+WS+TLS через Nginx          |
-| 8443  | VLESS+Reality (по умолчанию)      |
+| 443   | VLESS+WS+TLS через Nginx (+ Reality при Stream SNI) |
+| 8443  | VLESS+Reality (по умолчанию, снаружи) |
+| 8443¹ | Nginx HTTP (внутренний, режим Stream SNI) |
+| 10443¹| VLESS+Reality (внутренний, режим Stream SNI) |
 | 40000 | WARP SOCKS5 (warp-cli, локальный) |
 | 40002 | Psiphon SOCKS5 (локальный)        |
 | 40003 | Tor SOCKS5 (локальный)            |
 | 40004 | Tor Control Port (локальный)      |
+
+¹ Внутренние порты при включённом Stream SNI (пункт 4 → 10).
 
 ## CLI команды
 
@@ -739,6 +761,7 @@ https://ваш-домен.com/sub/label_token.html  ← браузер: QR ко�
 - URL не меняется при обновлении конфигов — меняется только содержимое
 - URL меняется только при переименовании пользователя
 - Управление: пункт 2 → 3 (QR + Subscription URL) или пункт 2 → 5 (Пересоздать все)
+- **Защищены basic auth** — пароль генерируется автоматически при установке и сохраняется в `vwn.conf`. Управление: пункт 3 → 12.
 
 ## Управление WS + CDN (пункт 3)
 
@@ -755,6 +778,8 @@ https://ваш-домен.com/sub/label_token.html  ← браузер: QR ко�
 | 9 | Управление автообновлением SSL |
 | 10 | Управление автоочисткой логов |
 | 11 | Сменить UUID |
+| 12 | Пароль на подписки (basic auth) |
+| 13 | Stream SNI — Reality на порту 443 |
 
 ## Блокировка рекламы (пункт 20)
 
@@ -812,6 +837,8 @@ https://ваш-домен.com/sub/label_token.html  ← браузер: QR ко�
 ```
 vless://UUID@IP:8443?security=reality&sni=microsoft.com&fp=chrome&pbk=KEY&sid=SID&type=tcp&flow=xtls-rprx-vision
 ```
+
+**Stream SNI (пункт 4 → 10):** опционально переносит Reality на порт 443, разделяя его с Nginx через SNI-мультиплексирование. Nginx читает SNI до TLS handshake и маршрутизирует: ваш домен → nginx HTTP (внутри на 8443), все остальные SNI → xray-reality (внутри на 10443). Требует `nginx-full` или `nginx-extras` (собранный с `--with-stream`).
 
 ## Туннели (пункты 5–7)
 
@@ -951,6 +978,9 @@ tail -50 /var/log/tor/notices.log
 
 # Подписка не обновляется
 vwn  # пункт 2 → пункт 5 (Пересоздать файлы подписки)
+
+# Забыли пароль от подписок
+vwn  # пункт 3 → 12 (показывает текущие данные или позволяет сменить)
 
 # CPU Guard — проверить приоритеты
 systemctl show xray.service -p CPUWeight

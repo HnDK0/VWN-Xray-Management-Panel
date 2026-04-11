@@ -26,6 +26,8 @@ setNginxCert() {
 
 writeNginxConfig() {
     local xrayPort="$1"
+    # Внутренний порт nginx HTTPS (8443 когда stream SNI активен, иначе 443)
+    local nginx_https_port="${NGINX_HTTPS_PORT:-443}"
     local domain="$2"
     local proxyUrl="$3"
     local wsPath="$4"
@@ -35,7 +37,7 @@ writeNginxConfig() {
 
     setNginxCert
 
-    cat > /etc/nginx/nginx.conf << 'NGINXMAIN'
+    cat > /etc/nginx/nginx.conf << NGINXMAIN
 user www-data;
 worker_processes auto;
 worker_rlimit_nofile 65535;
@@ -69,16 +71,17 @@ http {
 }
 NGINXMAIN
 
-    cat > /etc/nginx/conf.d/default.conf << 'DEFAULTCONF'
+    cat > /etc/nginx/conf.d/default.conf << DEFAULTCONF
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
     server_name _;
-    return 301 https://$host$request_uri;
+    return 301 https://\$host\$request_uri;
 }
 
 server {
-    listen 443 ssl default_server;
+    # Fallback: дропаем всё без совпадения с доменом
+    listen ${nginx_https_port} ssl default_server;
     ssl_certificate     /etc/nginx/cert/default.crt;
     ssl_certificate_key /etc/nginx/cert/default.key;
     server_name _;
@@ -88,7 +91,8 @@ DEFAULTCONF
 
     cat > "$nginxPath" << EOF
 server {
-    listen 443 ssl;
+    # Слушает на внутреннем порту — снаружи через stream на 443
+    listen ${nginx_https_port} ssl;
     server_name $domain;
 
     ssl_certificate     /etc/nginx/cert/cert.pem;
@@ -371,4 +375,347 @@ PYEOF
     fi
 
     nginx -t && systemctl reload nginx
+}
+# ============================================================
+# BASIC AUTH — защита /sub/ подписок паролем
+# ============================================================
+
+# Управление basic auth на /sub/ — вызывается из меню manageWs().
+manageSubAuth() {
+    echo ""
+    echo "${cyan}=== $(msg sub_auth_manage) ===${reset}"
+
+    # Текущий статус — есть ли auth_basic в конфиге
+    local auth_active=false
+    grep -q "auth_basic" "$nginxPath" 2>/dev/null && auth_active=true
+
+    local cur_user cur_pass
+    cur_user=$(vwn_conf_get SUB_AUTH_USER)
+    cur_pass=$(vwn_conf_get SUB_AUTH_PASS)
+
+    if $auth_active; then
+        echo "$(msg sub_auth_status): ${green}$(msg sub_auth_on)${reset}"
+        [ -n "$cur_user" ] && echo "$(msg sub_auth_current): ${green}${cur_user}${reset} / ${green}${cur_pass}${reset}"
+    else
+        echo "$(msg sub_auth_status): ${red}$(msg sub_auth_off)${reset}"
+    fi
+    echo "${yellow}$(msg sub_auth_warn)${reset}"
+    echo ""
+
+    if $auth_active; then
+        echo -e "  ${green}1.${reset} $(msg sub_auth_change_pass)"
+        echo -e "  ${green}2.${reset} $(msg sub_auth_disable)"
+        echo -e "  ${green}0.${reset} $(msg back)"
+        read -rp "$(msg choose) " sa_choice
+        case "$sa_choice" in
+            1) _subAuthSetCredentials && nginx -t && systemctl reload nginx ;;
+            2) _subAuthDisable ;;
+            0) return ;;
+            *) echo "${red}$(msg invalid)${reset}" ;;
+        esac
+    else
+        echo -e "  ${green}1.${reset} $(msg sub_auth_enable)"
+        echo -e "  ${green}0.${reset} $(msg back)"
+        read -rp "$(msg choose) " sa_choice
+        case "$sa_choice" in
+            1) _subAuthEnable ;;
+            0) return ;;
+            *) echo "${red}$(msg invalid)${reset}" ;;
+        esac
+    fi
+}
+
+# Включает basic auth: создаёт .htpasswd и добавляет директивы в nginx конфиг
+_subAuthEnable() {
+    _subAuthSetCredentials || return 1
+
+    if ! grep -q "auth_basic" "$nginxPath" 2>/dev/null; then
+        python3 - "$nginxPath" << 'AUTHPYEOF'
+import sys, re
+path = sys.argv[1]
+with open(path) as f: c = f.read()
+auth = (
+    '        auth_basic           "Restricted";\n'
+    '        auth_basic_user_file /etc/nginx/conf.d/.htpasswd;\n'
+)
+c = re.sub(
+    r'(location ~ \^/sub/[^\n]+\n(?:(?!location|\}).+\n)*)\s*\}',
+    lambda m: m.group(1) + auth + '    }',
+    c
+)
+with open(path, 'w') as f: f.write(c)
+AUTHPYEOF
+    fi
+
+    nginx -t && systemctl reload nginx
+    echo "${green}$(msg sub_auth_enabled): ${cyan}$(vwn_conf_get SUB_AUTH_USER)${reset} / ${cyan}$(vwn_conf_get SUB_AUTH_PASS)${reset}"
+    echo "${yellow}$(msg sub_auth_note)${reset}"
+}
+
+# Отключает basic auth: убирает директивы из nginx конфига и удаляет .htpasswd
+_subAuthDisable() {
+    echo "${yellow}$(msg sub_auth_disable_confirm) $(msg yes_no)${reset}"
+    read -r confirm
+    [[ "$confirm" != "y" ]] && return
+    sed -i '/auth_basic/d' "$nginxPath" 2>/dev/null || true
+    rm -f /etc/nginx/conf.d/.htpasswd
+    vwn_conf_del SUB_AUTH_USER
+    vwn_conf_del SUB_AUTH_PASS
+    nginx -t && systemctl reload nginx
+    echo "${green}$(msg sub_auth_disabled)${reset}"
+}
+
+# Запрашивает логин/пароль и записывает .htpasswd
+_subAuthSetCredentials() {
+    local cur_user
+    cur_user=$(vwn_conf_get SUB_AUTH_USER)
+    read -rp "$(msg sub_auth_new_user) [${cur_user:-vwn}]: " new_user
+    new_user="${new_user:-${cur_user:-vwn}}"
+    read -rp "$(msg sub_auth_new_pass) ($(msg leave_empty_random)): " new_pass
+    [ -z "$new_pass" ] && new_pass=$(openssl rand -base64 12 | tr -d '+/=' | head -c 16)
+
+    local hashed
+    hashed=$(python3 -c "
+import crypt, sys
+u, p = sys.argv[1], sys.argv[2]
+print(u + ':' + crypt.crypt(p, crypt.mksalt(crypt.METHOD_SHA512)))
+" "$new_user" "$new_pass" 2>/dev/null)
+
+    if [ -n "$hashed" ]; then
+        echo "$hashed" > /etc/nginx/conf.d/.htpasswd
+        chmod 640 /etc/nginx/conf.d/.htpasswd
+        chown root:www-data /etc/nginx/conf.d/.htpasswd 2>/dev/null || true
+    elif command -v htpasswd &>/dev/null; then
+        htpasswd -cb /etc/nginx/conf.d/.htpasswd "$new_user" "$new_pass"
+    else
+        installPackage "apache2-utils" &>/dev/null || true
+        htpasswd -cb /etc/nginx/conf.d/.htpasswd "$new_user" "$new_pass" || return 1
+    fi
+
+    vwn_conf_set SUB_AUTH_USER "$new_user"
+    vwn_conf_set SUB_AUTH_PASS "$new_pass"
+    echo "${green}$(msg sub_auth_updated): ${cyan}${new_user}${reset} / ${cyan}${new_pass}${reset}"
+}
+
+
+# ============================================================
+# STREAM SNI — Reality + Nginx оба на порту 443
+# ============================================================
+
+# Включает SNI-мультиплексирование.
+# nginx переезжает на внутренний порт, Reality — тоже на внутренний порт,
+# снаружи всё слушается на 443 через stream-блок nginx.
+#
+# Использование: setupStreamSNI [nginx_port] [reality_port]
+# По умолчанию:  setupStreamSNI 8443 10443
+# Записывает /etc/nginx/nginx.conf со stream{}-блоком для SNI.
+# Вызывается только из setupStreamSNI().
+_writeStreamNginxConf() {
+    local domain="$1"
+    local nginx_port="$2"
+    local reality_port="$3"
+
+    cat > /etc/nginx/nginx.conf << NGINXSTREAM
+user www-data;
+worker_processes auto;
+worker_rlimit_nofile 65535;
+error_log /var/log/nginx/error.log warn;
+pid /run/nginx.pid;
+
+events {
+    worker_connections 4096;
+    multi_accept on;
+    use epoll;
+}
+
+# ── Stream: SNI-маршрутизация на порту 443 ──────────────────────────────────
+# Ваш домен (${domain}) → nginx HTTP (${nginx_port})
+# Всё остальное (SNI чужих сайтов для Reality) → xray-reality (${reality_port})
+stream {
+    map \$ssl_preread_server_name \$upstream_backend {
+        ${domain}   127.0.0.1:${nginx_port};
+        default     127.0.0.1:${reality_port};
+    }
+    server {
+        listen 443 reuseport;
+        listen [::]:443 reuseport;
+        ssl_preread on;
+        proxy_pass \$upstream_backend;
+        proxy_connect_timeout 10s;
+        proxy_timeout         3600s;
+    }
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 75s;
+    keepalive_requests 10000;
+    server_tokens off;
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss;
+    include /etc/nginx/conf.d/*.conf;
+}
+NGINXSTREAM
+}
+
+setupStreamSNI() {
+    local nginx_port="${1:-8443}"
+    local reality_port="${2:-10443}"
+
+    # ── Предварительные проверки ─────────────────────────────────────────────
+
+    # 1. nginx установлен и доступен
+    if ! command -v nginx &>/dev/null; then
+        echo "${red}$(msg stream_sni_no_nginx)${reset}"
+        return 1
+    fi
+
+    # 2. nginx запущен
+    if ! systemctl is-active --quiet nginx 2>/dev/null; then
+        echo "${yellow}$(msg stream_sni_nginx_stopped)${reset}"
+        echo "${yellow}$(msg stream_sni_nginx_start_hint)${reset}"
+        return 1
+    fi
+
+    # 3. WS конфиг существует (установка WS должна быть выполнена)
+    if [ ! -f "$configPath" ]; then
+        echo "${red}$(msg stream_sni_no_ws_config)${reset}"
+        return 1
+    fi
+
+    # 4. SSL сертификат существует (нужен для nginx HTTPS на внутреннем порту)
+    if [ ! -f /etc/nginx/cert/cert.pem ] || [ ! -f /etc/nginx/cert/cert.key ]; then
+        echo "${red}$(msg stream_sni_no_ssl)${reset}"
+        return 1
+    fi
+
+    # 5. Reality конфиг существует (иначе смысла нет)
+    if [ ! -f "$realityConfigPath" ]; then
+        echo "${red}$(msg stream_sni_no_reality)${reset}"
+        return 1
+    fi
+
+    # 6. nginx собран с модулем stream
+    if ! nginx -V 2>&1 | grep -q "with-stream"; then
+        echo "${red}$(msg stream_module_missing)${reset}"
+        echo "${yellow}$(msg stream_module_hint)${reset}"
+        # Предлагаем автоустановку nginx-full (только apt)
+        if command -v apt &>/dev/null; then
+            echo "${cyan}$(msg stream_module_autoinstall)${reset}"
+            read -rp "$(msg yes_no) " _ans
+            if [[ "$_ans" == "y" ]]; then
+                apt-get install -y nginx-full 2>/dev/null                     && echo "${green}nginx-full installed${reset}"                     || { echo "${red}$(msg stream_module_install_fail)${reset}"; return 1; }
+                # Повторная проверка
+                if ! nginx -V 2>&1 | grep -q "with-stream"; then
+                    echo "${red}$(msg stream_module_missing)${reset}"
+                    return 1
+                fi
+            else
+                return 1
+            fi
+        else
+            return 1
+        fi
+    fi
+
+    # 7. Порты не заняты другими процессами (кроме nginx/xray)
+    for _p in "$nginx_port" "$reality_port"; do
+        local _proc
+        _proc=$(ss -tlnp "sport = :${_p}" 2>/dev/null | awk 'NR>1{print $NF}' | grep -v nginx | grep -v xray || true)
+        if [ -n "$_proc" ]; then
+            echo "${yellow}$(msg stream_sni_port_busy): ${_p} — ${_proc}${reset}"
+        fi
+    done
+
+    # 8. Stream SNI уже активен?
+    if grep -q "ssl_preread on" /etc/nginx/nginx.conf 2>/dev/null; then
+        echo "${yellow}$(msg stream_sni_already_active)${reset}"
+        local cur_np cur_rp
+        cur_np=$(vwn_conf_get NGINX_HTTPS_PORT)
+        cur_rp=$(vwn_conf_get REALITY_INTERNAL_PORT)
+        echo "  nginx   → 127.0.0.1:${cur_np:-?}"
+        echo "  reality → 127.0.0.1:${cur_rp:-?}"
+        echo ""
+        read -rp "$(msg stream_sni_reconfigure) $(msg yes_no) " _reconf
+        [[ "$_reconf" != "y" ]] && return 0
+    fi
+
+    # ── Читаем домен ─────────────────────────────────────────────────────────
+    local domain
+    domain=$(vwn_conf_get DOMAIN)
+    if [ -z "$domain" ]; then
+        domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // empty' "$configPath" 2>/dev/null)
+    fi
+    if [ -z "$domain" ]; then
+        echo "${red}$(msg stream_sni_no_domain)${reset}"
+        return 1
+    fi
+
+    echo -e "${cyan}$(msg stream_sni_setup): ${domain}${reset}"
+    echo -e "  nginx   → 127.0.0.1:${nginx_port}"
+    echo -e "  reality → 127.0.0.1:${reality_port}"
+
+    vwn_conf_set NGINX_HTTPS_PORT      "$nginx_port"
+    vwn_conf_set REALITY_INTERNAL_PORT "$reality_port"
+
+    # Пишем nginx.conf со stream-блоком
+    _writeStreamNginxConf "$domain" "$nginx_port" "$reality_port"
+
+    # Перегенерируем xray.conf (http server) на новый внутренний порт
+    local xray_port proxy_url ws_path
+    xray_port=$(jq -r '.inbounds[0].port // empty' "$configPath" 2>/dev/null)
+    proxy_url=$(grep -oP "(?<=proxy_pass )[^;]+" "$nginxPath" 2>/dev/null | tail -1)
+    ws_path=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // empty' "$configPath" 2>/dev/null)
+
+    NGINX_HTTPS_PORT="$nginx_port" \
+        writeNginxConfig "$xray_port" "$domain" "$proxy_url" "$ws_path"
+
+    # Переключаем Reality на 127.0.0.1:reality_port
+    if [ -f "$realityConfigPath" ]; then
+        local tmp
+        tmp=$(mktemp)
+        jq --argjson p "$reality_port" \
+           '.inbounds[0].port = $p | .inbounds[0].listen = "127.0.0.1"' \
+           "$realityConfigPath" > "$tmp" && mv "$tmp" "$realityConfigPath"
+        echo "${green}$(msg reality_port_updated): 127.0.0.1:${reality_port}${reset}"
+        systemctl restart xray-reality 2>/dev/null || true
+    fi
+
+    # UFW: 443 уже открыт при стандартной установке, но убеждаемся
+    ufw allow 443/tcp comment 'HTTPS+Reality SNI' &>/dev/null || true
+    ufw allow 443/udp comment 'HTTPS+Reality SNI' &>/dev/null || true
+
+    nginx -t || { echo "${red}$(msg nginx_syntax_err)${reset}"; return 1; }
+    systemctl reload nginx
+
+    echo "${green}$(msg stream_sni_done)${reset}"
+}
+
+# Отключает stream SNI — возвращает nginx на прямой listen 443.
+disableStreamSNI() {
+    echo "${yellow}$(msg stream_sni_disable_confirm) $(msg yes_no)${reset}"
+    read -r confirm
+    [[ "$confirm" != "y" ]] && return
+
+    local domain xray_port proxy_url ws_path
+    domain=$(vwn_conf_get DOMAIN)
+    xray_port=$(jq -r '.inbounds[0].port // empty' "$configPath" 2>/dev/null)
+    proxy_url=$(grep -o 'proxy_pass [^;]*' "$nginxPath" 2>/dev/null | tail -1 | awk '{print $2}')
+    ws_path=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // empty' "$configPath" 2>/dev/null)
+
+    NGINX_HTTPS_PORT=443 \
+        writeNginxConfig "$xray_port" "$domain" "$proxy_url" "$ws_path"
+
+    vwn_conf_del NGINX_HTTPS_PORT
+    vwn_conf_del REALITY_INTERNAL_PORT
+
+    nginx -t && systemctl reload nginx
+    echo "${green}$(msg stream_sni_disabled)${reset}"
 }
