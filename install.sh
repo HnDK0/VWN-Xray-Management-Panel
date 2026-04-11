@@ -200,13 +200,13 @@ _validate_auto_params() {
         fi
     fi
 
-    if ! [[ "$OPT_PORT" =~ ^[0-9]+$ ]] || [ "$OPT_PORT" -lt 1024 ] || [ "$OPT_PORT" -gt 65535 ]; then
+    if ! [[ "$OPT_PORT" =~ ^[0-9]+$ ]] || [ "$OPT_PORT" -lt 443 ] || [ "$OPT_PORT" -gt 65535 ]; then
         echo "${red}Invalid --port: $OPT_PORT (must be 1024-65535)${reset}"
         exit 1
     fi
 
-    if ! [[ "$OPT_REALITY_PORT" =~ ^[0-9]+$ ]] || [ "$OPT_REALITY_PORT" -lt 1024 ] || [ "$OPT_REALITY_PORT" -gt 65535 ]; then
-        echo "${red}Invalid --reality-port: $OPT_REALITY_PORT (must be 1024-65535)${reset}"
+    if ! [[ "$OPT_REALITY_PORT" =~ ^[0-9]+$ ]] || [ "$OPT_REALITY_PORT" -lt 443 ] || [ "$OPT_REALITY_PORT" -gt 65535 ]; then
+        echo "${red}Invalid --reality-port: $OPT_REALITY_PORT (must be 443-65535)${reset}"
         exit 1
     fi
 
