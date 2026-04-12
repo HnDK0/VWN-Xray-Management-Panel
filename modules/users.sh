@@ -481,10 +481,25 @@ showUserQR() {
         qrencode -s 1 -m 1 -t ANSIUTF8 "$sub_url" 2>/dev/null || true
         echo -e "\n${green}${sub_url}${reset}"
         echo -e "${yellow}v2rayNG: + → Subscription group → URL${reset}"
+        # Дополнительная ссылка по IP (когда домен ещё не проброшен через CDN)
+        local server_ip
+        server_ip=$(getServerIP 2>/dev/null)
+        if [ -n "$server_ip" ] && [ "$server_ip" != "$domain" ]; then
+            local ip_url ip_html_url
+            ip_url="https://${server_ip}/sub/$(_subFilename "$label" "$token")"
+            ip_html_url="https://${server_ip}/sub/${safe}_${token}.html"
+            echo -e ""
+            echo -e "${cyan}[ Subscription URL (by IP) ]${reset}"
+            echo -e "${green}${ip_url}${reset}"
+            echo -e "${yellow}v2rayNG: + → Subscription group → URL${reset}"
+        fi
     fi
     echo ""
     echo -e "${cyan}[ $(msg users_html_hint) ]${reset}"
     echo -e "${green}${html_url}${reset}"
+    if [ -n "$server_ip" ] && [ "$server_ip" != "$domain" ]; then
+        echo -e "${green}${ip_html_url}${reset} ${yellow}(IP)${reset}"
+    fi
     echo -e "${cyan}================================================================${reset}"
 }
 

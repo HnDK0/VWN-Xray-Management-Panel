@@ -590,6 +590,7 @@ _run_auto() {
     echo ""
 
     # Показываем QR / subscription URL
+    _initUsersFile
     getQrCode 2>/dev/null || true
 }
 
