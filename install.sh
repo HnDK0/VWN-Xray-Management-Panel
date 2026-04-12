@@ -392,7 +392,7 @@ _auto_ssl() {
     ~/.acme.sh/acme.sh --install-cert -d "$domain" \
         --key-file       /etc/nginx/cert/cert.key \
         --fullchain-file /etc/nginx/cert/cert.pem \
-        --reloadcmd      "systemctl reload nginx 2>/dev/null || true"
+        --reloadcmd      "systemctl restart nginx 2>/dev/null || true"
 
     echo "${green}SSL issued for $domain${reset}"
 }
@@ -418,11 +418,13 @@ _auto_install_ws() {
 
     echo -e "${cyan}[1/6] Xray config...${reset}"
     writeXrayConfig "$OPT_PORT" "$wsPath" "$OPT_DOMAIN"
+    # Записываем домен как адрес подключения — иначе подписки генерируются по IP
+    mkdir -p /usr/local/etc/xray
+    echo "$OPT_DOMAIN" > /usr/local/etc/xray/connect_host
 
     echo -e "${cyan}[2/6] Nginx config...${reset}"
     writeNginxConfig "$OPT_PORT" "$OPT_DOMAIN" "$OPT_STUB" "$wsPath"
-    systemctl enable --now nginx 2>/dev/null || true
-    systemctl start nginx 2>/dev/null || true
+    systemctl enable nginx 2>/dev/null || true
 
     if ! $OPT_NO_WARP; then
         echo -e "${cyan}[3/6] WARP...${reset}"
@@ -436,7 +438,22 @@ _auto_install_ws() {
     _auto_ssl "$OPT_DOMAIN"
     _ssl_exit=$?
     set -e
-    [ $_ssl_exit -ne 0 ] && echo -e "${yellow}SSL failed (exit $_ssl_exit) — skipping, run: vwn → SSL later${reset}"
+    if [ $_ssl_exit -ne 0 ]; then
+        echo -e "${red}SSL failed (exit $_ssl_exit)${reset}"
+        if $AUTO_MODE; then
+            echo -e "${red}Unattended mode: SSL is required. Aborting.${reset}"
+            echo -e "${yellow}Fix DNS/firewall and re-run with the same flags.${reset}"
+            exit 1
+        else
+            echo -e "${yellow}Continue without SSL? nginx will start with a self-signed cert (subscriptions will not work). $(msg yes_no)${reset}"
+            read -r _ssl_continue
+            if [[ "$_ssl_continue" != "y" ]]; then
+                echo -e "${red}Aborting. Fix SSL and re-run.${reset}"
+                exit 1
+            fi
+            systemctl start nginx 2>/dev/null || true
+        fi
+    fi
 
     echo -e "${cyan}[5/6] WARP domains + cron...${reset}"
     if ! $OPT_NO_WARP; then

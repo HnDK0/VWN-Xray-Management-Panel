@@ -593,6 +593,7 @@ setupStreamSNI() {
     # 4. SSL сертификат существует (нужен для nginx HTTPS на внутреннем порту)
     if [ ! -f /etc/nginx/cert/cert.pem ] || [ ! -f /etc/nginx/cert/cert.key ]; then
         echo "${red}$(msg stream_sni_no_ssl)${reset}"
+        echo "${yellow}$(msg stream_sni_ssl_hint)${reset}"
         return 1
     fi
 
@@ -684,6 +685,9 @@ setupStreamSNI() {
         jq --argjson p "$reality_port" \
            '.inbounds[0].port = $p | .inbounds[0].listen = "127.0.0.1"' \
            "$realityConfigPath" > "$tmp" && mv "$tmp" "$realityConfigPath"
+        # Восстанавливаем владельца — xray-reality сервис работает под пользователем xray
+        chown xray:xray "$realityConfigPath" 2>/dev/null || true
+        chmod 640 "$realityConfigPath" 2>/dev/null || true
         echo "${green}$(msg reality_port_updated): 127.0.0.1:${reality_port}${reset}"
         systemctl restart xray-reality 2>/dev/null || true
     fi
@@ -694,6 +698,15 @@ setupStreamSNI() {
 
     nginx -t || { echo "${red}$(msg nginx_syntax_err)${reset}"; return 1; }
     systemctl reload nginx
+
+    # Даём nginx секунду и проверяем что он действительно слушает 443
+    sleep 1
+    if ! ss -tlnp sport=:443 2>/dev/null | grep -q "443"; then
+        echo "${red}$(msg stream_sni_port_fail)${reset}"
+        echo "${yellow}$(msg stream_sni_port_fail_hint)${reset}"
+        journalctl -u nginx -n 10 --no-pager 2>/dev/null || true
+        return 1
+    fi
 
     echo "${green}$(msg stream_sni_done)${reset}"
 }
