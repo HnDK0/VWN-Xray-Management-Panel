@@ -26,7 +26,7 @@ setNginxCert() {
 
 writeNginxConfig() {
     local xrayPort="$1"
-    # Внутренний порт nginx HTTPS (8443 когда stream SNI активен, иначе 443)
+    # Внутренний порт nginx HTTPS (7443 когда stream SNI активен, иначе 443)
     local nginx_https_port="${NGINX_HTTPS_PORT:-443}"
     local domain="$2"
     local proxyUrl="$3"
@@ -507,7 +507,7 @@ print(u + ':' + crypt.crypt(p, crypt.mksalt(crypt.METHOD_SHA512)))
 # снаружи всё слушается на 443 через stream-блок nginx.
 #
 # Использование: setupStreamSNI [nginx_port] [reality_port]
-# По умолчанию:  setupStreamSNI 8443 10443
+# По умолчанию:  setupStreamSNI 7443 10443
 # Записывает /etc/nginx/nginx.conf со stream{}-блоком для SNI.
 # Вызывается только из setupStreamSNI().
 _writeStreamNginxConf() {
@@ -566,7 +566,7 @@ NGINXSTREAM
 }
 
 setupStreamSNI() {
-    local nginx_port="${1:-8443}"
+    local nginx_port="${1:-7443}"
     local reality_port="${2:-10443}"
 
     # ── Предварительные проверки ─────────────────────────────────────────────
@@ -702,9 +702,9 @@ setupStreamSNI() {
     sleep 1
     systemctl start nginx
 
-    # Ждём пока nginx поднимет порт (до 5 секунд)
+    # Ждём пока nginx поднимет порт (до 15 секунд)
     local i=0
-    while [ $i -lt 5 ]; do
+    while [ $i -lt 15 ]; do
         ss -tlnp 2>/dev/null | grep -q ":443" && break
         sleep 1
         i=$((i+1))
@@ -717,6 +717,9 @@ setupStreamSNI() {
     fi
 
     echo "${green}$(msg stream_sni_done)${reset}"
+
+    # Перегенерируем подписки: Reality теперь снаружи на 443
+    rebuildAllSubFiles 2>/dev/null || true
 }
 
 # Отключает stream SNI — возвращает nginx на прямой listen 443.
@@ -739,4 +742,7 @@ disableStreamSNI() {
 
     nginx -t && systemctl reload nginx
     echo "${green}$(msg stream_sni_disabled)${reset}"
+
+    # Перегенерируем подписки: Reality снова на своём прямом порту
+    rebuildAllSubFiles 2>/dev/null || true
 }

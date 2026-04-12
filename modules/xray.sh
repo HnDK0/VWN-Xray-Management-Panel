@@ -365,6 +365,7 @@ modifyXrayPort() {
     sed -i "s|127.0.0.1:${oldPort}|127.0.0.1:${xrayPort}|g" "$nginxPath"
     systemctl restart xray nginx
     echo "${green}$(msg port_changed) $xrayPort${reset}"
+    rebuildAllSubFiles 2>/dev/null || true
 }
 
 modifyWsPath() {
@@ -384,6 +385,7 @@ modifyWsPath() {
         "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
     systemctl restart xray nginx
     echo "${green}$(msg new_path): $wsPath${reset}"
+    rebuildAllSubFiles 2>/dev/null || true
 }
 
 modifyProxyPassUrl() {

@@ -591,6 +591,7 @@ _run_auto() {
 
     # Показываем QR / subscription URL
     _initUsersFile
+    rebuildAllSubFiles 2>/dev/null || true
     getQrCode 2>/dev/null || true
 }
 

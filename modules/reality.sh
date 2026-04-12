@@ -306,13 +306,19 @@ showRealityInfo() {
 
     local uuid port shortId destHost pubKey serverIP
     uuid=$(jq -r '.inbounds[0].settings.clients[0].id' "$realityConfigPath")
-    port=$(jq -r '.inbounds[0].port' "$realityConfigPath")
     shortId=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0]' "$realityConfigPath")
     destHost=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0]' "$realityConfigPath")
     serverIP=$(_getPublicIP)
-
     pubKey=$(vwn_conf_get REALITY_PUBKEY 2>/dev/null)
     [ -z "$pubKey" ] && pubKey=$(grep "PublicKey:" /usr/local/etc/xray/reality_client.txt 2>/dev/null | awk '{print $2}')
+
+    # Если stream SNI активен — снаружи Reality доступен на 443
+    if grep -q "ssl_preread on" /etc/nginx/nginx.conf 2>/dev/null; then
+        port=443
+    else
+        port=$(jq -r '.inbounds[0].port' "$realityConfigPath")
+    fi
+
     echo "UUID:        $uuid"
     echo "IP:          $serverIP"
     echo "$(msg reality_port): $port"
@@ -331,12 +337,19 @@ showRealityQR() {
 
     local uuid port shortId destHost pubKey serverIP
     uuid=$(jq -r '.inbounds[0].settings.clients[0].id' "$realityConfigPath")
-    port=$(jq -r '.inbounds[0].port' "$realityConfigPath")
     shortId=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0]' "$realityConfigPath")
     destHost=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0]' "$realityConfigPath")
     pubKey=$(vwn_conf_get REALITY_PUBKEY 2>/dev/null)
     [ -z "$pubKey" ] && pubKey=$(grep "PublicKey:" /usr/local/etc/xray/reality_client.txt 2>/dev/null | awk '{print $2}')
     serverIP=$(_getPublicIP)
+
+    # Если stream SNI активен — снаружи Reality доступен на 443
+    if grep -q "ssl_preread on" /etc/nginx/nginx.conf 2>/dev/null; then
+        port=443
+    else
+        port=$(jq -r '.inbounds[0].port' "$realityConfigPath")
+    fi
+
     local url="vless://${uuid}@${serverIP}:${port}?encryption=none&security=reality&sni=${destHost}&fp=chrome&pbk=${pubKey}&sid=${shortId}&type=tcp&flow=xtls-rprx-vision#Reality-${serverIP}"
     command -v qrencode &>/dev/null || installPackage "qrencode"
     qrencode -s 1 -m 1 -t ANSIUTF8 "$url"
@@ -351,6 +364,16 @@ modifyRealityUUID() {
 
 modifyRealityPort() {
     [ ! -f "$realityConfigPath" ] && { echo "${red}$(msg reality_not_installed)${reset}"; return 1; }
+
+    # Если stream SNI активен — внутренний порт управляется через setupStreamSNI
+    if grep -q "ssl_preread on" /etc/nginx/nginx.conf 2>/dev/null; then
+        local internal_port
+        internal_port=$(jq -r '.inbounds[0].port' "$realityConfigPath")
+        echo "${yellow}Stream SNI активен. Reality снаружи работает на порту 443.${reset}"
+        echo "${yellow}Внутренний порт: ${internal_port}. Для смены используйте пункт 13 (Stream SNI).${reset}"
+        return 0
+    fi
+
     local oldPort
     oldPort=$(jq '.inbounds[0].port' "$realityConfigPath")
     read -rp "$(msg reality_port) [$oldPort]: " newPort
@@ -389,6 +412,7 @@ modifyRealityDest() {
         "$realityConfigPath" > "${realityConfigPath}.tmp" && mv "${realityConfigPath}.tmp" "$realityConfigPath"
     systemctl restart xray-reality
     echo "${green}$(msg reality_dest_changed) $newDest${reset}"
+    rebuildAllSubFiles 2>/dev/null || true
 }
 
 removeReality() {
@@ -412,6 +436,7 @@ manageReality() {
         s_reality=$(getServiceStatus xray-reality)
         s_warp=$(getWarpStatus)
         s_port=$(jq -r '.inbounds[0].port // "—"' "$realityConfigPath" 2>/dev/null)
+        grep -q "ssl_preread on" /etc/nginx/nginx.conf 2>/dev/null && s_port="443 (SNI→${s_port})"
         s_dest=$(jq -r '.inbounds[0].streamSettings.realitySettings.dest // "—"' "$realityConfigPath" 2>/dev/null)
         echo -e "${cyan}================================================================${reset}"
         printf "   ${red}VLESS + Reality${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"

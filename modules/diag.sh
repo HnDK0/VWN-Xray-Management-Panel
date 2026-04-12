@@ -122,7 +122,11 @@ _diagXray() {
         local reality_port
         reality_port=$(jq -r '.inbounds[0].port' "$realityConfigPath" 2>/dev/null)
         if ss -tlnp 2>/dev/null | grep -q ":${reality_port}"; then
-            _pass "$(msg diag_port_listen): $reality_port"
+            if grep -q "ssl_preread on" /etc/nginx/nginx.conf 2>/dev/null; then
+                _pass "$(msg diag_port_listen): ${reality_port} (internal) → 443 (external via SNI)"
+            else
+                _pass "$(msg diag_port_listen): $reality_port"
+            fi
         else
             _fail "$(msg diag_port_not_listen): $reality_port"
         fi

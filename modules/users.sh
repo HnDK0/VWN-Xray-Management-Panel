@@ -132,7 +132,12 @@ buildUserSubFile() {
             "$realityConfigPath" 2>/dev/null | head -1)
         [ -z "$r_uuid" ] && \
             r_uuid=$(jq -r '.inbounds[0].settings.clients[0].id' "$realityConfigPath" 2>/dev/null)
-        r_port=$(jq -r '.inbounds[0].port' "$realityConfigPath" 2>/dev/null)
+        # Если stream SNI активен — Reality снаружи доступен на 443, а не на внутреннем порту
+        if grep -q "ssl_preread on" /etc/nginx/nginx.conf 2>/dev/null; then
+            r_port=443
+        else
+            r_port=$(jq -r '.inbounds[0].port' "$realityConfigPath" 2>/dev/null)
+        fi
         r_shortId=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0]' "$realityConfigPath" 2>/dev/null)
         r_destHost=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0]' "$realityConfigPath" 2>/dev/null)
         r_pubKey=$(vwn_conf_get REALITY_PUBKEY 2>/dev/null)
