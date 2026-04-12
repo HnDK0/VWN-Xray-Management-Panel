@@ -118,7 +118,7 @@ buildUserSubFile() {
         wep=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$wp" 2>/dev/null || echo "$wp")
         connect_host=$(getConnectHost 2>/dev/null || echo "$domain")
         [ -z "$connect_host" ] && connect_host="$domain"
-        name="${flag} VL-WS-CDN | ${label} ${flag}"
+        name="${flag} VL-WS | ${label} ${flag}"
         encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$name" 2>/dev/null || echo "$name")
         lines+="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=ws&host=${domain}&path=${wep}#${encoded_name}"$'\n'
     fi

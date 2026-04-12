@@ -25,7 +25,7 @@ print(flag)
     fi
 }
 
-# Формирует красивое имя конфига: 🇩🇪 VL-WS-CDN | label 🇩🇪
+# Формирует красивое имя конфига: 🇩🇪 VL-WS | label 🇩🇪
 # Аргументы: тип (WS|Reality), label, [ip]
 _getConfigName() {
     local type="$1"
@@ -34,7 +34,7 @@ _getConfigName() {
     local flag
     flag=$(_getCountryFlag "$ip")
     case "$type" in
-        WS)       echo "${flag} VL-WS-CDN | ${label} ${flag}" ;;
+        WS)       echo "${flag} VL-WS | ${label} ${flag}" ;;
         Reality)  echo "${flag} VL-Reality | ${label} ${flag}" ;;
         *)        echo "${flag} VL-${type} | ${label} ${flag}" ;;
     esac
