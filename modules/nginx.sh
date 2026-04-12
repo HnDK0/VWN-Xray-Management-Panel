@@ -30,6 +30,16 @@ writeNginxConfig() {
     local nginx_https_port="${NGINX_HTTPS_PORT:-443}"
     local domain="$2"
     local proxyUrl="$3"
+
+    # Запоминаем ДО перезаписи — был ли активен stream SNI
+    local _stream_sni_was_active=false
+    local _sni_np _sni_rp _sni_domain
+    if grep -q "ssl_preread on" /etc/nginx/nginx.conf 2>/dev/null; then
+        _stream_sni_was_active=true
+        _sni_np=$(vwn_conf_get NGINX_HTTPS_PORT)
+        _sni_rp=$(vwn_conf_get REALITY_INTERNAL_PORT)
+        _sni_domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // ""' "$configPath" 2>/dev/null)
+    fi
     local wsPath="$4"
 
     local proxy_host
@@ -172,6 +182,12 @@ map \$uri \$sub_label {
 MAPEOF
     # Восстанавливаем реальный IP — всегда нужно при Cloudflare
     setupRealIpRestore
+
+    # Если stream SNI был активен до вызова writeNginxConfig — восстанавливаем stream-блок,
+    # потому что writeNginxConfig перезаписала nginx.conf только с http{} блоком
+    if $_stream_sni_was_active && [ -n "$_sni_np" ] && [ -n "$_sni_rp" ] && [ -n "$_sni_domain" ]; then
+        _writeStreamNginxConf "$_sni_domain" "$_sni_np" "$_sni_rp"
+    fi
 }
 
 # Восстановление реального IP клиента из CF-Connecting-IP.
@@ -537,8 +553,8 @@ stream {
         default     127.0.0.1:${reality_port};
     }
     server {
-        listen 443 reuseport;
-        listen [::]:443 reuseport;
+        listen 443;
+        listen [::]:443;
         ssl_preread on;
         proxy_pass \$upstream_backend;
         proxy_connect_timeout 10s;
@@ -666,10 +682,7 @@ setupStreamSNI() {
     vwn_conf_set NGINX_HTTPS_PORT      "$nginx_port"
     vwn_conf_set REALITY_INTERNAL_PORT "$reality_port"
 
-    # Пишем nginx.conf со stream-блоком
-    _writeStreamNginxConf "$domain" "$nginx_port" "$reality_port"
-
-    # Перегенерируем xray.conf (http server) на новый внутренний порт
+    # Перегенерируем xray.conf (http server) на новый внутренний порт — ДО записи stream-блока
     local xray_port proxy_url ws_path
     xray_port=$(jq -r '.inbounds[0].port // empty' "$configPath" 2>/dev/null)
     proxy_url=$(grep -oP "(?<=proxy_pass )[^;]+" "$nginxPath" 2>/dev/null | tail -1)
@@ -677,6 +690,9 @@ setupStreamSNI() {
 
     NGINX_HTTPS_PORT="$nginx_port" \
         writeNginxConfig "$xray_port" "$domain" "$proxy_url" "$ws_path"
+
+    # Пишем nginx.conf со stream-блоком — ПОСЛЕ writeNginxConfig, иначе stream затрётся
+    _writeStreamNginxConf "$domain" "$nginx_port" "$reality_port"
 
     # Переключаем Reality на 127.0.0.1:reality_port
     if [ -f "$realityConfigPath" ]; then
