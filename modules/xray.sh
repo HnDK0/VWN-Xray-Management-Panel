@@ -244,7 +244,9 @@ getQrCode() {
     _initUsersFile 2>/dev/null || true
 
     local domain uuid label token sub_url html_url safe
-    domain=$(get_domain 2>/dev/null || getServerIP)
+    domain=$(getConnectHost 2>/dev/null)
+    [ -z "$domain" ] && domain=$(_getDomain 2>/dev/null)
+    [ -z "$domain" ] && domain=$(getServerIP)
 
     # Берём первого пользователя
     if [ -f "$USERS_FILE" ] && [ -s "$USERS_FILE" ]; then

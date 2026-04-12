@@ -697,11 +697,19 @@ setupStreamSNI() {
     ufw allow 443/udp comment 'HTTPS+Reality SNI' &>/dev/null || true
 
     nginx -t || { echo "${red}$(msg nginx_syntax_err)${reset}"; return 1; }
-    systemctl reload nginx
-
-    # Даём nginx секунду и проверяем что он действительно слушает 443
+    # stop+start обязателен: reuseport требует полного освобождения сокета
+    systemctl stop nginx
     sleep 1
-    if ! ss -tlnp sport=:443 2>/dev/null | grep -q "443"; then
+    systemctl start nginx
+
+    # Ждём пока nginx поднимет порт (до 5 секунд)
+    local i=0
+    while [ $i -lt 5 ]; do
+        ss -tlnp 2>/dev/null | grep -q ":443" && break
+        sleep 1
+        i=$((i+1))
+    done
+    if ! ss -tlnp 2>/dev/null | grep -q ":443"; then
         echo "${red}$(msg stream_sni_port_fail)${reset}"
         echo "${yellow}$(msg stream_sni_port_fail_hint)${reset}"
         journalctl -u nginx -n 10 --no-pager 2>/dev/null || true
