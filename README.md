@@ -131,7 +131,7 @@ outbound (by routing rules):
 | 22    | SSH (configurable)                |
 | 443   | VLESS+WS+TLS via Nginx (+ Reality when Stream SNI enabled) |
 | 8443  | VLESS+Reality (default, external) |
-| 8443¹ | Nginx HTTP (internal, Stream SNI mode) |
+| 7443¹ | Nginx HTTP (internal, Stream SNI mode) |
 | 10443¹| VLESS+Reality (internal, Stream SNI mode) |
 | 40000 | WARP SOCKS5 (warp-cli, local)     |
 | 40002 | Psiphon SOCKS5 (local)            |
@@ -640,7 +640,7 @@ outbound (по routing rules):
 | 22    | SSH (изменяемый)                  |
 | 443   | VLESS+WS+TLS через Nginx (+ Reality при Stream SNI) |
 | 8443  | VLESS+Reality (по умолчанию, снаружи) |
-| 8443¹ | Nginx HTTP (внутренний, режим Stream SNI) |
+| 7443¹ | Nginx HTTP (внутренний, режим Stream SNI) |
 | 10443¹| VLESS+Reality (внутренний, режим Stream SNI) |
 | 40000 | WARP SOCKS5 (warp-cli, локальный) |
 | 40002 | Psiphon SOCKS5 (локальный)        |
