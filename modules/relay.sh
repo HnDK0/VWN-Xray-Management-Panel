@@ -123,7 +123,10 @@ applyRelayToConfigs() {
     relay_outbound=$(buildRelayOutbound) || return 1
 
     for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
-        if [ -z "$has_relay" ]; then
+        [ -f "$cfg" ] || continue
+        local has_ob
+        has_ob=$(jq '.outbounds[] | select(.tag=="relay")' "$cfg" 2>/dev/null)
+        if [ -z "$has_ob" ]; then
             jq --argjson ob "$relay_outbound" '.outbounds += [$ob]' \
                 "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
         else

@@ -67,6 +67,14 @@ applyWarpDomains() {
 
     for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
         [ -f "$cfg" ] || continue
+        # Добавляем outbound если отсутствует (например Vision создан без него)
+        local has_ob
+        has_ob=$(jq '.outbounds[] | select(.tag=="warp")' "$cfg" 2>/dev/null)
+        if [ -z "$has_ob" ]; then
+            local warp_ob='{"tag":"warp","protocol":"socks","settings":{"servers":[{"address":"127.0.0.1","port":40000}]}}'
+            jq --argjson ob "$warp_ob" '.outbounds += [$ob]' \
+                "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
+        fi
         local has_rule
         has_rule=$(jq '.routing.rules[] | select(.outboundTag=="warp")' "$cfg" 2>/dev/null)
         if [ -z "$has_rule" ]; then
@@ -98,6 +106,14 @@ toggleWarpMode() {
             local warp_global='{"type":"field","port":"0-65535","outboundTag":"warp"}'
             for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
                 [ -f "$cfg" ] || continue
+                # Добавляем outbound если отсутствует
+                local has_ob
+                has_ob=$(jq '.outbounds[] | select(.tag=="warp")' "$cfg" 2>/dev/null)
+                if [ -z "$has_ob" ]; then
+                    local warp_ob='{"tag":"warp","protocol":"socks","settings":{"servers":[{"address":"127.0.0.1","port":40000}]}}'
+                    jq --argjson ob "$warp_ob" '.outbounds += [$ob]' \
+                        "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
+                fi
                 local has_rule
                 has_rule=$(jq '.routing.rules[] | select(.outboundTag=="warp")' "$cfg" 2>/dev/null)
                 if [ -z "$has_rule" ]; then

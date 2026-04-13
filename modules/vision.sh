@@ -85,14 +85,66 @@ writeVisionConfig() {
         }
     }],
     "outbounds": [
-        {"tag": "direct", "protocol": "freedom"},
-        {"tag": "block",  "protocol": "blackhole"}
+        {
+            "tag": "free",
+            "protocol": "freedom",
+            "settings": {"domainStrategy": "UseIPv4"}
+        },
+        {
+            "tag": "warp",
+            "protocol": "socks",
+            "settings": {"servers": [{"address": "127.0.0.1", "port": 40000}]}
+        },
+        {
+            "tag": "psiphon",
+            "protocol": "socks",
+            "settings": {"servers": [{"address": "127.0.0.1", "port": 40002}]}
+        },
+        {
+            "tag": "tor",
+            "protocol": "socks",
+            "settings": {"servers": [{"address": "127.0.0.1", "port": 40003}]}
+        },
+        {
+            "tag": "block",
+            "protocol": "blackhole"
+        }
     ],
     "routing": {
         "domainStrategy": "AsIs",
         "rules": [
-            {"type": "field", "ip": ["geoip:private"], "outboundTag": "block"}
+            {
+                "type": "field",
+                "ip": ["geoip:private"],
+                "outboundTag": "block"
+            },
+            {
+                "type": "field",
+                "port": "25, 587, 465, 2525",
+                "network": "tcp",
+                "outboundTag": "block"
+            },
+            {
+                "type": "field",
+                "protocol": ["bittorrent"],
+                "outboundTag": "block"
+            },
+            {
+                "type": "field",
+                "port": "0-65535",
+                "outboundTag": "free"
+            }
         ]
+    },
+    "policy": {
+        "levels": {
+            "0": {
+                "handshake": 4,
+                "connIdle": 300,
+                "uplinkOnly": 2,
+                "downlinkOnly": 5
+            }
+        }
     }
 }
 EOF
@@ -213,29 +265,56 @@ _getVisionCert() {
 _visionApplyActiveFeatures() {
     echo -e "${cyan}$(msg vision_apply_features)${reset}"
 
-    # WARP
-    if [ -f "$warpDomainsFile" ] && command -v warp-cli &>/dev/null; then
-        local warp_raw
+    # Берём текущий режим роутинга из configPath (WS) как эталон —
+    # он отражает то что пользователь реально настроил.
+    # Vision воспроизводит те же rules.
+
+    # WARP: применяем если WARP активен и в WS конфиге есть warp rule
+    if command -v warp-cli &>/dev/null; then
+        local warp_raw warp_rule
         warp_raw=$(getWarpStatusRaw 2>/dev/null || echo "OFF")
-        if [ "$warp_raw" = "ACTIVE" ]; then
-            applyWarpDomains 2>/dev/null || true
+        if [ "$warp_raw" = "ACTIVE" ] && [ -f "$configPath" ]; then
+            warp_rule=$(jq -r '.routing.rules[] | select(.outboundTag=="warp") | if .port == "0-65535" then "Global" elif (.domain | length) > 0 then "Split" else "" end' "$configPath" 2>/dev/null | head -1)
+            case "$warp_rule" in
+                Global)
+                    jq '(.routing.rules[] | select(.outboundTag == "warp")) |= (.port = "0-65535" | del(.domain))' \
+                        "$visionConfigPath" > "${visionConfigPath}.tmp" && mv "${visionConfigPath}.tmp" "$visionConfigPath" 2>/dev/null || true
+                    ;;
+                Split)
+                    applyWarpDomains 2>/dev/null || true
+                    ;;
+            esac
         fi
     fi
 
-    # Relay
-    if [ -f "$relayConfigFile" ]; then
-        applyRelayToConfigs 2>/dev/null || true
-        applyRelayDomains 2>/dev/null || true
+    # Relay: смотрим режим rule в WS конфиге
+    if [ -f "$relayConfigFile" ] && [ -f "$configPath" ]; then
+        local relay_rule
+        relay_rule=$(jq -r '.routing.rules[] | select(.outboundTag=="relay") | if .port == "0-65535" then "Global" elif (.domain | length) > 0 then "Split" else "" end' "$configPath" 2>/dev/null | head -1)
+        case "$relay_rule" in
+            Global) toggleRelayGlobal 2>/dev/null || true ;;
+            Split)  applyRelayDomains 2>/dev/null || true ;;
+        esac
     fi
 
-    # Psiphon
-    if [ -f "$psiphonConfigFile" ] && [ -f "$psiphonDomainsFile" ]; then
-        applyPsiphonDomains 2>/dev/null || true
+    # Psiphon: смотрим режим rule в WS конфиге
+    if [ -f "$psiphonConfigFile" ] && [ -f "$configPath" ]; then
+        local psiphon_rule
+        psiphon_rule=$(jq -r '.routing.rules[] | select(.outboundTag=="psiphon") | if .port == "0-65535" then "Global" elif (.domain | length) > 0 then "Split" else "" end' "$configPath" 2>/dev/null | head -1)
+        case "$psiphon_rule" in
+            Global) togglePsiphonGlobal 2>/dev/null || true ;;
+            Split)  applyPsiphonDomains 2>/dev/null || true ;;
+        esac
     fi
 
-    # Tor
-    if command -v tor &>/dev/null && [ -f "$torDomainsFile" ]; then
-        applyTorDomains 2>/dev/null || true
+    # Tor: смотрим режим rule в WS конфиге
+    if command -v tor &>/dev/null && [ -f "$configPath" ]; then
+        local tor_rule
+        tor_rule=$(jq -r '.routing.rules[] | select(.outboundTag=="tor") | if .port == "0-65535" then "Global" elif (.domain | length) > 0 then "Split" else "" end' "$configPath" 2>/dev/null | head -1)
+        case "$tor_rule" in
+            Global) toggleTorGlobal 2>/dev/null || true ;;
+            Split)  applyTorDomains 2>/dev/null || true ;;
+        esac
     fi
 
     # Adblock

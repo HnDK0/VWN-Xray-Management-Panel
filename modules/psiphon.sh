@@ -150,10 +150,13 @@ EOF
 }
 
 applyPsiphonOutbound() {
-    # Добавляет psiphon outbound (SOCKS5 на 40002) в оба конфига Xray
+    # Добавляет psiphon outbound (SOCKS5 на 40002) в конфиги Xray где его нет
     local psiphon_ob='{"tag":"psiphon","protocol":"socks","settings":{"servers":[{"address":"127.0.0.1","port":40002}]}}'
 
     for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+        [ -f "$cfg" ] || continue
+        local has_ob
+        has_ob=$(jq '.outbounds[] | select(.tag=="psiphon")' "$cfg" 2>/dev/null)
         if [ -z "$has_ob" ]; then
             jq --argjson ob "$psiphon_ob" '.outbounds += [$ob]' \
                 "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
@@ -207,6 +210,9 @@ togglePsiphonGlobal() {
 
 removePsiphonFromConfigs() {
     for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+        [ -f "$cfg" ] || continue
+        jq 'del(.outbounds[] | select(.tag=="psiphon")) |
+            del(.routing.rules[] | select(.outboundTag=="psiphon"))' \
             "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
     done
     systemctl restart xray 2>/dev/null || true

@@ -135,6 +135,9 @@ applyTorOutbound() {
     local tor_ob='{"tag":"tor","protocol":"socks","settings":{"servers":[{"address":"127.0.0.1","port":40003}]}}'
 
     for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+        [ -f "$cfg" ] || continue
+        local has_ob
+        has_ob=$(jq '.outbounds[] | select(.tag=="tor")' "$cfg" 2>/dev/null)
         if [ -z "$has_ob" ]; then
             jq --argjson ob "$tor_ob" '.outbounds += [$ob]' \
                 "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
