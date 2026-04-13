@@ -278,7 +278,7 @@ getQrCode() {
 
     if [ -n "$sub_url" ]; then
         echo -e "${cyan}[ Subscription URL ]${reset}"
-        qrencode -s 1 -m 1 -t ANSIUTF8 "$sub_url" 2>/dev/null || true
+        qrencode -s 3 -m 2 -t ANSIUTF8 "$sub_url" 2>/dev/null || true
         echo -e "\n${green}${sub_url}${reset}"
         echo -e "${yellow}v2rayNG: + → Subscription group → URL${reset}"
         echo ""

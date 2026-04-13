@@ -60,8 +60,8 @@ writeVisionConfig() {
             "clients": [{"id": "${uuid}", "flow": "xtls-rprx-vision"}],
             "decryption": "none",
             "fallbacks": [
-                {"alpn": "h2",        "dest": ${nginx_port}, "xver": 1},
-                {"dest": ${nginx_port}, "xver": 1}
+                {"alpn": "h2", "dest": ${nginx_port}},
+                {"dest": ${nginx_port}}
             ]
         },
         "streamSettings": {
@@ -433,9 +433,17 @@ showVisionQR() {
         echo "${red}$(msg vision_not_installed)${reset}"; return
     }
 
-    # vless://UUID@domain:443?security=tls&flow=xtls-rprx-vision&type=tcp&sni=domain#Vision
+    # Имя в том же стиле что WS и Reality: 🇩🇪 VL-Vision | label 🇩🇪
+    local flag server_ip v_label v_name v_encoded_name
+    server_ip=$(getServerIP 2>/dev/null || echo "")
+    flag=$(_getCountryFlag "$server_ip" 2>/dev/null || echo "🌐")
+    v_label="default"
+    [ -f "$USERS_FILE" ] && v_label=$(cut -d'|' -f2 "$USERS_FILE" | head -1)
+    v_name="${flag} VL-Vision | ${v_label} ${flag}"
+    v_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$v_name" 2>/dev/null || echo "$v_name")
+
     local link
-    link="vless://${uuid}@${domain}:443?security=tls&flow=xtls-rprx-vision&type=tcp&sni=${domain}&fp=chrome&allowInsecure=0#Vision-${domain}"
+    link="vless://${uuid}@${domain}:443?security=tls&flow=xtls-rprx-vision&type=tcp&sni=${domain}&fp=chrome&allowInsecure=0#${v_encoded_name}"
 
     echo -e "${cyan}$(msg vision_qr_title):${reset}"
     echo ""
