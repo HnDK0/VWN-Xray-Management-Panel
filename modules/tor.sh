@@ -135,9 +135,6 @@ applyTorOutbound() {
     local tor_ob='{"tag":"tor","protocol":"socks","settings":{"servers":[{"address":"127.0.0.1","port":40003}]}}'
 
     for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
-        [ -f "$cfg" ] || continue
-        local has_ob
-        has_ob=$(jq '.outbounds[] | select(.tag=="tor")' "$cfg" 2>/dev/null)
         if [ -z "$has_ob" ]; then
             jq --argjson ob "$tor_ob" '.outbounds += [$ob]' \
                 "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
@@ -172,6 +169,7 @@ applyTorDomains() {
     done
     systemctl restart xray 2>/dev/null || true
     systemctl restart xray-reality 2>/dev/null || true
+    systemctl restart xray-vision 2>/dev/null || true
     echo "${green}$(msg tor_split_ok)${reset}"
 }
 
@@ -184,6 +182,7 @@ toggleTorGlobal() {
     done
     systemctl restart xray 2>/dev/null || true
     systemctl restart xray-reality 2>/dev/null || true
+    systemctl restart xray-vision 2>/dev/null || true
     echo "${green}$(msg tor_global_ok)${reset}"
 }
 
@@ -195,6 +194,7 @@ removeTorFromConfigs() {
     done
     systemctl restart xray 2>/dev/null || true
     systemctl restart xray-reality 2>/dev/null || true
+    systemctl restart xray-vision 2>/dev/null || true
 }
 
 checkTorIP() {

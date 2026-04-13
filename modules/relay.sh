@@ -163,6 +163,7 @@ applyRelayDomains() {
     done
     systemctl restart xray 2>/dev/null || true
     systemctl restart xray-reality 2>/dev/null || true
+    systemctl restart xray-vision 2>/dev/null || true
     echo "${green}$(msg relay_split_ok)${reset}"
 }
 
@@ -175,6 +176,7 @@ toggleRelayGlobal() {
     done
     systemctl restart xray 2>/dev/null || true
     systemctl restart xray-reality 2>/dev/null || true
+    systemctl restart xray-vision 2>/dev/null || true
     echo "${green}$(msg relay_global_ok)${reset}"
 }
 
@@ -187,6 +189,7 @@ removeRelayFromConfigs() {
     done
     systemctl restart xray 2>/dev/null || true
     systemctl restart xray-reality 2>/dev/null || true
+    systemctl restart xray-vision 2>/dev/null || true
 }
 
 checkRelayIP() {

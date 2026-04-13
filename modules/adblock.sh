@@ -99,6 +99,7 @@ enableAdblock() {
 
     systemctl restart xray 2>/dev/null || true
     systemctl restart xray-reality 2>/dev/null || true
+    systemctl restart xray-vision 2>/dev/null || true
 
     vwn_conf_set adblock_enabled 1
     echo "${green}$(msg adblock_enabled)${reset}"
@@ -116,6 +117,7 @@ disableAdblock() {
 
     systemctl restart xray 2>/dev/null || true
     systemctl restart xray-reality 2>/dev/null || true
+    systemctl restart xray-vision 2>/dev/null || true
 
     vwn_conf_set adblock_enabled 0
     echo "${green}$(msg adblock_disabled)${reset}"
