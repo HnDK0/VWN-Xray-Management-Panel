@@ -69,7 +69,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
 | `--stream` | off | Activate Stream SNI — serve WS + Reality on port 443 via SNI multiplexing |
 | `--vision` | off | Install VLESS+TLS+Vision (requires WS+TLS + Stream SNI) |
 | `--vision-domain DOMAIN` | — | Direct domain for Vision. **Required** with `--vision`. No Cloudflare proxy! |
-| `--vision-cert-method cf\|standalone` | same as `--cert-method` | SSL method for the Vision domain |
+| `--vision-cert-method cf\|standalone` | `standalone` | SSL method for the Vision domain |
 | `--bbr` | off | Enable BBR TCP congestion control |
 | `--fail2ban` | off | Install Fail2Ban + WebJail (nginx scanner protection) |
 | `--no-warp` | off | Skip Cloudflare WARP setup |
@@ -623,7 +623,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
 | `--stream` | выкл. | Активировать Stream SNI — WS + Reality на порту 443 |
 | `--vision` | выкл. | Установить VLESS+TLS+Vision (требует WS+TLS + Stream SNI) |
 | `--vision-domain DOMAIN` | — | Прямой домен для Vision. **Обязателен** с `--vision`. Без CF-прокси! |
-| `--vision-cert-method cf\|standalone` | = `--cert-method` | Метод SSL для домена Vision |
+| `--vision-cert-method cf\|standalone` | `standalone` | Метод SSL для домена Vision |
 | `--bbr` | выкл. | Включить BBR TCP |
 | `--fail2ban` | выкл. | Установить Fail2Ban + WebJail |
 | `--no-warp` | выкл. | Не настраивать Cloudflare WARP |
