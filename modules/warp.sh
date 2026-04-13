@@ -122,8 +122,7 @@ toggleWarpMode() {
         3)
             for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
                 [ -f "$cfg" ] || continue
-                jq 'del(.routing.rules[] | select(.outboundTag == "warp")) |
-                    del(.outbounds[] | select(.tag == "warp"))' \
+                jq 'del(.routing.rules[] | select(.outboundTag == "warp"))' \
                     "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
             done
             echo "${green}$(msg warp_off_ok)${reset}"

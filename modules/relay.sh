@@ -124,9 +124,9 @@ applyRelayToConfigs() {
 
     for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
         [ -f "$cfg" ] || continue
-        local has_ob
-        has_ob=$(jq '.outbounds[] | select(.tag=="relay")' "$cfg" 2>/dev/null)
-        if [ -z "$has_ob" ]; then
+        local has_relay
+        has_relay=$(jq '.outbounds[] | select(.tag=="relay")' "$cfg" 2>/dev/null)
+        if [ -z "$has_relay" ]; then
             jq --argjson ob "$relay_outbound" '.outbounds += [$ob]' \
                 "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
         else
@@ -183,8 +183,7 @@ toggleRelayGlobal() {
 removeRelayFromConfigs() {
     for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
         [ -f "$cfg" ] || continue
-        jq 'del(.routing.rules[] | select(.outboundTag == "relay")) |
-            del(.outbounds[] | select(.tag == "relay"))' \
+        jq 'del(.outbounds[] | select(.tag=="relay")) | del(.routing.rules[] | select(.outboundTag=="relay"))' \
             "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
     done
     systemctl restart xray 2>/dev/null || true
