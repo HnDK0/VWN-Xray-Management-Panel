@@ -40,9 +40,10 @@ writeVisionConfig() {
     local uuid="$1"
     local port="$2"
     local domain="$3"
-    # nginx WS внутренний порт — fallback идёт туда же
-    local nginx_port
-    nginx_port=$(vwn_conf_get NGINX_HTTPS_PORT 2>/dev/null || echo "7443")
+    # Порты fallback — берём из vwn.conf (устанавливаются в writeVisionNginxConfig)
+    local vision_h1_port vision_h2_port
+    vision_h1_port=$(vwn_conf_get VISION_H1_PORT 2>/dev/null || echo "7445")
+    vision_h2_port=$(vwn_conf_get VISION_H2_PORT 2>/dev/null || echo "7446")
 
     mkdir -p "$(dirname "$visionConfigPath")"
 
@@ -60,8 +61,8 @@ writeVisionConfig() {
             "clients": [{"id": "${uuid}", "flow": "xtls-rprx-vision"}],
             "decryption": "none",
             "fallbacks": [
-                {"alpn": "h2", "dest": ${nginx_port}},
-                {"dest": ${nginx_port}}
+                {"alpn": "h2", "dest": ${vision_h2_port}, "xver": 1},
+                {"dest": ${vision_h1_port}, "xver": 1}
             ]
         },
         "streamSettings": {
@@ -170,8 +171,8 @@ _getVisionCert() {
         export CF_Key="$cf_key"
         echo -e "${cyan}Issuing Vision SSL via Cloudflare DNS for $domain ...${reset}"
         "$acme" --issue --dns dns_cf -d "$domain" \
-            --key-file   "$VISION_CERT_KEY" \
-            --cert-file  "$VISION_CERT_PEM" \
+            --key-file        "$VISION_CERT_KEY" \
+            --fullchain-file  "$VISION_CERT_PEM" \
             --reloadcmd  "systemctl reload nginx 2>/dev/null || true; systemctl restart xray-vision 2>/dev/null || true" \
             --force 2>/dev/null || {
             echo "${red}$(msg vision_cert_fail)${reset}"; return 1
@@ -188,8 +189,8 @@ _getVisionCert() {
 
         echo -e "${cyan}Issuing Vision SSL via HTTP-01 for $domain ...${reset}"
         "$acme" --issue --standalone -d "$domain" \
-            --key-file   "$VISION_CERT_KEY" \
-            --cert-file  "$VISION_CERT_PEM" \
+            --key-file        "$VISION_CERT_KEY" \
+            --fullchain-file  "$VISION_CERT_PEM" \
             --reloadcmd  "systemctl reload nginx 2>/dev/null || true; systemctl restart xray-vision 2>/dev/null || true" \
             --force 2>/dev/null
         local acme_exit=$?
@@ -255,29 +256,30 @@ _visionApplyActiveFeatures() {
 
 writeVisionNginxConfig() {
     local vision_domain="$1"
-    local nginx_port
-    nginx_port=$(vwn_conf_get NGINX_HTTPS_PORT 2>/dev/null || echo "7443")
 
+    # Порты для fallback от xray-vision (proxy_protocol, без SSL — TLS уже снят xray)
+    # 7445 — http/1.1, 7446 — h2. Не пересекаются с xray.conf (7443 ssl)
+    local vision_h1_port=7445
+    local vision_h2_port=7446
+
+    # Берём URL фейкового сайта из vwn.conf, fallback — grep xray.conf без 127.0.0.1
     local stub_url proxy_host
-    # Берём proxy_pass из location / — фейковый сайт, исключаем 127.0.0.1 (WS location)
-    # Берём URL фейкового сайта из vwn.conf (сохраняется writeNginxConfig).
-    # Fallback: парсим xray.conf, исключая WS location (127.0.0.1).
     stub_url=$(vwn_conf_get STUB_URL 2>/dev/null)
     [ -z "$stub_url" ] && stub_url=$(grep -oP "(?<=proxy_pass )https?://[^ ;]+" /etc/nginx/conf.d/xray.conf 2>/dev/null | grep -v "127\.0\.0\.1" | head -1)
     [ -z "$stub_url" ] && stub_url="https://www.bing.com/"
     proxy_host=$(echo "$stub_url" | sed 's|https://||;s|http://||;s|/.*||')
 
+    # Сохраняем порты в vwn.conf для использования в writeVisionConfig
+    vwn_conf_set VISION_H1_PORT "$vision_h1_port"
+    vwn_conf_set VISION_H2_PORT "$vision_h2_port"
+
     cat > "/etc/nginx/conf.d/vision.conf" << VISIONCONF
 server {
-    listen ${nginx_port} ssl;
+    listen 127.0.0.1:${vision_h1_port} proxy_protocol;
+    listen 127.0.0.1:${vision_h2_port} http2 proxy_protocol;
     server_name ${vision_domain};
 
-    ssl_certificate     ${VISION_CERT_PEM};
-    ssl_certificate_key ${VISION_CERT_KEY};
-    ssl_protocols       TLSv1.2 TLSv1.3;
-    ssl_ciphers         HIGH:!aNULL:!MD5;
-    ssl_session_cache   shared:SSL:10m;
-    ssl_session_timeout 10m;
+    set_real_ip_from 127.0.0.1;
 
     location / {
         proxy_pass ${stub_url};
