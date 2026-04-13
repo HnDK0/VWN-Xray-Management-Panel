@@ -8,11 +8,74 @@ changeSshPort() {
     if ! [[ "$new_ssh_port" =~ ^[0-9]+$ ]] || [ "$new_ssh_port" -lt 1 ] || [ "$new_ssh_port" -gt 65535 ]; then
         echo "${red}$(msg invalid_port)${reset}"; return 1
     fi
+
+    local old_ssh_port
+    old_ssh_port=$(grep -E "^Port " /etc/ssh/sshd_config | awk '{print $2}' | head -1)
+    old_ssh_port="${old_ssh_port:-22}"
+
     ufw allow "$new_ssh_port"/tcp comment 'SSH'
     sed -i "s/^#\?Port [0-9]*/Port $new_ssh_port/" /etc/ssh/sshd_config
     systemctl restart sshd 2>/dev/null || systemctl restart ssh
     echo "${green}$(msg ssh_changed) $new_ssh_port.${reset}"
     echo "${yellow}$(msg ssh_close_old)${reset}"
+
+    # Если fail2ban установлен — обновляем порт в [sshd] секции
+    if systemctl is-active --quiet fail2ban 2>/dev/null; then
+        echo -e "${cyan}$(msg ssh_f2b_update)${reset}"
+
+        # Определяем backend и logpath как в setupFail2Ban
+        local sshd_backend sshd_logpath
+        if [ -f /var/log/auth.log ]; then
+            sshd_backend="auto"
+            sshd_logpath="logpath  = /var/log/auth.log"
+        else
+            sshd_backend="systemd"
+            sshd_logpath=""
+        fi
+
+        # Перезаписываем только [sshd] секцию в jail.local
+        # Используем python3 чтобы не сломать остальные секции
+        python3 - "$new_ssh_port" "$sshd_backend" "$sshd_logpath" << 'PEOF'
+import sys, re
+
+new_port    = sys.argv[1]
+backend     = sys.argv[2]
+logpath_str = sys.argv[3]
+
+jail_path = "/etc/fail2ban/jail.local"
+try:
+    with open(jail_path) as f:
+        content = f.read()
+except FileNotFoundError:
+    sys.exit(0)
+
+logpath_line = ("\n" + logpath_str) if logpath_str else ""
+new_sshd = (
+    "[sshd]\n"
+    "enabled  = true\n"
+    "port     = " + new_port + "\n"
+    "filter   = sshd\n"
+    "backend  = " + backend +
+    logpath_line + "\n"
+    "maxretry = 3\n"
+    "bantime  = 24h"
+)
+
+# Заменяем секцию [sshd] целиком — от заголовка до следующей секции или конца файла
+content = re.sub(
+    r'\[sshd\].*?(?=\n\[|\Z)',
+    new_sshd,
+    content,
+    flags=re.DOTALL
+)
+
+with open(jail_path, "w") as f:
+    f.write(content)
+PEOF
+
+        systemctl restart fail2ban
+        echo "${green}$(msg ssh_f2b_updated)${reset}"
+    fi
 }
 
 enableBBR() {
@@ -86,6 +149,31 @@ bantime  = 24h
 EOF
     fi
     systemctl restart fail2ban
+
+    # Проверяем что fail2ban поднялся
+    local attempts=0
+    while [ $attempts -lt 5 ]; do
+        if fail2ban-client ping &>/dev/null; then
+            break
+        fi
+        sleep 1
+        attempts=$((attempts + 1))
+    done
+
+    if ! fail2ban-client ping &>/dev/null; then
+        echo "${red}$(msg webjail_f2b_fail)${reset}"
+        # Откат — убираем nginx-probe чтобы не сломать f2b совсем
+        sed -i '/^\[nginx-probe\]/,/^bantime/d' /etc/fail2ban/jail.local 2>/dev/null || true
+        systemctl restart fail2ban
+        return 1
+    fi
+
+    # Проверяем что nginx-probe jail активен
+    if ! fail2ban-client status nginx-probe &>/dev/null; then
+        echo "${red}$(msg webjail_jail_fail)${reset}"
+        return 1
+    fi
+
     echo "${green}$(msg webjail_ok)${reset}"
 }
 

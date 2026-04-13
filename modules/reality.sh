@@ -419,6 +419,13 @@ removeReality() {
     echo -e "${red}$(msg reality_remove_confirm) $(msg yes_no)${reset}"
     read -r confirm
     if [[ "$confirm" == "y" ]]; then
+        # Если активен Stream SNI — сначала откатываем nginx
+        # иначе после удаления Reality порт 443 перестанет работать для WS
+        if grep -q "ssl_preread on" /etc/nginx/nginx.conf 2>/dev/null; then
+            echo -e "${cyan}$(msg stream_sni_disabling)${reset}"
+            # Передаём confirm=y напрямую чтобы не спрашивать повторно
+            _doDisableStreamSNI
+        fi
         systemctl stop xray-reality 2>/dev/null || true
         systemctl disable xray-reality 2>/dev/null || true
         rm -f /etc/systemd/system/xray-reality.service
@@ -455,6 +462,7 @@ manageReality() {
         echo -e "${green}8.${reset} $(msg reality_logs)"
         echo -e "${green}9.${reset} $(msg reality_remove)"
         echo -e "${green}10.${reset} $(msg menu_stream_sni)"
+        echo -e "${green}11.${reset} $(msg menu_stream_sni_disable)"
         echo -e "${green}0.${reset} $(msg back)"
         echo ""
         read -rp "$(msg choose)" choice
@@ -471,6 +479,7 @@ manageReality() {
                tail -n 30 /var/log/xray/reality-error.log 2>/dev/null || true ;;
             9) removeReality ;;
             10) setupStreamSNI ;;
+            11) disableStreamSNI ;;
             0) break ;;
         esac
         [ "${choice}" = "0" ] && continue

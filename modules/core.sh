@@ -223,22 +223,39 @@ generateRandomPath() {
 # ============================================================
 
 getServerIP() {
-    local ip
-    for url in \
-        "https://api.ipify.org" \
-        "https://ipv4.icanhazip.com" \
-        "https://checkip.amazonaws.com" \
-        "https://api4.my-ip.io/ip" \
-        "https://ipv4.wtfismyip.com/text"; do
-        ip=$(curl -s --connect-timeout 5 "$url" 2>/dev/null | tr -d '[:space:]')
+    local urls=(
+        "https://api.ipify.org"
+        "https://ipv4.icanhazip.com"
+        "https://checkip.amazonaws.com"
+        "https://api4.my-ip.io/ip"
+        "https://ipv4.wtfismyip.com/text"
+    )
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    trap 'rm -rf "$tmpdir"' RETURN
+
+    # Запускаем все curl параллельно
+    local i=0
+    for url in "${urls[@]}"; do
+        curl -s --connect-timeout 5 "$url" > "${tmpdir}/${i}" 2>/dev/null &
+        i=$((i + 1))
+    done
+    wait
+
+    # Берём первый валидный публичный IP
+    for f in "${tmpdir}"/*; do
+        local ip
+        ip=$(cat "$f" 2>/dev/null | tr -d '[:space:]')
         if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            # Проверяем что это не приватный адрес
             if ! [[ "$ip" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
                 echo "$ip"; return
             fi
         fi
     done
+
     # Fallback: локальный маршрут — может вернуть приватный IP
+    local ip
     ip=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')
     echo "${ip:-UNKNOWN}"
 }

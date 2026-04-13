@@ -739,11 +739,9 @@ setupStreamSNI() {
 }
 
 # Отключает stream SNI — возвращает nginx на прямой listen 443.
-disableStreamSNI() {
-    echo "${yellow}$(msg stream_sni_disable_confirm) $(msg yes_no)${reset}"
-    read -r confirm
-    [[ "$confirm" != "y" ]] && return
-
+# Внутренняя функция — выполняет откат без подтверждения
+# Вызывается из disableStreamSNI (интерактив) и removeReality (автомат)
+_doDisableStreamSNI() {
     local domain xray_port proxy_url ws_path
     domain=$(vwn_conf_get DOMAIN)
     xray_port=$(jq -r '.inbounds[0].port // empty' "$configPath" 2>/dev/null)
@@ -756,9 +754,27 @@ disableStreamSNI() {
     vwn_conf_del NGINX_HTTPS_PORT
     vwn_conf_del REALITY_INTERNAL_PORT
 
+    # Возвращаем Reality на 0.0.0.0 и его оригинальный порт
+    # При setupStreamSNI Reality был переведён на 127.0.0.1:internal_port
+    if [ -f "$realityConfigPath" ]; then
+        local reality_orig_port
+        reality_orig_port=$(jq -r '.inbounds[0].port' "$realityConfigPath" 2>/dev/null)
+        jq '.inbounds[0].listen = "0.0.0.0"' \
+            "$realityConfigPath" > "${realityConfigPath}.tmp" \
+            && mv "${realityConfigPath}.tmp" "$realityConfigPath"
+        systemctl restart xray-reality 2>/dev/null || true
+    fi
+
     nginx -t && systemctl reload nginx
     echo "${green}$(msg stream_sni_disabled)${reset}"
 
     # Перегенерируем подписки: Reality снова на своём прямом порту
     rebuildAllSubFiles 2>/dev/null || true
+}
+
+disableStreamSNI() {
+    echo "${yellow}$(msg stream_sni_disable_confirm) $(msg yes_no)${reset}"
+    read -r confirm
+    [[ "$confirm" != "y" ]] && return
+    _doDisableStreamSNI
 }

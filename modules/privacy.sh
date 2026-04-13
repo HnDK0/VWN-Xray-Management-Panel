@@ -126,6 +126,14 @@ _disableXrayLogTmpfs() {
 
 _shredCurrentLogs() {
     echo -e "${cyan}$(msg privacy_shred_logs)${reset}"
+
+    # Предупреждение: ext4 с журналированием не даёт 100% гарантий уничтожения
+    local fs_type
+    fs_type=$(df -T /var/log 2>/dev/null | awk 'NR==2{print $2}')
+    if [[ "$fs_type" == "ext4" || "$fs_type" == "ext3" ]]; then
+        echo -e "${yellow}$(msg privacy_shred_ext4_warn)${reset}"
+    fi
+
     local _files=(
         /var/log/xray/access.log
         /var/log/xray/error.log
@@ -142,9 +150,24 @@ _shredCurrentLogs() {
             : > "$f"
         fi
     done
+
     # journald — удаляем старые записи
     journalctl --rotate &>/dev/null
     journalctl --vacuum-time=1s &>/dev/null
+
+    # ext4: принудительный сброс journal чтобы старые данные не остались в нём
+    if [[ "$fs_type" == "ext4" || "$fs_type" == "ext3" ]]; then
+        local dev
+        dev=$(df /var/log 2>/dev/null | awk 'NR==2{print $1}')
+        if [ -n "$dev" ] && command -v tune2fs &>/dev/null; then
+            # Флашим journal — перезаписываем его блоки
+            tune2fs -E journal_data_writeback "$dev" 2>/dev/null || true
+            tune2fs -E journal_data_ordered "$dev" 2>/dev/null || true
+        fi
+        # sync гарантирует что все грязные страницы сброшены на диск
+        sync
+    fi
+
     echo "${green}$(msg privacy_shred_done)${reset}"
 }
 

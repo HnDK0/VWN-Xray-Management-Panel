@@ -252,10 +252,33 @@ check_os() {
     fi
 }
 
+_installJq() {
+    local JQ_VERSION="1.7.1"
+    local JQ_URL="https://github.com/jqlang/jq/releases/download/jq-${JQ_VERSION}/jq-linux-amd64"
+    local JQ_BIN="/usr/local/bin/jq"
+
+    # Проверяем текущую версию
+    local current_version
+    current_version=$(jq --version 2>/dev/null | grep -oP '[\d.]+' | head -1)
+    if [ "$current_version" = "$JQ_VERSION" ]; then
+        echo "info: jq ${JQ_VERSION} already installed, skipping."
+        return 0
+    fi
+
+    echo -n "  installing jq ${JQ_VERSION}... "
+    if curl -fsSL --connect-timeout 15 "$JQ_URL" -o "$JQ_BIN" 2>/dev/null; then
+        chmod +x "$JQ_BIN"
+        echo "${green}OK${reset}"
+    else
+        echo "${red}FAIL (will use system jq)${reset}"
+    fi
+}
+
 install_deps() {
     echo -e "${cyan}$(msg install_deps)${reset}"
     if command -v apt &>/dev/null; then
         apt-get update -qq
+        # jq из репозитория — fallback если скачать не удастся
         apt-get install -y --no-install-recommends curl jq bash coreutils cron 2>/dev/null || true
         systemctl enable --now cron 2>/dev/null || true
     elif command -v dnf &>/dev/null; then
@@ -265,6 +288,8 @@ install_deps() {
         yum install -y curl jq bash cronie 2>/dev/null || true
         systemctl enable --now crond 2>/dev/null || true
     fi
+    # Устанавливаем фиксированную версию jq поверх системной
+    _installJq
 }
 
 download_modules() {
