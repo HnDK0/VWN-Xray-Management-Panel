@@ -728,7 +728,7 @@ _initLang() {
     MSG[stream_sni_already_active]=$( [ "$VWN_LANG" = en ] && echo "Stream SNI is already active:" || echo "Stream SNI уже активен:")
     MSG[stream_sni_reconfigure]=$( [ "$VWN_LANG" = en ] && echo "Reconfigure with new ports?" || echo "Перенастроить с новыми портами?")
     # ── Vision ───────────────────────────────────────────────────────────────
-    MSG[menu_vision]=$(              [ "$VWN_LANG" = en ] && echo "Vision (VLESS+TLS+Vision flow)"          || echo "Vision (VLESS+TLS+Vision flow)")
+    MSG[menu_vision]=$(              [ "$VWN_LANG" = en ] && echo "Manage VLESS+TLS+Vision flow"          || echo "Управление VLESS+TLS+Vision flow")
     MSG[vision_title]=$(             [ "$VWN_LANG" = en ] && echo "=== VLESS + TLS + Vision ==="            || echo "=== VLESS + TLS + Vision ===")
     MSG[vision_install]=$(           [ "$VWN_LANG" = en ] && echo "Install Vision"                          || echo "Установить Vision")
     MSG[vision_remove]=$(            [ "$VWN_LANG" = en ] && echo "Remove Vision"                           || echo "Удалить Vision")
