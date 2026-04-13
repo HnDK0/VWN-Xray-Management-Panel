@@ -248,6 +248,53 @@ _visionApplyActiveFeatures() {
     fi
 }
 
+# ── Nginx server блок для Vision домена ──────────────────────────
+# Fallback от xray-vision приходит на nginx:7443 с SNI vision-domain.
+# Без этого блока nginx не находит совпадения → default_server с
+# самоподписанным сертом → ERR_HTTP2_PROTOCOL_ERROR в браузере.
+
+writeVisionNginxConfig() {
+    local vision_domain="$1"
+    local nginx_port
+    nginx_port=$(vwn_conf_get NGINX_HTTPS_PORT 2>/dev/null || echo "7443")
+
+    local stub_url proxy_host
+    stub_url=$(grep -oP "(?<=proxy_pass )https?://[^ ;]+" /etc/nginx/conf.d/xray.conf 2>/dev/null | head -1)
+    [ -z "$stub_url" ] && stub_url="https://www.bing.com/"
+    proxy_host=$(echo "$stub_url" | sed 's|https://||;s|http://||;s|/.*||')
+
+    cat > "/etc/nginx/conf.d/vision.conf" << VISIONCONF
+server {
+    listen ${nginx_port} ssl;
+    server_name ${vision_domain};
+
+    ssl_certificate     ${VISION_CERT_PEM};
+    ssl_certificate_key ${VISION_CERT_KEY};
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    location / {
+        proxy_pass ${stub_url};
+        proxy_http_version 1.1;
+        proxy_set_header Host ${proxy_host};
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_ssl_server_name on;
+        proxy_read_timeout 60s;
+        proxy_hide_header X-Powered-By;
+        proxy_hide_header Server;
+    }
+
+    access_log off;
+    error_log  /dev/null crit;
+}
+VISIONCONF
+    echo "${green}Vision nginx config written: /etc/nginx/conf.d/vision.conf${reset}"
+}
+
 # ── Основная установка ────────────────────────────────────────────
 
 installVision() {
@@ -358,27 +405,30 @@ installVision() {
     echo ""
     _getVisionCert "$vision_domain" "$cert_method" || return 1
 
-    # 8. Конфиг Xray
+    # 8. Nginx server блок для Vision домена (fallback должен работать с правильным сертом)
+    writeVisionNginxConfig "$vision_domain"
+
+    # 9. Конфиг Xray
     writeVisionConfig "$uuid" "$vision_port" "$vision_domain"
 
-    # 9. Сервис
+    # 10. Сервис
     setupVisionService || return 1
 
-    # 10. Добавляем домен в stream map
+    # 11. Добавляем домен в stream map
     addDomainToStream "$vision_domain" "$vision_port"
     nginx -t && systemctl reload nginx || {
         echo "${red}$(msg nginx_syntax_err)${reset}"; return 1
     }
 
-    # 11. Сохраняем мета-данные
+    # 12. Сохраняем мета-данные
     vwn_conf_set VISION_DOMAIN    "$vision_domain"
     vwn_conf_set VISION_UUID      "$uuid"
     vwn_conf_set vision_port      "$vision_port"
 
-    # 12. Применяем активные фичи (WARP, Relay, Adblock, Privacy...)
+    # 13. Применяем активные фичи (WARP, Relay, Adblock, Privacy...)
     _visionApplyActiveFeatures
 
-    # 13. Итог
+    # 14. Итог
     echo ""
     echo -e "${green}================================================================${reset}"
     echo -e "   $(msg vision_installed)"
@@ -510,6 +560,7 @@ modifyVisionDomain() {
     addDomainToStream "$new_domain" "$vision_port"
 
     vwn_conf_set VISION_DOMAIN "$new_domain"
+    writeVisionNginxConfig "$new_domain"
 
     nginx -t && systemctl reload nginx
     systemctl restart xray-vision 2>/dev/null || true
@@ -537,8 +588,9 @@ removeVision() {
     rm -f "$VISION_SERVICE"
     systemctl daemon-reload
 
-    # Удаляем конфиг и сертификаты
+    # Удаляем конфиг, nginx блок и сертификаты
     rm -f "$visionConfigPath" "$VISION_CERT_PEM" "$VISION_CERT_KEY"
+    rm -f /etc/nginx/conf.d/vision.conf
 
     # Удаляем acme.sh домен
     if [ -f /root/.acme.sh/acme.sh ] && [ -n "$vision_domain" ]; then
@@ -554,6 +606,44 @@ removeVision() {
     nginx -t 2>/dev/null && systemctl reload nginx 2>/dev/null || true
 
     echo "${green}$(msg vision_removed)${reset}"
+}
+
+# ── Пересоздание конфигов без переустановки ──────────────────────
+# Используется когда модули обновились (например убрали xver:1,
+# добавили vision.conf для nginx), но Vision уже установлен.
+
+rebuildVisionConfigs() {
+    if [ ! -f "$visionConfigPath" ]; then
+        echo "${red}$(msg vision_not_installed)${reset}"; return 1
+    fi
+
+    local vision_domain vision_uuid vision_port
+    vision_domain=$(vwn_conf_get VISION_DOMAIN 2>/dev/null || true)
+    vision_uuid=$(vwn_conf_get VISION_UUID 2>/dev/null ||         jq -r '.inbounds[0].settings.clients[0].id // ""' "$visionConfigPath" 2>/dev/null)
+    vision_port=$(vwn_conf_get vision_port 2>/dev/null ||         jq -r '.inbounds[0].port // ""' "$visionConfigPath" 2>/dev/null)
+
+    if [ -z "$vision_domain" ] || [ -z "$vision_uuid" ] || [ -z "$vision_port" ]; then
+        echo "${red}$(msg vision_not_installed) (missing params in vwn.conf)${reset}"; return 1
+    fi
+
+    echo -e "${cyan}Rebuilding Vision configs...${reset}"
+
+    # 1. Пересоздаём vision.json (актуальная версия без xver:1)
+    echo -e "  ${cyan}[1/3] vision.json...${reset}"
+    writeVisionConfig "$vision_uuid" "$vision_port" "$vision_domain"
+
+    # 2. Пересоздаём /etc/nginx/conf.d/vision.conf
+    echo -e "  ${cyan}[2/3] nginx vision.conf...${reset}"
+    writeVisionNginxConfig "$vision_domain"
+
+    # 3. Перезапускаем сервисы
+    echo -e "  ${cyan}[3/3] Restarting services...${reset}"
+    nginx -t && systemctl reload nginx || {
+        echo "${red}$(msg nginx_syntax_err)${reset}"; return 1
+    }
+    systemctl restart xray-vision 2>/dev/null || true
+
+    echo "${green}Done. Vision configs rebuilt.${reset}"
 }
 
 # ── Меню ──────────────────────────────────────────────────────────
@@ -583,6 +673,7 @@ manageVision() {
         echo -e "${green}4.${reset} $(msg vision_modify_uuid)"
         echo -e "${green}5.${reset} $(msg vision_modify_domain)"
         echo -e "${green}6.${reset} $(msg vision_remove)"
+        echo -e "${green}7.${reset} Rebuild configs (nginx + xray-vision)"
         echo -e "${green}0.${reset} $(msg back)"
         echo ""
         read -rp "$(msg choose)" choice
@@ -593,6 +684,7 @@ manageVision() {
             4) modifyVisionUUID ;;
             5) modifyVisionDomain ;;
             6) removeVision ;;
+            7) rebuildVisionConfigs ;;
             0) break ;;
         esac
         [ "$choice" = "0" ] && continue

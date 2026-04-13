@@ -232,6 +232,18 @@ try:
         print(f'    public-key: {pbk}')
         print(f'    short-id: {sid}')
         print(f'  flow: xtls-rprx-vision')
+    elif security == 'tls' and params.get('flow', '') == 'xtls-rprx-vision':
+        sni = params.get('sni', host)
+        print(f'- name: \"{name}\"')
+        print(f'  type: vless')
+        print(f'  server: {host}')
+        print(f'  port: {port}')
+        print(f'  uuid: {uuid}')
+        print(f'  tls: true')
+        print(f'  servername: {sni}')
+        print(f'  client-fingerprint: chrome')
+        print(f'  network: tcp')
+        print(f'  flow: xtls-rprx-vision')
 except Exception as e:
     pass
 " "$url" 2>/dev/null
@@ -300,7 +312,7 @@ HTMLEOF
         local proto_label="VLESS" proto_class=""
         echo "$cfg" | grep -q "type=ws"            && proto_label="WS+TLS"  && proto_class="ws"
         echo "$cfg" | grep -q "security=reality"   && proto_label="Reality" && proto_class="reality"
-        echo "$cfg" | grep -q "flow=xtls-rprx-vision" && echo "$cfg" | grep -q "security=tls" && proto_label="Vision" && proto_class="vision"
+        echo "$cfg" | grep -q "flow=xtls-rprx-vision" && echo "$cfg" | grep -q "security=tls" && proto_label="Vision+TLS" && proto_class="vision"
         cat >> "$htmlfile" << CARDEOF
 <div class="card">
   <span class="proto ${proto_class}">${proto_label}</span>
