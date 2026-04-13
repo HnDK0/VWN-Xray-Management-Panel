@@ -259,7 +259,11 @@ writeVisionNginxConfig() {
     nginx_port=$(vwn_conf_get NGINX_HTTPS_PORT 2>/dev/null || echo "7443")
 
     local stub_url proxy_host
-    stub_url=$(grep -oP "(?<=proxy_pass )https?://[^ ;]+" /etc/nginx/conf.d/xray.conf 2>/dev/null | head -1)
+    # Берём proxy_pass из location / — фейковый сайт, исключаем 127.0.0.1 (WS location)
+    # Берём URL фейкового сайта из vwn.conf (сохраняется writeNginxConfig).
+    # Fallback: парсим xray.conf, исключая WS location (127.0.0.1).
+    stub_url=$(vwn_conf_get STUB_URL 2>/dev/null)
+    [ -z "$stub_url" ] && stub_url=$(grep -oP "(?<=proxy_pass )https?://[^ ;]+" /etc/nginx/conf.d/xray.conf 2>/dev/null | grep -v "127\.0\.0\.1" | head -1)
     [ -z "$stub_url" ] && stub_url="https://www.bing.com/"
     proxy_host=$(echo "$stub_url" | sed 's|https://||;s|http://||;s|/.*||')
 

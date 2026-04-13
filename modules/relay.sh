@@ -177,6 +177,9 @@ toggleRelayGlobal() {
 
 removeRelayFromConfigs() {
     for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+        [ -f "$cfg" ] || continue
+        jq 'del(.routing.rules[] | select(.outboundTag == "relay")) |
+            del(.outbounds[] | select(.tag == "relay"))' \
             "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
     done
     systemctl restart xray 2>/dev/null || true

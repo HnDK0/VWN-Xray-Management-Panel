@@ -180,6 +180,9 @@ map \$uri \$sub_label {
     default                                                    "${country_code} VLESS";
 }
 MAPEOF
+    # Сохраняем URL фейкового сайта — используется в writeVisionNginxConfig
+    vwn_conf_set STUB_URL "$proxyUrl"
+
     # Восстанавливаем реальный IP — всегда нужно при Cloudflare
     setupRealIpRestore
 
@@ -576,7 +579,8 @@ events {
 # ── Stream: SNI-маршрутизация на порту 443 ──────────────────────────────────
 stream {
     map \$ssl_preread_server_name \$upstream_backend {
-$(printf '%b' "$map_lines")        default     127.0.0.1:${default_port};
+$(printf '%b' "$map_lines")
+        default     127.0.0.1:${default_port};
     }
     server {
         listen 443;
