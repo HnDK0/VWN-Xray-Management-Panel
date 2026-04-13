@@ -55,7 +55,7 @@ yellow=$(_c setaf 3)$(_c bold)
 cyan=$(_c setaf 6)$(_c bold)
 reset=$(_c sgr0)
 
-MODULES="lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock menu"
+MODULES="lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision menu"
 
 # ── Флаги режима ───────────────────────────────────────────────────
 UPDATE_ONLY=false
@@ -76,6 +76,10 @@ OPT_SKIP_WS=false
 OPT_BBR=false
 OPT_FAIL2BAN=false
 OPT_NO_WARP=false
+OPT_VISION=false
+OPT_VISION_DOMAIN=""
+OPT_VISION_CERT_METHOD=""
+OPT_STREAM=false
 
 # =================================================================
 # Fallback msg() — работает ДО загрузки lang.sh
@@ -130,6 +134,10 @@ _parse_args() {
             --bbr)            OPT_BBR=true ;;
             --fail2ban)       OPT_FAIL2BAN=true ;;
             --no-warp)        OPT_NO_WARP=true ;;
+            --stream)         OPT_STREAM=true ;;
+            --vision)         OPT_VISION=true ;;
+            --vision-domain)  OPT_VISION_DOMAIN="$2";       shift ;;
+            --vision-cert-method) OPT_VISION_CERT_METHOD="$2"; shift ;;
             --help|-h)        _show_help; exit 0 ;;
             *) echo "${yellow}Unknown argument: $1${reset}" ;;
         esac
@@ -163,6 +171,10 @@ OPTIONS for --auto:
   --bbr                      Enable BBR TCP congestion control
   --fail2ban                 Install Fail2Ban + WebJail
   --no-warp                  Skip Cloudflare WARP setup
+  --stream                   Activate Stream SNI (required for Vision)
+  --vision                   Install Vision (VLESS+TLS+Vision flow)
+  --vision-domain DOMAIN     Domain for Vision (no Cloudflare proxy!)
+  --vision-cert-method cf|standalone  SSL method for Vision domain
 
 EXAMPLES:
   # Simple: WS+CDN, standalone SSL
@@ -198,6 +210,19 @@ _validate_auto_params() {
             echo "${red}$(msg auto_cf_req)${reset}"
             exit 1
         fi
+    fi
+
+    if $OPT_VISION; then
+        if [ -z "$OPT_VISION_DOMAIN" ]; then
+            echo "${red}ERROR: --vision-domain is required with --vision${reset}"
+            exit 1
+        fi
+        if $OPT_SKIP_WS; then
+            echo "${red}ERROR: --vision requires WS+TLS (cannot use --skip-ws with --vision)${reset}"
+            exit 1
+        fi
+        # Vision подразумевает stream
+        OPT_STREAM=true
     fi
 
     if ! [[ "$OPT_PORT" =~ ^[0-9]+$ ]] || [ "$OPT_PORT" -lt 443 ] || [ "$OPT_PORT" -gt 65535 ]; then
@@ -514,6 +539,40 @@ _auto_install_reality() {
 }
 
 # =================================================================
+# Неинтерактивная установка Vision
+# =================================================================
+_auto_install_vision() {
+    echo -e "\n${cyan}━━━ Vision ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
+
+    # Stream SNI обязателен — активируем автоматически
+    if ! grep -q "ssl_preread on" /etc/nginx/nginx.conf 2>/dev/null; then
+        echo -e "${cyan}Activating Stream SNI for Vision...${reset}"
+        setupStreamSNI 7443 10443 || {
+            echo "${red}ERROR: Stream SNI activation failed. Vision cannot be installed.${reset}"
+            return 1
+        }
+    fi
+
+    # Метод SSL: если не задан — берём тот же что для WS
+    local cert_method="${OPT_VISION_CERT_METHOD:-${OPT_CERT_METHOD:-standalone}}"
+
+    echo -e "${cyan}Installing Vision for domain: $OPT_VISION_DOMAIN${reset}"
+    echo -e "${cyan}SSL method: $cert_method${reset}"
+
+    # Вызываем installVision с предустановленными параметрами
+    VISION_AUTO_DOMAIN="$OPT_VISION_DOMAIN" \
+    VISION_AUTO_CERT_METHOD="$cert_method" \
+    VISION_AUTO_CF_EMAIL="${OPT_CF_EMAIL:-}" \
+    VISION_AUTO_CF_KEY="${OPT_CF_KEY:-}" \
+        installVision --auto || {
+            echo "${red}Vision installation failed.${reset}"
+            return 1
+        }
+
+    echo -e "${green}Vision done. Domain: $OPT_VISION_DOMAIN${reset}"
+}
+
+# =================================================================
 # Основная функция --auto
 # =================================================================
 _run_auto() {
@@ -576,6 +635,21 @@ _run_auto() {
         _auto_install_reality
     fi
 
+    # Stream SNI — если явно указан и Vision не перекрывает (Vision активирует сам)
+    if $OPT_STREAM && ! $OPT_VISION; then
+        echo -e "\n${cyan}━━━ Stream SNI ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
+        setupStreamSNI 7443 10443 || echo "${yellow}Stream SNI failed (non-fatal)${reset}"
+    fi
+
+    # Vision установка
+    if $OPT_VISION; then
+        set +e
+        _auto_install_vision
+        _vision_exit=$?
+        set -e
+        [ $_vision_exit -ne 0 ] && echo -e "${red}Vision install failed (exit $_vision_exit), continuing...${reset}"
+    fi
+
     # Опциональные компоненты
     if $OPT_BBR; then
         echo -e "${cyan}━━━ BBR ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
@@ -606,6 +680,12 @@ _run_auto() {
         echo -e "  ${cyan}Reality:${reset}"
         echo -e "    Port   : ${green}$OPT_REALITY_PORT${reset}"
         echo -e "    SNI    : ${green}$OPT_REALITY_DEST${reset}"
+    fi
+
+    if $OPT_VISION; then
+        echo -e "  ${cyan}Vision:${reset}"
+        echo -e "    Domain : ${green}$OPT_VISION_DOMAIN${reset}"
+        echo -e "    Port   : ${green}$(vwn_conf_get vision_port 2>/dev/null || echo '20xxx')${reset}"
     fi
 
     echo ""

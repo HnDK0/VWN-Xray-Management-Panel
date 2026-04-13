@@ -18,6 +18,7 @@ configPath='/usr/local/etc/xray/config.json'
 realityConfigPath='/usr/local/etc/xray/reality.json'
 nginxPath='/etc/nginx/conf.d/xray.conf'
 cf_key_file="/root/.cloudflare_api"
+visionConfigPath='/usr/local/etc/xray/vision.json'
 warpDomainsFile='/usr/local/etc/xray/warp_domains.txt'
 relayDomainsFile='/usr/local/etc/xray/relay_domains.txt'
 relayConfigFile='/usr/local/etc/xray/relay.conf'
@@ -210,6 +211,18 @@ setupSwap() {
     else
         echo "${yellow}$(msg swap_fail)${reset}"
     fi
+}
+
+findFreePort() {
+    local start="${1:-20000}" end="${2:-20999}"
+    local port
+    for port in $(seq "$start" "$end"); do
+        if ! ss -tlnp 2>/dev/null | grep -q ":${port} "; then
+            echo "$port"
+            return 0
+        fi
+    done
+    return 1  # не нашли свободный порт
 }
 
 generateRandomPath() {

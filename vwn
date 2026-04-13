@@ -24,7 +24,7 @@ case "${1:-}" in
         exit 0
         ;;
     "status")
-        for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock menu; do
+        for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision menu; do
             [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh"
         done
         _initLang
@@ -32,7 +32,7 @@ case "${1:-}" in
         exit 0
         ;;
     "backup")
-        for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock menu; do
+        for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision menu; do
             [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh"
         done
         _initLang
@@ -40,7 +40,7 @@ case "${1:-}" in
         exit 0
         ;;
     "restore")
-        for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock menu; do
+        for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision menu; do
             [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh"
         done
         _initLang
@@ -48,7 +48,7 @@ case "${1:-}" in
         exit 0
         ;;
     "qr")
-        for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock menu; do
+        for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision menu; do
             [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh"
         done
         _initLang
@@ -58,7 +58,7 @@ case "${1:-}" in
 esac
 
 # Загружаем модули
-for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock menu; do
+for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision menu; do
     if [ -f "$VWN_LIB/${module}.sh" ]; then
         # shellcheck source=/dev/null
         source "$VWN_LIB/${module}.sh"

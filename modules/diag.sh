@@ -317,6 +317,75 @@ _diagConnectivity() {
     echo ""
 }
 
+_diagVision() {
+    echo -e "${cyan}[ $(msg diag_section_vision) ]${reset}"
+
+    if [ ! -f "$visionConfigPath" ]; then
+        _skip "Vision $(msg diag_not_installed)"
+        echo ""
+        return
+    fi
+
+    # Валидность конфига
+    if xray -test -config "$visionConfigPath" &>/dev/null; then
+        _pass "$(msg diag_vision_config_ok)"
+    else
+        _fail "$(msg diag_vision_config_bad)"
+        xray -test -config "$visionConfigPath" 2>&1 | head -5 | sed 's/^/      /'
+    fi
+
+    # Сервис запущен
+    if systemctl is-active --quiet xray-vision 2>/dev/null; then
+        _pass "$(msg diag_vision_running)"
+    else
+        _fail "$(msg diag_vision_stopped)"
+    fi
+
+    # Порт слушается
+    local vision_port
+    vision_port=$(jq -r '.inbounds[0].port // empty' "$visionConfigPath" 2>/dev/null)
+    if [ -n "$vision_port" ] && ss -tlnp 2>/dev/null | grep -q ":${vision_port}"; then
+        _pass "$(msg diag_port_listen): $vision_port (internal)"
+    else
+        _fail "$(msg diag_port_not_listen): ${vision_port:-?}"
+    fi
+
+    # SSL сертификат Vision
+    if [ -f /etc/nginx/cert/vision.pem ]; then
+        local expire_date expire_epoch now_epoch days_left
+        expire_date=$(openssl x509 -enddate -noout -in /etc/nginx/cert/vision.pem 2>/dev/null | cut -d= -f2)
+        expire_epoch=$(date -d "$expire_date" +%s 2>/dev/null)
+        now_epoch=$(date +%s)
+        days_left=$(( (expire_epoch - now_epoch) / 86400 ))
+        if [ "$days_left" -le 0 ]; then
+            _fail "$(msg diag_ssl_expired)"
+        elif [ "$days_left" -lt 15 ]; then
+            _warn "$(msg diag_ssl_expiring): $days_left $(msg diag_days)"
+        else
+            _pass "$(msg diag_vision_ssl_ok): $days_left $(msg diag_days)"
+        fi
+    else
+        _fail "$(msg diag_vision_ssl_missing)"
+    fi
+
+    # DNS резолвинг домена Vision
+    local vision_domain
+    vision_domain=$(vwn_conf_get VISION_DOMAIN 2>/dev/null || true)
+    if [ -n "$vision_domain" ]; then
+        local resolved_ip server_ip
+        resolved_ip=$(getent hosts "$vision_domain" 2>/dev/null | awk '{print $1}' | head -1)
+        server_ip=$(getServerIP)
+        if [ -z "$resolved_ip" ]; then
+            _fail "$(msg diag_dns_fail): $vision_domain"
+        elif [ "$resolved_ip" = "$server_ip" ]; then
+            _pass "$(msg diag_dns_ok): $vision_domain → $resolved_ip"
+        else
+            _warn "$(msg diag_dns_mismatch): $vision_domain → $resolved_ip ($(msg diag_server_ip): $server_ip)"
+        fi
+    fi
+    echo ""
+}
+
 # ── Публичные функции ─────────────────────────────────────────────
 
 runFullDiag() {
@@ -329,6 +398,7 @@ runFullDiag() {
 
     _diagSystem
     _diagXray
+    _diagVision
     _diagNginx
     _diagWarp
     _diagTunnels
@@ -358,10 +428,11 @@ manageDiag() {
         echo -e "${green}1.${reset} $(msg diag_run_full)"
         echo -e "${green}2.${reset} $(msg diag_run_system)"
         echo -e "${green}3.${reset} $(msg diag_run_xray)"
-        echo -e "${green}4.${reset} $(msg diag_run_nginx)"
-        echo -e "${green}5.${reset} $(msg diag_run_warp)"
-        echo -e "${green}6.${reset} $(msg diag_run_tunnels)"
-        echo -e "${green}7.${reset} $(msg diag_run_connect)"
+        echo -e "${green}4.${reset} $(msg diag_run_vision)"
+        echo -e "${green}5.${reset} $(msg diag_run_nginx)"
+        echo -e "${green}6.${reset} $(msg diag_run_warp)"
+        echo -e "${green}7.${reset} $(msg diag_run_tunnels)"
+        echo -e "${green}8.${reset} $(msg diag_run_connect)"
         echo -e "${green}0.${reset} $(msg back)"
         echo ""
         read -rp "$(msg choose)" choice
@@ -369,10 +440,11 @@ manageDiag() {
             1) runFullDiag ;;
             2) clear; _DIAG_ISSUES=(); _diagSystem ;;
             3) clear; _DIAG_ISSUES=(); _diagXray ;;
-            4) clear; _DIAG_ISSUES=(); _diagNginx ;;
-            5) clear; _DIAG_ISSUES=(); _diagWarp ;;
-            6) clear; _DIAG_ISSUES=(); _diagTunnels ;;
-            7) clear; _DIAG_ISSUES=(); _diagConnectivity ;;
+            4) clear; _DIAG_ISSUES=(); _diagVision ;;
+            5) clear; _DIAG_ISSUES=(); _diagNginx ;;
+            6) clear; _DIAG_ISSUES=(); _diagWarp ;;
+            7) clear; _DIAG_ISSUES=(); _diagTunnels ;;
+            8) clear; _DIAG_ISSUES=(); _diagConnectivity ;;
             0) break ;;
         esac
         [ "$choice" = "0" ] && continue

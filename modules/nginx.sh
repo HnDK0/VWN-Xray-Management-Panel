@@ -531,6 +531,35 @@ _writeStreamNginxConf() {
     local nginx_port="$2"
     local reality_port="$3"
 
+    # ── Строим map из STREAM_DOMAINS + текущего WS домена ────────────────────
+    # Формат STREAM_DOMAINS: domain1:port1,domain2:port2,...
+    local stream_domains
+    stream_domains=$(vwn_conf_get STREAM_DOMAINS 2>/dev/null || true)
+
+    # Убеждаемся что WS домен присутствует в списке
+    local ws_entry="${domain}:${nginx_port}"
+    if [ -z "$stream_domains" ]; then
+        stream_domains="$ws_entry"
+        vwn_conf_set STREAM_DOMAINS "$stream_domains"
+    elif ! echo "$stream_domains" | grep -q "^${domain}:"; then
+        stream_domains="${ws_entry},${stream_domains}"
+        vwn_conf_set STREAM_DOMAINS "$stream_domains"
+    fi
+
+    local default_port="${reality_port}"
+    vwn_conf_set STREAM_DEFAULT "$default_port"
+
+    # Генерируем строки map из STREAM_DOMAINS
+    local map_lines=""
+    IFS=',' read -ra _entries <<< "$stream_domains"
+    for _entry in "${_entries[@]}"; do
+        local _d _p
+        _d=$(echo "$_entry" | cut -d: -f1)
+        _p=$(echo "$_entry" | cut -d: -f2)
+        [ -z "$_d" ] || [ -z "$_p" ] && continue
+        map_lines="${map_lines}        ${_d}   127.0.0.1:${_p};\n"
+    done
+
     cat > /etc/nginx/nginx.conf << NGINXSTREAM
 user www-data;
 worker_processes auto;
@@ -545,12 +574,9 @@ events {
 }
 
 # ── Stream: SNI-маршрутизация на порту 443 ──────────────────────────────────
-# Ваш домен (${domain}) → nginx HTTP (${nginx_port})
-# Всё остальное (SNI чужих сайтов для Reality) → xray-reality (${reality_port})
 stream {
     map \$ssl_preread_server_name \$upstream_backend {
-        ${domain}   127.0.0.1:${nginx_port};
-        default     127.0.0.1:${reality_port};
+$(printf '%b' "$map_lines")        default     127.0.0.1:${default_port};
     }
     server {
         listen 443;
@@ -579,6 +605,64 @@ http {
     include /etc/nginx/conf.d/*.conf;
 }
 NGINXSTREAM
+}
+
+# Добавляет домен:порт в stream map и перегенерирует nginx.conf.
+# Использование: addDomainToStream domain port
+addDomainToStream() {
+    local new_domain="$1" new_port="$2"
+    [ -z "$new_domain" ] || [ -z "$new_port" ] && return 1
+
+    local stream_domains default_port ws_domain nginx_port
+    stream_domains=$(vwn_conf_get STREAM_DOMAINS 2>/dev/null || true)
+    default_port=$(vwn_conf_get STREAM_DEFAULT 2>/dev/null || echo "10443")
+
+    # Убираем старую запись для этого домена если есть
+    local new_entry="${new_domain}:${new_port}"
+    local filtered=""
+    IFS=',' read -ra _entries <<< "$stream_domains"
+    for _e in "${_entries[@]}"; do
+        [ -z "$_e" ] && continue
+        local _ed; _ed=$(echo "$_e" | cut -d: -f1)
+        [ "$_ed" = "$new_domain" ] && continue
+        filtered="${filtered:+${filtered},}${_e}"
+    done
+    stream_domains="${filtered:+${filtered},}${new_entry}"
+    vwn_conf_set STREAM_DOMAINS "$stream_domains"
+
+    # Читаем WS домен и nginx_port для вызова _writeStreamNginxConf
+    ws_domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // empty' "$configPath" 2>/dev/null)
+    nginx_port=$(vwn_conf_get NGINX_HTTPS_PORT 2>/dev/null || echo "7443")
+    [ -z "$ws_domain" ] && ws_domain=$(vwn_conf_get DOMAIN 2>/dev/null || echo "")
+
+    _writeStreamNginxConf "$ws_domain" "$nginx_port" "$default_port"
+}
+
+# Удаляет домен из stream map и перегенерирует nginx.conf.
+# Использование: removeDomainFromStream domain
+removeDomainFromStream() {
+    local rem_domain="$1"
+    [ -z "$rem_domain" ] && return 1
+
+    local stream_domains default_port ws_domain nginx_port
+    stream_domains=$(vwn_conf_get STREAM_DOMAINS 2>/dev/null || true)
+    default_port=$(vwn_conf_get STREAM_DEFAULT 2>/dev/null || echo "10443")
+
+    local filtered=""
+    IFS=',' read -ra _entries <<< "$stream_domains"
+    for _e in "${_entries[@]}"; do
+        [ -z "$_e" ] && continue
+        local _ed; _ed=$(echo "$_e" | cut -d: -f1)
+        [ "$_ed" = "$rem_domain" ] && continue
+        filtered="${filtered:+${filtered},}${_e}"
+    done
+    vwn_conf_set STREAM_DOMAINS "$filtered"
+
+    ws_domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // empty' "$configPath" 2>/dev/null)
+    nginx_port=$(vwn_conf_get NGINX_HTTPS_PORT 2>/dev/null || echo "7443")
+    [ -z "$ws_domain" ] && ws_domain=$(vwn_conf_get DOMAIN 2>/dev/null || echo "")
+
+    _writeStreamNginxConf "$ws_domain" "$nginx_port" "$default_port"
 }
 
 setupStreamSNI() {

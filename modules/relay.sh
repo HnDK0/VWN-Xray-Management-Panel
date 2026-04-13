@@ -122,10 +122,7 @@ applyRelayToConfigs() {
     local relay_outbound
     relay_outbound=$(buildRelayOutbound) || return 1
 
-    for cfg in "$configPath" "$realityConfigPath"; do
-        [ -f "$cfg" ] || continue
-        local has_relay
-        has_relay=$(jq '.outbounds[] | select(.tag=="relay")' "$cfg" 2>/dev/null)
+    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
         if [ -z "$has_relay" ]; then
             jq --argjson ob "$relay_outbound" '.outbounds += [$ob]' \
                 "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
@@ -156,7 +153,7 @@ applyRelayDomains() {
     fi
 
     applyRelayToConfigs || return 1
-    for cfg in "$configPath" "$realityConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
         [ -f "$cfg" ] || continue
         jq "(.routing.rules[] | select(.outboundTag == \"relay\")) |= (.domain = [$domains_json] | del(.port))" \
             "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
@@ -168,7 +165,7 @@ applyRelayDomains() {
 
 toggleRelayGlobal() {
     applyRelayToConfigs || return 1
-    for cfg in "$configPath" "$realityConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
         [ -f "$cfg" ] || continue
         jq '(.routing.rules[] | select(.outboundTag == "relay")) |= (.port = "0-65535" | del(.domain))' \
             "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
@@ -179,9 +176,7 @@ toggleRelayGlobal() {
 }
 
 removeRelayFromConfigs() {
-    for cfg in "$configPath" "$realityConfigPath"; do
-        [ -f "$cfg" ] || continue
-        jq 'del(.outbounds[] | select(.tag=="relay")) | del(.routing.rules[] | select(.outboundTag=="relay"))' \
+    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
             "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
     done
     systemctl restart xray 2>/dev/null || true

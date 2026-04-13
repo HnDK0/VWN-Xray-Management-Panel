@@ -65,7 +65,7 @@ applyWarpDomains() {
 
     local warp_rule="{\"type\":\"field\",\"domain\":[$domains_json],\"outboundTag\":\"warp\"}"
 
-    for cfg in "$configPath" "$realityConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
         [ -f "$cfg" ] || continue
         local has_rule
         has_rule=$(jq '.routing.rules[] | select(.outboundTag=="warp")' "$cfg" 2>/dev/null)
@@ -96,7 +96,7 @@ toggleWarpMode() {
     case "$warp_mode" in
         1)
             local warp_global='{"type":"field","port":"0-65535","outboundTag":"warp"}'
-            for cfg in "$configPath" "$realityConfigPath"; do
+            for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
                 [ -f "$cfg" ] || continue
                 local has_rule
                 has_rule=$(jq '.routing.rules[] | select(.outboundTag=="warp")' "$cfg" 2>/dev/null)
@@ -118,9 +118,7 @@ toggleWarpMode() {
             echo "${green}$(msg warp_split_ok)${reset}"
             ;;
         3)
-            for cfg in "$configPath" "$realityConfigPath"; do
-                [ -f "$cfg" ] || continue
-                jq 'del(.routing.rules[] | select(.outboundTag == "warp"))' \
+            for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
                     "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
             done
             echo "${green}$(msg warp_off_ok)${reset}"

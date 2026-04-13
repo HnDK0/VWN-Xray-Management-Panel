@@ -153,10 +153,7 @@ applyPsiphonOutbound() {
     # Добавляет psiphon outbound (SOCKS5 на 40002) в оба конфига Xray
     local psiphon_ob='{"tag":"psiphon","protocol":"socks","settings":{"servers":[{"address":"127.0.0.1","port":40002}]}}'
 
-    for cfg in "$configPath" "$realityConfigPath"; do
-        [ -f "$cfg" ] || continue
-        local has_ob
-        has_ob=$(jq '.outbounds[] | select(.tag=="psiphon")' "$cfg" 2>/dev/null)
+    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
         if [ -z "$has_ob" ]; then
             jq --argjson ob "$psiphon_ob" '.outbounds += [$ob]' \
                 "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
@@ -186,7 +183,7 @@ applyPsiphonDomains() {
 
     applyPsiphonOutbound
 
-    for cfg in "$configPath" "$realityConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
         [ -f "$cfg" ] || continue
         jq "(.routing.rules[] | select(.outboundTag == \"psiphon\")) |= (.domain = [$domains_json] | del(.port))" \
             "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
@@ -198,7 +195,7 @@ applyPsiphonDomains() {
 
 togglePsiphonGlobal() {
     applyPsiphonOutbound
-    for cfg in "$configPath" "$realityConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
         [ -f "$cfg" ] || continue
         jq '(.routing.rules[] | select(.outboundTag == "psiphon")) |= (.port = "0-65535" | del(.domain))' \
             "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
@@ -209,9 +206,7 @@ togglePsiphonGlobal() {
 }
 
 removePsiphonFromConfigs() {
-    for cfg in "$configPath" "$realityConfigPath"; do
-        [ -f "$cfg" ] || continue
-        jq 'del(.outbounds[] | select(.tag=="psiphon")) | del(.routing.rules[] | select(.outboundTag=="psiphon"))' \
+    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
             "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
     done
     systemctl restart xray 2>/dev/null || true
