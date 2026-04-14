@@ -48,6 +48,45 @@ warpDomainsFile='/usr/local/etc/xray/warp_domains.txt'
 relayDomainsFile='/usr/local/etc/xray/relay_domains.txt'
 relayConfigFile='/usr/local/etc/xray/relay.conf'
 psiphonDomainsFile='/usr/local/etc/xray/psiphon_domains.txt'
+
+# ── Системный DNS — предотвращает утечку через DNS хостера ─────────
+setupSystemDNS() {
+    # Используем Cloudflare + Google DNS вместо DNS хостера
+    local dns_servers="1.1.1.1 1.0.0.1 8.8.8.8 8.8.4.4"
+    local resolv_conf="/etc/resolv.conf"
+
+    # Проверяем systemd-resolved
+    if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+        echo "info: setting DNS via systemd-resolved..."
+        resolvectl dns "$(resolvectl status | grep -E '^[0-9]+:' | head -1 | grep -oP '\w+$')" $dns_servers 2>/dev/null || true
+        resolvectl default-route "$(resolvectl status | grep -E '^[0-9]+:' | head -1 | grep -oP '\w+$')" false 2>/dev/null || true
+    fi
+
+    # Фиксируем /etc/resolv.conf
+    if [ -L "$resolv_conf" ]; then
+        # Symlink на systemd-resolved — заменяем реальным файлом
+        rm -f "$resolv_conf"
+    fi
+
+    # Записываем DNS серверы
+    cat > "$resolv_conf" << RESOLVEOF
+# DNS: Cloudflare + Google (предотвращает утечку через DNS хостера)
+nameserver 1.1.1.1
+nameserver 1.0.0.1
+nameserver 8.8.8.8
+nameserver 8.8.4.4
+options edns0 trust-ad
+search .
+RESOLVEOF
+    chmod 644 "$resolv_conf"
+    # Защита от перезаписи
+    chattr +i "$resolv_conf" 2>/dev/null || true
+    echo "info: system DNS set to $dns_servers"
+}
+
+unlockSystemDNS() {
+    chattr -i /etc/resolv.conf 2>/dev/null || true
+}
 psiphonConfigFile='/usr/local/etc/xray/psiphon.json'
 psiphonBin='/usr/local/bin/psiphon-tunnel-core'
 torDomainsFile='/usr/local/etc/xray/tor_domains.txt'

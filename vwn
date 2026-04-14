@@ -76,5 +76,8 @@ if [ ! -f "$VWN_CONF" ] || ! grep -q "VWN_LANG=" "$VWN_CONF" 2>/dev/null; then
     _initLang
 fi
 
+# Системный DNS — предотвращает утечку через DNS хостера
+setupSystemDNS
+
 isRoot
 menu "$@"

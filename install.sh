@@ -469,6 +469,9 @@ _auto_install_ws() {
     # Sysctl
     applySysctl
 
+    # Системный DNS — предотвращает утечку через DNS хостера
+    setupSystemDNS
+
     # Генерируем WS path
     local wsPath
     wsPath=$(generateRandomPath)
@@ -599,6 +602,9 @@ _run_auto() {
     mkdir -p "$(dirname "$VWN_CONF")"
     vwn_conf_set "VWN_LANG" "$OPT_LANG"
     _initLang
+
+    # Системный DNS — предотвращает утечку через DNS хостера
+    setupSystemDNS
 
     # Системные пакеты + swap
     echo -e "${cyan}━━━ System packages ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
@@ -750,6 +756,10 @@ main() {
             _initLang
         fi
         install_vwn_binary
+
+        # Системный DNS — предотвращает утечку через DNS хостера
+        _load_modules
+        setupSystemDNS
 
         echo -e "\n${green}================================================================${reset}"
         echo -e "   $(msg install_done) $VWN_LIB"
