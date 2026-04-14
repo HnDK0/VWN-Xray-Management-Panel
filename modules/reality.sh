@@ -70,9 +70,10 @@ writeRealityConfig() {
             {
                 "address": "https://9.9.9.9/dns-query",
                 "port": 443
-            }
+            },
+            "8.8.8.8"
         ],
-        "queryStrategy": "UseIP"
+        "queryStrategy": "UseIPv4"
     },
     "inbounds": [{
         "port": $realityPort,
@@ -93,7 +94,7 @@ writeRealityConfig() {
                 "shortIds": ["$shortId"]
             }
         },
-        "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}
+        "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "routeOnly": true}
     }],
     "outbounds": [
         {
@@ -161,9 +162,9 @@ writeRealityConfig() {
         "levels": {
             "0": {
                 "handshake": 4,
-                "connIdle": 300,
-                "uplinkOnly": 2,
-                "downlinkOnly": 5
+                "connIdle": 600,
+                "uplinkOnly": 5,
+                "downlinkOnly": 10
             }
         }
     }

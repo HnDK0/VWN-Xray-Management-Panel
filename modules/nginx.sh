@@ -64,7 +64,6 @@ http {
     include /etc/nginx/mime.types;
     default_type application/octet-stream;
     sendfile on;
-    tcp_nopush on;
     tcp_nodelay on;
 
     # Keepalive — чуть больше чем у Cloudflare (70s), чтобы не рвать соединения
@@ -74,7 +73,7 @@ http {
     server_tokens off;
     gzip on;
     gzip_vary on;
-    gzip_proxied any;
+    gzip_proxied off;
     gzip_comp_level 6;
     gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss;
     include /etc/nginx/conf.d/*.conf;
@@ -121,6 +120,7 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_buffering off;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
         proxy_connect_timeout 10s;
@@ -596,7 +596,6 @@ http {
     include /etc/nginx/mime.types;
     default_type application/octet-stream;
     sendfile on;
-    tcp_nopush on;
     tcp_nodelay on;
     keepalive_timeout 75s;
     keepalive_requests 10000;
@@ -604,7 +603,7 @@ http {
     server_tokens off;
     gzip on;
     gzip_vary on;
-    gzip_proxied any;
+    gzip_proxied off;
     gzip_comp_level 6;
     gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss;
     include /etc/nginx/conf.d/*.conf;

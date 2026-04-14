@@ -180,9 +180,10 @@ writeXrayConfig() {
             {
                 "address": "https://9.9.9.9/dns-query",
                 "port": 443
-            }
+            },
+            "8.8.8.8"
         ],
-        "queryStrategy": "UseIP"
+        "queryStrategy": "UseIPv4"
     },
     "inbounds": [{
         "port": $xrayPort,
@@ -196,16 +197,16 @@ writeXrayConfig() {
             "network": "ws",
             "wsSettings": {
                 "path": "$wsPath",
-                "host": "$domain",
-                "heartbeatPeriod": 30
+                "host": "$domain"
             },
             "sockopt": {
-                "tcpKeepAliveIdle": 100,
+                "tcpKeepAliveIdle": 60,
                 "tcpKeepAliveInterval": 10,
-                "tcpKeepAliveRetry": 3
+                "tcpKeepAliveRetry": 3,
+                "tcpFastOpen": true
             }
         },
-        "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}
+        "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "routeOnly": true}
     }],
     "outbounds": [
         {
@@ -273,9 +274,9 @@ writeXrayConfig() {
         "levels": {
             "0": {
                 "handshake": 4,
-                "connIdle": 300,
-                "uplinkOnly": 2,
-                "downlinkOnly": 5
+                "connIdle": 600,
+                "uplinkOnly": 5,
+                "downlinkOnly": 10
             }
         }
     }

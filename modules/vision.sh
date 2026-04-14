@@ -58,9 +58,10 @@ writeVisionConfig() {
             {
                 "address": "https://9.9.9.9/dns-query",
                 "port": 443
-            }
+            },
+            "8.8.8.8"
         ],
-        "queryStrategy": "UseIP"
+        "queryStrategy": "UseIPv4"
     },
     "inbounds": [{
         "listen": "127.0.0.1",
@@ -158,9 +159,9 @@ writeVisionConfig() {
         "levels": {
             "0": {
                 "handshake": 4,
-                "connIdle": 300,
-                "uplinkOnly": 2,
-                "downlinkOnly": 5
+                "connIdle": 600,
+                "uplinkOnly": 5,
+                "downlinkOnly": 10
             }
         }
     }
