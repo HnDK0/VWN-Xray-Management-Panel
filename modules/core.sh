@@ -51,8 +51,8 @@ psiphonDomainsFile='/usr/local/etc/xray/psiphon_domains.txt'
 
 # ── Системный DNS — предотвращает утечку через DNS хостера ─────────
 setupSystemDNS() {
-    # Используем Cloudflare + Google DNS вместо DNS хостера
-    local dns_servers="1.1.1.1 1.0.0.1 8.8.8.8 8.8.4.4"
+    # Используем Quad9 + Google DNS вместо DNS хостера
+    local dns_servers="9.9.9.9 8.8.8.8"
     local resolv_conf="/etc/resolv.conf"
 
     # Проверяем systemd-resolved
