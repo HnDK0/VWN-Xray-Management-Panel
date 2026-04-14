@@ -59,6 +59,17 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
   --reality --reality-dest microsoft.com:443 --reality-port 8443
 ```
 
+### Full stack (all security features + Psiphon + SSH port change)
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh) \
+  --auto \
+  --domain vpn.example.com \
+  --ssh-port 22222 \
+  --cpu-guard --ipv6 --fail2ban --jail --adblock --privacy \
+  --psiphon --psiphon-country DE \
+  --reality --bbr
+```
+
 ### All `--auto` options
 
 | Option | Default | Description |
@@ -74,12 +85,21 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
 | `--cf-email EMAIL` | — | Cloudflare account email (required for `--cert-method cf`) |
 | `--cf-key KEY` | — | Cloudflare API key (required for `--cert-method cf`) |
 | `--skip-ws` | off | Skip WS install entirely (Reality-only mode) |
+| `--ssh-port PORT` | — | Change SSH port (1–65535). Applied **before** Fail2Ban |
 | `--stream` | off | Activate Stream SNI — serve WS + Reality on port 443 via SNI multiplexing |
 | `--vision` | off | Install VLESS+TLS+Vision (requires WS+TLS + Stream SNI) |
 | `--vision-domain DOMAIN` | — | Direct domain for Vision. **Required** with `--vision`. No Cloudflare proxy! |
 | `--vision-cert-method cf\|standalone` | `standalone` | SSL method for the Vision domain |
+| `--ipv6` | off | Enable IPv6 system-wide |
+| `--cpu-guard` | off | Enable CPU Guard (priority for xray/nginx) |
 | `--bbr` | off | Enable BBR TCP congestion control |
-| `--fail2ban` | off | Install Fail2Ban + WebJail (nginx scanner protection) |
+| `--fail2ban` | off | Install Fail2Ban |
+| `--jail` | off | Enable WebJail (nginx-probe, requires `--fail2ban`) |
+| `--adblock` | off | Enable Adblock (geosite:category-ads-all) |
+| `--privacy` | off | Enable Privacy Mode (no traffic logs) |
+| `--psiphon` | off | Install Psiphon proxy |
+| `--psiphon-country CODE` | `DE` | Psiphon exit country (DE, NL, US, GB, FR, AT, CA, SE) |
+| `--psiphon-warp` | off | Route Psiphon through WARP (requires WARP) |
 | `--no-warp` | off | Skip Cloudflare WARP setup |
 
 > **SSL methods:**
@@ -701,6 +721,17 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
   --reality --reality-dest microsoft.com:443 --reality-port 8443
 ```
 
+### Полный стек (все функции безопасности + Psiphon + смена порта SSH)
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh) \
+  --auto \
+  --domain vpn.example.com \
+  --ssh-port 22222 \
+  --cpu-guard --ipv6 --fail2ban --jail --adblock --privacy \
+  --psiphon --psiphon-country DE \
+  --reality --bbr
+```
+
 ### Все параметры `--auto`
 
 | Параметр | Умолч. | Описание |
@@ -716,12 +747,21 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
 | `--cf-email EMAIL` | — | Email Cloudflare (для `--cert-method cf`) |
 | `--cf-key KEY` | — | API-ключ Cloudflare (для `--cert-method cf`) |
 | `--skip-ws` | выкл. | Пропустить WS (только Reality) |
+| `--ssh-port PORT` | — | Сменить порт SSH (1–65535). Применяется **до** Fail2Ban |
 | `--stream` | выкл. | Активировать Stream SNI — WS + Reality на порту 443 |
 | `--vision` | выкл. | Установить VLESS+TLS+Vision (требует WS+TLS + Stream SNI) |
 | `--vision-domain DOMAIN` | — | Прямой домен для Vision. **Обязателен** с `--vision`. Без CF-прокси! |
 | `--vision-cert-method cf\|standalone` | `standalone` | Метод SSL для домена Vision |
+| `--ipv6` | выкл. | Включить IPv6 |
+| `--cpu-guard` | выкл. | Включить CPU Guard (приоритет xray/nginx) |
 | `--bbr` | выкл. | Включить BBR TCP |
-| `--fail2ban` | выкл. | Установить Fail2Ban + WebJail |
+| `--fail2ban` | выкл. | Установить Fail2Ban |
+| `--jail` | выкл. | Включить WebJail (требует `--fail2ban`) |
+| `--adblock` | выкл. | Включить блокировку рекламы |
+| `--privacy` | выкл. | Включить режим приватности (без логов трафика) |
+| `--psiphon` | выкл. | Установить Psiphon |
+| `--psiphon-country CODE` | `DE` | Страна выхода Psiphon (DE, NL, US, GB, FR, AT, CA, SE) |
+| `--psiphon-warp` | выкл. | Направить Psiphon через WARP (требует WARP) |
 | `--no-warp` | выкл. | Не настраивать Cloudflare WARP |
 
 > **Методы SSL:**
