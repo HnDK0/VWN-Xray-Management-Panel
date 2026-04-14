@@ -71,6 +71,10 @@ http {
     keepalive_timeout 75s;
     keepalive_requests 10000;
 
+    # Глобальный DNS — предотвращает утечку через системный DNS
+    resolver 1.1.1.1 valid=300s ipv6=off;
+    resolver_timeout 5s;
+
     server_tokens off;
     gzip on;
     gzip_vary on;
@@ -601,6 +605,11 @@ http {
     tcp_nodelay on;
     keepalive_timeout 75s;
     keepalive_requests 10000;
+
+    # Глобальный DNS — предотвращает утечку через системный DNS
+    resolver 1.1.1.1 valid=300s ipv6=off;
+    resolver_timeout 5s;
+
     server_tokens off;
     gzip on;
     gzip_vary on;
