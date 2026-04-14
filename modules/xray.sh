@@ -176,7 +176,7 @@ writeXrayConfig() {
         "loglevel": "error"
     },
     "dns": {
-        "servers": [ "127.0.0.1" ]
+        "servers": [ "1.1.1.1" ]
     },
     "inbounds": [{
         "port": $xrayPort,
