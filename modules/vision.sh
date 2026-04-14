@@ -53,6 +53,18 @@ writeVisionConfig() {
         "loglevel": "error",
         "error": "/var/log/xray/vision-error.log"
     },
+    "dns": {
+        "fakeIp": {
+            "enabled": true,
+            "inet4Range": "198.18.0.0/15"
+        },
+        "servers": [
+            {
+                "address": "fakedns",
+                "clientIp": "127.0.0.1"
+            }
+        ]
+    },
     "inbounds": [{
         "listen": "127.0.0.1",
         "port": ${port},

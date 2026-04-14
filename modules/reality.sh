@@ -65,6 +65,18 @@ writeRealityConfig() {
         "error": "/var/log/xray/reality-error.log",
         "loglevel": "error"
     },
+    "dns": {
+        "fakeIp": {
+            "enabled": true,
+            "inet4Range": "198.18.0.0/15"
+        },
+        "servers": [
+            {
+                "address": "fakedns",
+                "clientIp": "127.0.0.1"
+            }
+        ]
+    },
     "inbounds": [{
         "port": $realityPort,
         "listen": "0.0.0.0",
