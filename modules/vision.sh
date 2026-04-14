@@ -127,11 +127,6 @@ writeVisionConfig() {
         "rules": [
             {
                 "type": "field",
-                "port": 53,
-                "outboundTag": "block"
-            },
-            {
-                "type": "field",
                 "ip": ["geoip:private"],
                 "outboundTag": "block"
             },
