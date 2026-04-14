@@ -66,16 +66,13 @@ writeRealityConfig() {
         "loglevel": "error"
     },
     "dns": {
-        "fakeIp": {
-            "enabled": true,
-            "inet4Range": "198.18.0.0/15"
-        },
         "servers": [
             {
-                "address": "fakedns",
-                "clientIp": "127.0.0.1"
+                "address": "https://9.9.9.9/dns-query",
+                "port": 443
             }
-        ]
+        ],
+        "queryStrategy": "UseIP"
     },
     "inbounds": [{
         "port": $realityPort,
@@ -100,6 +97,10 @@ writeRealityConfig() {
     }],
     "outbounds": [
         {
+            "tag": "dns-out",
+            "protocol": "dns"
+        },
+        {
             "tag": "free",
             "protocol": "freedom",
             "settings": {"domainStrategy": "AsIs"}
@@ -117,6 +118,11 @@ writeRealityConfig() {
     "routing": {
         "domainStrategy": "AsIs",
         "rules": [
+            {
+                "type": "field",
+                "port": 53,
+                "outboundTag": "dns-out"
+            },
             {
                 "type": "field",
                 "ip": ["geoip:private"],
