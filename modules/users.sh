@@ -124,7 +124,7 @@ buildUserSubFile() {
         wep=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$wp" 2>/dev/null || echo "$wp")
         connect_host=$(getConnectHost 2>/dev/null || echo "$domain")
         [ -z "$connect_host" ] && connect_host="$domain"
-        name="${flag} VL-WS | ${label} ${flag}"
+        name=$(_getConfigName "WS" "$label" "$server_ip")
         encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$name" 2>/dev/null || echo "$name")
         lines+="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=ws&host=${domain}&path=${wep}#${encoded_name}"$'\n'
     fi
@@ -148,7 +148,7 @@ buildUserSubFile() {
         r_destHost=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0]' "$realityConfigPath" 2>/dev/null)
         r_pubKey=$(vwn_conf_get REALITY_PUBKEY 2>/dev/null)
         [ -z "$r_pubKey" ] && r_pubKey=$(grep "PublicKey:" /usr/local/etc/xray/reality_client.txt 2>/dev/null | awk '{print $NF}')
-        r_name="${flag} VL-Reality | ${label} ${flag}"
+        r_name=$(_getConfigName "Reality" "$label" "$server_ip")
         r_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$r_name" 2>/dev/null || echo "$r_name")
         lines+="vless://${r_uuid}@${server_ip}:${r_port}?encryption=none&security=reality&sni=${r_destHost}&fp=chrome&pbk=${r_pubKey}&sid=${r_shortId}&type=tcp&flow=xtls-rprx-vision#${r_encoded_name}"$'\n'
     fi
@@ -162,7 +162,7 @@ buildUserSubFile() {
         [ -z "$v_uuid" ] && \
             v_uuid=$(jq -r '.inbounds[0].settings.clients[0].id' "$visionConfigPath" 2>/dev/null)
         if [ -n "$v_domain" ] && [ -n "$v_uuid" ] && [ "$v_uuid" != "null" ]; then
-            v_name="${flag} VL-Vision | ${label} ${flag}"
+            v_name=$(_getConfigName "Vision" "$label" "$server_ip")
             v_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$v_name" 2>/dev/null || echo "$v_name")
             lines+="vless://${v_uuid}@${v_domain}:443?security=tls&flow=xtls-rprx-vision&type=tcp&sni=${v_domain}&fp=chrome&allowInsecure=0#${v_encoded_name}"$'\n'
         fi

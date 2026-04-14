@@ -335,7 +335,12 @@ showRealityInfo() {
     echo "ServerName:  $destHost"
     echo "Flow:        xtls-rprx-vision"
     echo "--------------------------------------------------"
-    local url="vless://${uuid}@${serverIP}:${port}?encryption=none&security=reality&sni=${destHost}&fp=chrome&pbk=${pubKey}&sid=${shortId}&type=tcp&flow=xtls-rprx-vision#Reality-${serverIP}"
+    local r_label r_name r_encoded_name
+    r_label="default"
+    [ -f "$USERS_FILE" ] && r_label=$(cut -d'|' -f2 "$USERS_FILE" | head -1)
+    r_name=$(_getConfigName "Reality" "$r_label" "$serverIP")
+    r_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$r_name" 2>/dev/null || echo "$r_name")
+    local url="vless://${uuid}@${serverIP}:${port}?encryption=none&security=reality&sni=${destHost}&fp=chrome&pbk=${pubKey}&sid=${shortId}&type=tcp&flow=xtls-rprx-vision#${r_encoded_name}"
     echo -e "${green}$url${reset}"
     echo "--------------------------------------------------"
 }
@@ -358,7 +363,12 @@ showRealityQR() {
         port=$(jq -r '.inbounds[0].port' "$realityConfigPath")
     fi
 
-    local url="vless://${uuid}@${serverIP}:${port}?encryption=none&security=reality&sni=${destHost}&fp=chrome&pbk=${pubKey}&sid=${shortId}&type=tcp&flow=xtls-rprx-vision#Reality-${serverIP}"
+    local r_label r_name r_encoded_name
+    r_label="default"
+    [ -f "$USERS_FILE" ] && r_label=$(cut -d'|' -f2 "$USERS_FILE" | head -1)
+    r_name=$(_getConfigName "Reality" "$r_label" "$serverIP")
+    r_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$r_name" 2>/dev/null || echo "$r_name")
+    local url="vless://${uuid}@${serverIP}:${port}?encryption=none&security=reality&sni=${destHost}&fp=chrome&pbk=${pubKey}&sid=${shortId}&type=tcp&flow=xtls-rprx-vision#${r_encoded_name}"
     command -v qrencode &>/dev/null || installPackage "qrencode"
     qrencode -s 1 -m 1 -t ANSIUTF8 "$url"
     echo -e "\n${green}$url${reset}\n"

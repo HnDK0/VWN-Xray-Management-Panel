@@ -25,7 +25,76 @@ print(flag)
     fi
 }
 
-# Формирует красивое имя конфига: 🇩🇪 VL-WS | label 🇩🇪
+# Возвращает суффикс активных режимов для имени конфига
+# Примеры: " 🌐☁️CF", " ⟦Ψ⟧��", " 🧅🇫🇷", " �☁️CF🧅�🇪", ""
+_getActiveModesSuffix() {
+    local suffix=""
+    
+    # Проверяем WARP Global режим
+    local warp_global=false
+    if [ -f "$configPath" ]; then
+        local warp_mode
+        warp_mode=$(jq -r '.routing.rules[] | select(.outboundTag=="warp") | if .port == "0-65535" then "Global" else "OFF" end' "$configPath" 2>/dev/null | head -1)
+        [ "$warp_mode" = "Global" ] && warp_global=true
+    fi
+    
+    # Проверяем Psiphon Global
+    local psiphon_global=false
+    local psiphon_country=""
+    if systemctl is-active --quiet psiphon 2>/dev/null && [ -f "$psiphonConfigFile" ]; then
+        psiphon_country=$(jq -r '.EgressRegion // ""' "$psiphonConfigFile" 2>/dev/null)
+        if [ -f "$configPath" ]; then
+            local ps_mode
+            ps_mode=$(jq -r '.routing.rules[] | select(.outboundTag=="psiphon") | if .port == "0-65535" then "Global" else "OFF" end' "$configPath" 2>/dev/null | head -1)
+            [ "$ps_mode" = "Global" ] && psiphon_global=true
+        fi
+    fi
+    
+    # Проверяем TOR Global
+    local tor_global=false
+    local tor_country=""
+    if systemctl is-active --quiet tor 2>/dev/null; then
+        tor_country=$(grep "^ExitNodes" "$TOR_CONFIG" 2>/dev/null | grep -oP '\{[A-Z]+\}' | tr -d '{}' | head -1)
+        if [ -f "$configPath" ]; then
+            local t_mode
+            t_mode=$(jq -r '.routing.rules[] | select(.outboundTag=="tor") | if .port == "0-65535" then "Global" else "OFF" end' "$configPath" 2>/dev/null | head -1)
+            [ "$t_mode" = "Global" ] && tor_global=true
+        fi
+    fi
+    
+    # WARP Global: 🌐☁️CF
+    if [ "$warp_global" = true ]; then
+        suffix=" 🌐☁️CF"
+    fi
+    
+    # Psiphon: ⟦Ψ⟧ + флаг страны
+    if [ -n "$psiphon_country" ] && [[ "$psiphon_country" =~ ^[A-Z]{2}$ ]]; then
+        local flag
+        flag=$(python3 -c "c='${psiphon_country}'; print(''.join(chr(0x1F1E6 + ord(ch) - ord('A')) for ch in c))" 2>/dev/null)
+        if [ -n "$flag" ]; then
+            suffix="$suffix ⟦Ψ⟧$flag"
+        else
+            suffix="$suffix ⟦Ψ⟧"
+        fi
+    elif [ "$psiphon_global" = true ]; then
+        suffix="$suffix ⟦Ψ⟧"
+    fi
+    
+    # TOR: 🧅 + флаг страны
+    if [ "$tor_global" = true ]; then
+        suffix="$suffix 🧅"
+        if [ -n "$tor_country" ] && [[ "$tor_country" =~ ^[A-Z]{2}$ ]]; then
+            local tflag
+            tflag=$(python3 -c "c='${tor_country}'; print(''.join(chr(0x1F1E6 + ord(ch) - ord('A')) for ch in c))" 2>/dev/null)
+            [ -n "$tflag" ] && suffix="$suffix $tflag"
+        fi
+    fi
+    
+    # Убираем лишние пробелы
+    echo "$suffix" | sed 's/^ *//;s/ *$//;s/  */ /g'
+}
+
+# Формирует красивое имя конфига: 🇩🇪 VL-WS | label 🇩🇪 🌐🧅
 # Аргументы: тип (WS|Reality), label, [ip]
 _getConfigName() {
     local type="$1"
@@ -33,10 +102,12 @@ _getConfigName() {
     local ip="${3:-$(getServerIP)}"
     local flag
     flag=$(_getCountryFlag "$ip")
+    local modes
+    modes=$(_getActiveModesSuffix)
     case "$type" in
-        WS)       echo "${flag} VL-WS | ${label} ${flag}" ;;
-        Reality)  echo "${flag} VL-Reality | ${label} ${flag}" ;;
-        *)        echo "${flag} VL-${type} | ${label} ${flag}" ;;
+        WS)       echo "${flag} VL-WS | ${label} ${flag}${modes}" ;;
+        Reality)  echo "${flag} VL-Reality | ${label} ${flag}${modes}" ;;
+        *)        echo "${flag} VL-${type} | ${label} ${flag}${modes}" ;;
     esac
 }
 

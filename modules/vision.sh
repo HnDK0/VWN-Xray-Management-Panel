@@ -576,13 +576,14 @@ showVisionQR() {
         echo "${red}$(msg vision_not_installed)${reset}"; return
     }
 
-    # Имя в том же стиле что WS и Reality: 🇩🇪 VL-Vision | label 🇩🇪
-    local flag server_ip v_label v_name v_encoded_name
+    # Имя в том же стиле что WS и Reality: 🇩🇪 VL-Vision | label 🇩🇪 🌐☁️CF
+    local flag server_ip v_label v_name v_encoded_name modes
     server_ip=$(getServerIP 2>/dev/null || echo "")
     flag=$(_getCountryFlag "$server_ip" 2>/dev/null || echo "🌐")
+    modes=$(_getActiveModesSuffix 2>/dev/null || true)
     v_label="default"
     [ -f "$USERS_FILE" ] && v_label=$(cut -d'|' -f2 "$USERS_FILE" | head -1)
-    v_name="${flag} VL-Vision | ${v_label} ${flag}"
+    v_name="${flag} VL-Vision | ${v_label} ${flag}${modes}"
     v_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$v_name" 2>/dev/null || echo "$v_name")
 
     local link

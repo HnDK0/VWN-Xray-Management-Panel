@@ -51,6 +51,7 @@ psiphonDomainsFile='/usr/local/etc/xray/psiphon_domains.txt'
 psiphonConfigFile='/usr/local/etc/xray/psiphon.json'
 psiphonBin='/usr/local/bin/psiphon-tunnel-core'
 torDomainsFile='/usr/local/etc/xray/tor_domains.txt'
+TOR_CONFIG="/etc/tor/torrc"
 
 VWN_CONF='/usr/local/etc/xray/vwn.conf'
 USERS_FILE="/usr/local/etc/xray/users.conf"
