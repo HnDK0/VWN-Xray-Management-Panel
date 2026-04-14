@@ -328,19 +328,44 @@ download_modules() {
     echo -e "${cyan}$(msg install_modules)${reset}"
     mkdir -p "$VWN_LIB"
 
+    local updated=0 unchanged=0 failed=0
+
     for module in $MODULES; do
-        echo -n "  $(msg loading) ${module}.sh... "
+        local mod_file="${VWN_LIB}/${module}.sh"
+        local old_hash="" new_hash=""
+
+        # Сохраняем хеш старого файла (если есть)
+        [ -f "$mod_file" ] && old_hash=$(md5sum "$mod_file" 2>/dev/null | awk '{print $1}')
+
+        echo -n "  ${module}.sh... "
         if curl -fsSL --connect-timeout 15 \
             "${GITHUB_RAW}/modules/${module}.sh" \
-            -o "${VWN_LIB}/${module}.sh" 2>/dev/null; then
-            echo "${green}OK${reset}"
+            -o "${mod_file}" 2>/dev/null; then
+
+            new_hash=$(md5sum "$mod_file" 2>/dev/null | awk '{print $1}')
+            chmod 644 "$mod_file"
+
+            if [ "$old_hash" = "$new_hash" ]; then
+                echo -e "${yellow}SAME${reset}"
+                unchanged=$((unchanged + 1))
+            else
+                local mod_date
+                mod_date=$(stat -c '%y' "$mod_file" 2>/dev/null | cut -d. -f1)
+                echo -e "${green}UPDATED${reset} (${mod_date})"
+                updated=$((updated + 1))
+            fi
         else
-            echo "${red}$(msg error)${reset}"
-            echo "$(msg module_fail) ${module}.sh"
-            return 1
+            echo -e "${red}FAIL${reset}"
+            echo "    $(msg module_fail) ${module}.sh"
+            failed=$((failed + 1))
         fi
-        chmod 644 "${VWN_LIB}/${module}.sh"
     done
+
+    # Итог
+    echo ""
+    echo -e "${cyan}────────────────────────────────────────────────────────${reset}"
+    echo -e "  Updated: ${green}${updated}${reset}  |  Same: ${yellow}${unchanged}${reset}  |  Failed: ${red}${failed}${reset}"
+    echo -e "${cyan}────────────────────────────────────────────────────────${reset}"
 }
 
 install_vwn_binary() {
