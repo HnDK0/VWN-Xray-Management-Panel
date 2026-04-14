@@ -243,6 +243,17 @@ writeXrayConfig() {
             },
             {
                 "type": "field",
+                "domain": [
+                    "domain:openai.com",
+                    "domain:chatgpt.com",
+                    "domain:oaistatic.com",
+                    "domain:oaiusercontent.com",
+                    "domain:auth0.openai.com"
+                ],
+                "outboundTag": "warp"
+            },
+            {
+                "type": "field",
                 "port": "0-65535",
                 "outboundTag": "free"
             }
