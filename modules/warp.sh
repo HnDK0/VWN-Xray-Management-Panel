@@ -139,10 +139,49 @@ toggleWarpMode() {
 checkWarpStatus() {
     echo "--------------------------------------------------"
     local real_ip warp_ip
+
+    # Получаем реальный IP сервера
     real_ip=$(getServerIP)
-    warp_ip=$(curl -s --connect-timeout 5 -x socks5://127.0.0.1:40000 https://api.ipify.org 2>/dev/null | tr -d '[:space:]' || echo "Error/Offline")
     echo "$(msg warp_real_ip) : $real_ip"
-    echo "$(msg warp_ip) : $warp_ip"
+
+    # Проверяем, установлен ли WARP
+    if ! command -v warp-cli &>/dev/null; then
+        echo "$(msg warp_ip) : ${red}WARP not installed${reset}"
+        echo "--------------------------------------------------"
+        return
+    fi
+
+    # Проверяем статус сервиса WARP
+    if ! systemctl is-active --quiet warp-svc 2>/dev/null; then
+        echo "$(msg warp_ip) : ${red}warp-svc not running${reset}"
+        echo "--------------------------------------------------"
+        return
+    fi
+
+    # Проверяем подключение WARP
+    local warp_status
+    warp_status=$(warp-cli --accept-tos status 2>/dev/null || warp-cli status 2>/dev/null)
+    if ! echo "$warp_status" | grep -q "Connected"; then
+        echo "$(msg warp_ip) : ${yellow}WARP not connected ($warp_status)${reset}"
+        echo "--------------------------------------------------"
+        return
+    fi
+
+    # Пробуем получить IP через WARP SOCKS5 (несколько попыток с увеличенным таймаутом)
+    warp_ip=$(curl -s --connect-timeout 10 --max-time 15 -x socks5://127.0.0.1:40000 https://api.ipify.org 2>/dev/null | tr -d '[:space:]')
+    
+    if [ -n "$warp_ip" ] && [[ "$warp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "$(msg warp_ip) : ${green}$warp_ip${reset}"
+    else
+        # Пробуем альтернативный сервис для проверки
+        warp_ip=$(curl -s --connect-timeout 10 --max-time 15 -x socks5://127.0.0.1:40000 https://ipv4.wtfismyip.com/text 2>/dev/null | tr -d '[:space:]')
+        if [ -n "$warp_ip" ] && [[ "$warp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "$(msg warp_ip) : ${green}$warp_ip${reset}"
+        else
+            echo "$(msg warp_ip) : ${red}Failed to get WARP IP (SOCKS5 may not be responding)${reset}"
+            echo "${yellow}Hint: Try 'warp-cli status' and check if proxy port is set${reset}"
+        fi
+    fi
     echo "--------------------------------------------------"
 }
 

@@ -241,11 +241,17 @@ _diagWarp() {
 
     # Проверяем что SOCKS5 реально работает
     local warp_ip
-    warp_ip=$(curl -s --connect-timeout 8 -x socks5://127.0.0.1:40000 https://api.ipify.org 2>/dev/null)
-    if [ -n "$warp_ip" ]; then
+    warp_ip=$(curl -s --connect-timeout 10 --max-time 15 -x socks5://127.0.0.1:40000 https://api.ipify.org 2>/dev/null | tr -d '[:space:]')
+    if [ -n "$warp_ip" ] && [[ "$warp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         _pass "$(msg diag_warp_socks_ok): $warp_ip"
     else
-        _fail "$(msg diag_warp_socks_fail)"
+        # Пробуем альтернативный сервис
+        warp_ip=$(curl -s --connect-timeout 10 --max-time 15 -x socks5://127.0.0.1:40000 https://ipv4.wtfismyip.com/text 2>/dev/null | tr -d '[:space:]')
+        if [ -n "$warp_ip" ] && [[ "$warp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            _pass "$(msg diag_warp_socks_ok): $warp_ip"
+        else
+            _fail "$(msg diag_warp_socks_fail)"
+        fi
     fi
     echo ""
 }
