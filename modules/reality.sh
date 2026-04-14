@@ -65,9 +65,6 @@ writeRealityConfig() {
         "error": "/var/log/xray/reality-error.log",
         "loglevel": "error"
     },
-    "dns": {
-        "servers": [ "https://dns.quad9.net/dns-query" ]
-    },
     "inbounds": [{
         "port": $realityPort,
         "listen": "0.0.0.0",

@@ -175,9 +175,6 @@ writeXrayConfig() {
         "error": "/var/log/xray/error.log",
         "loglevel": "error"
     },
-    "dns": {
-        "servers": [ "https://dns.quad9.net/dns-query" ]
-    },
     "inbounds": [{
         "port": $xrayPort,
         "listen": "127.0.0.1",
