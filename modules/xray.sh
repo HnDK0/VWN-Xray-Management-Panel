@@ -25,12 +25,14 @@ print(flag)
     fi
 }
 
-# Возвращает суффикс активных режимов для имени конфига
-# Примеры: " 🌐☁️CF", " ⟦Ψ⟧��", " 🧅🇫🇷", " �☁️CF🧅�🇪", ""
+# Возвращает суффикс активных Global режимов для имени конфига
+# Примеры: " 🌐☁️🇩🇪", " 🌐🔱🇳🇱🌉🇺🇸🧅🇫🇷", ""
+# Split режимы НЕ отображаются — только Global
 _getActiveModesSuffix() {
     local suffix=""
+    local has_global=false
     
-    # Проверяем WARP Global режим
+    # Проверяем WARP Global
     local warp_global=false
     if [ -f "$configPath" ]; then
         local warp_mode
@@ -38,55 +40,89 @@ _getActiveModesSuffix() {
         [ "$warp_mode" = "Global" ] && warp_global=true
     fi
     
-    # Проверяем Psiphon Global
+    # Проверяем Psiphon Global + страна
     local psiphon_global=false
     local psiphon_country=""
-    if systemctl is-active --quiet psiphon 2>/dev/null && [ -f "$psiphonConfigFile" ]; then
-        psiphon_country=$(jq -r '.EgressRegion // ""' "$psiphonConfigFile" 2>/dev/null)
-        if [ -f "$configPath" ]; then
-            local ps_mode
-            ps_mode=$(jq -r '.routing.rules[] | select(.outboundTag=="psiphon") | if .port == "0-65535" then "Global" else "OFF" end' "$configPath" 2>/dev/null | head -1)
-            [ "$ps_mode" = "Global" ] && psiphon_global=true
+    if [ -f "$configPath" ]; then
+        local ps_mode
+        ps_mode=$(jq -r '.routing.rules[] | select(.outboundTag=="psiphon") | if .port == "0-65535" then "Global" else "OFF" end' "$configPath" 2>/dev/null | head -1)
+        [ "$ps_mode" = "Global" ] && psiphon_global=true
+    fi
+    [ "$psiphon_global" = true ] && [ -f "$psiphonConfigFile" ] &&         psiphon_country=$(jq -r '.EgressRegion // ""' "$psiphonConfigFile" 2>/dev/null)
+    
+    # Проверяем Relay Global + страна (через ip-api на RELAY_HOST)
+    local relay_global=false
+    local relay_country=""
+    if [ -f "$configPath" ]; then
+        local relay_mode
+        relay_mode=$(jq -r '.routing.rules[] | select(.outboundTag=="relay") | if .port == "0-65535" then "Global" else "OFF" end' "$configPath" 2>/dev/null | head -1)
+        [ "$relay_mode" = "Global" ] && relay_global=true
+    fi
+    if [ "$relay_global" = true ] && [ -f "$relayConfigFile" ]; then
+        local relay_host=""
+        relay_host=$(source "$relayConfigFile" 2>/dev/null && echo "$RELAY_HOST")
+        if [ -n "$relay_host" ]; then
+            relay_country=$(curl -s --connect-timeout 5 "http://ip-api.com/line/${relay_host}?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
         fi
     fi
     
-    # Проверяем TOR Global
+    # Проверяем TOR Global + страна
     local tor_global=false
     local tor_country=""
-    if systemctl is-active --quiet tor 2>/dev/null; then
-        tor_country=$(grep "^ExitNodes" "$TOR_CONFIG" 2>/dev/null | grep -oP '\{[A-Z]+\}' | tr -d '{}' | head -1)
-        if [ -f "$configPath" ]; then
-            local t_mode
-            t_mode=$(jq -r '.routing.rules[] | select(.outboundTag=="tor") | if .port == "0-65535" then "Global" else "OFF" end' "$configPath" 2>/dev/null | head -1)
-            [ "$t_mode" = "Global" ] && tor_global=true
-        fi
+    if [ -f "$configPath" ]; then
+        local t_mode
+        t_mode=$(jq -r '.routing.rules[] | select(.outboundTag=="tor") | if .port == "0-65535" then "Global" else "OFF" end' "$configPath" 2>/dev/null | head -1)
+        [ "$t_mode" = "Global" ] && tor_global=true
     fi
+    [ "$tor_global" = true ] &&         tor_country=$(grep "^ExitNodes" "$TOR_CONFIG" 2>/dev/null | grep -oP '\{[A-Z]+\}' | tr -d '{}' | head -1)
     
-    # WARP Global: 🌐☁️CF
+    # Если хоть один Global — добавляем 🌐
+    [ "$warp_global" = true ] || [ "$psiphon_global" = true ] || [ "$relay_global" = true ] || [ "$tor_global" = true ] && has_global=true
+    [ "$has_global" = true ] && suffix=" 🌐"
+    
+    # WARP: ☁️ + флаг страны (запрос через WARP socks5)
     if [ "$warp_global" = true ]; then
-        suffix=" 🌐☁️CF"
+        local warp_country=""
+        warp_country=$(curl -s --connect-timeout 5 --socks5 127.0.0.1:40000 "http://ip-api.com/line/?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
+        if [ -n "$warp_country" ] && [[ "$warp_country" =~ ^[A-Z]{2}$ ]]; then
+            local wflag
+            wflag=$(python3 -c "c='${warp_country}'; print(''.join(chr(0x1F1E6 + ord(ch) - ord('A')) for ch in c))" 2>/dev/null)
+            [ -n "$wflag" ] && suffix="$suffix ☁️$wflag"
+        else
+            suffix="$suffix ☁️"
+        fi
     fi
     
-    # Psiphon: ⟦Ψ⟧ + флаг страны
-    if [ -n "$psiphon_country" ] && [[ "$psiphon_country" =~ ^[A-Z]{2}$ ]]; then
-        local flag
-        flag=$(python3 -c "c='${psiphon_country}'; print(''.join(chr(0x1F1E6 + ord(ch) - ord('A')) for ch in c))" 2>/dev/null)
-        if [ -n "$flag" ]; then
-            suffix="$suffix ⟦Ψ⟧$flag"
+    # Psiphon: 🔱 + флаг страны
+    if [ "$psiphon_global" = true ]; then
+        if [ -n "$psiphon_country" ] && [[ "$psiphon_country" =~ ^[A-Z]{2}$ ]]; then
+            local pflag
+            pflag=$(python3 -c "c='${psiphon_country}'; print(''.join(chr(0x1F1E6 + ord(ch) - ord('A')) for ch in c))" 2>/dev/null)
+            [ -n "$pflag" ] && suffix="$suffix 🔱$pflag"
         else
-            suffix="$suffix ⟦Ψ⟧"
+            suffix="$suffix 🔱"
         fi
-    elif [ "$psiphon_global" = true ]; then
-        suffix="$suffix ⟦Ψ⟧"
+    fi
+    
+    # Relay: 🌉 + флаг страны
+    if [ "$relay_global" = true ]; then
+        if [ -n "$relay_country" ] && [[ "$relay_country" =~ ^[A-Z]{2}$ ]]; then
+            local rflag
+            rflag=$(python3 -c "c='${relay_country}'; print(''.join(chr(0x1F1E6 + ord(ch) - ord('A')) for ch in c))" 2>/dev/null)
+            [ -n "$rflag" ] && suffix="$suffix 🌉$rflag"
+        else
+            suffix="$suffix 🌉"
+        fi
     fi
     
     # TOR: 🧅 + флаг страны
     if [ "$tor_global" = true ]; then
-        suffix="$suffix 🧅"
         if [ -n "$tor_country" ] && [[ "$tor_country" =~ ^[A-Z]{2}$ ]]; then
             local tflag
             tflag=$(python3 -c "c='${tor_country}'; print(''.join(chr(0x1F1E6 + ord(ch) - ord('A')) for ch in c))" 2>/dev/null)
-            [ -n "$tflag" ] && suffix="$suffix $tflag"
+            [ -n "$tflag" ] && suffix="$suffix 🧅$tflag"
+        else
+            suffix="$suffix 🧅"
         fi
     fi
     
