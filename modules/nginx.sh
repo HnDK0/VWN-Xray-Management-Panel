@@ -147,6 +147,7 @@ server {
     }
 
     location / {
+        resolver 1.1.1.1 ipv6=off;
         proxy_pass $proxyUrl;
         proxy_http_version 1.1;
         proxy_set_header Host $proxy_host;
