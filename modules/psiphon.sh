@@ -207,6 +207,7 @@ togglePsiphonGlobal() {
     systemctl restart xray 2>/dev/null || true
     systemctl restart xray-reality 2>/dev/null || true
     systemctl restart xray-vision 2>/dev/null || true
+    rebuildAllSubFiles 2>/dev/null || true
     echo "${green}$(msg psiphon_global_ok)${reset}"
 }
 
