@@ -23,6 +23,11 @@ changeSshPort() {
     if systemctl is-active --quiet fail2ban 2>/dev/null; then
         echo -e "${cyan}$(msg ssh_f2b_update)${reset}"
 
+        # Проверяем что iptables доступен
+        if ! command -v iptables &>/dev/null; then
+            echo "${yellow}WARNING: iptables not found, fail2ban may not work properly${reset}"
+        fi
+
         # Определяем backend и logpath как в setupFail2Ban
         local sshd_backend sshd_logpath
         if [ -f /var/log/auth.log ]; then
@@ -33,14 +38,20 @@ changeSshPort() {
             sshd_logpath=""
         fi
 
-        # Перезаписываем только [sshd] секцию в jail.local
-        # Используем python3 чтобы не сломать остальные секции
-        python3 - "$new_ssh_port" "$sshd_backend" "$sshd_logpath" << 'PEOF'
+        # Получаем Cloudflare IP для whitelist
+        local cf_ips=""
+        if command -v curl &>/dev/null; then
+            cf_ips=$(curl -fsSL --connect-timeout 5 "https://www.cloudflare.com/ips-v4" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g')
+        fi
+
+        # Перезаписываем jail.local с сохранением [nginx-probe] если есть
+        python3 - "$new_ssh_port" "$sshd_backend" "$sshd_logpath" "$cf_ips" << 'PEOF'
 import sys, re
 
 new_port    = sys.argv[1]
 backend     = sys.argv[2]
 logpath_str = sys.argv[3]
+cf_ips      = sys.argv[4]
 
 jail_path = "/etc/fail2ban/jail.local"
 try:
@@ -50,6 +61,8 @@ except FileNotFoundError:
     sys.exit(0)
 
 logpath_line = ("\n" + logpath_str) if logpath_str else ""
+
+# Новая [sshd] секция с iptables backend
 new_sshd = (
     "[sshd]\n"
     "enabled  = true\n"
@@ -59,6 +72,25 @@ new_sshd = (
     logpath_line + "\n"
     "maxretry = 3\n"
     "bantime  = 24h"
+)
+
+# Заменяем [DEFAULT] секцию — добавляем banaction и ignoreip
+default_replacement = (
+    "[DEFAULT]\n"
+    "# Принудительно используем iptables (nftables может отсутствовать)\n"
+    "banaction = iptables-multiport\n"
+    "bantime  = 2h\n"
+    "findtime = 10m\n"
+    "maxretry = 5\n"
+    "\n"
+    "# Whitelist: localhost + Cloudflare IPs (не банить CDN трафик)\n"
+    "ignoreip = 127.0.0.1/8 ::1 " + cf_ips + "\n"
+)
+content = re.sub(
+    r'\[DEFAULT\].*?(?=\n\[)',
+    default_replacement,
+    content,
+    flags=re.DOTALL
 )
 
 # Заменяем секцию [sshd] целиком — от заголовка до следующей секции или конца файла
@@ -91,6 +123,13 @@ enableBBR() {
 setupFail2Ban() {
     echo -e "${cyan}$(msg f2b_setup)${reset}"
     [ -z "${PACKAGE_MANAGEMENT_INSTALL:-}" ] && identifyOS
+
+    # Проверяем что iptables доступен (fail2ban требует backend для банов)
+    if ! command -v iptables &>/dev/null; then
+        echo "${red}ERROR: iptables not found. Install iptables first.${reset}"
+        return 1
+    fi
+
     ${PACKAGE_MANAGEMENT_INSTALL} "fail2ban" &>/dev/null
 
     local ssh_port
@@ -107,11 +146,22 @@ setupFail2Ban() {
         sshd_logpath=""
     fi
 
+    # Получаем Cloudflare IP для whitelist (чтобы не банить CDN трафик)
+    local cf_ips=""
+    if command -v curl &>/dev/null; then
+        cf_ips=$(curl -fsSL --connect-timeout 5 "https://www.cloudflare.com/ips-v4" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g')
+    fi
+
     cat > /etc/fail2ban/jail.local << EOF
 [DEFAULT]
+# Принудительно используем iptables (nftables может отсутствовать)
+banaction = iptables-multiport
 bantime  = 2h
 findtime = 10m
 maxretry = 5
+
+# Whitelist: localhost + Cloudflare IPs (не банить CDN трафик)
+ignoreip = 127.0.0.1/8 ::1 ${cf_ips}
 
 [sshd]
 enabled  = true
@@ -122,21 +172,47 @@ $sshd_logpath
 maxretry = 3
 bantime  = 24h
 EOF
-    systemctl restart fail2ban && systemctl enable fail2ban
+
+    # Проверяем что fail2ban запустился
+    systemctl restart fail2ban 2>/dev/null
+    local attempts=0
+    while [ $attempts -lt 5 ]; do
+        if systemctl is-active --quiet fail2ban 2>/dev/null; then
+            break
+        fi
+        sleep 1
+        attempts=$((attempts + 1))
+    done
+
+    if ! systemctl is-active --quiet fail2ban 2>/dev/null; then
+        echo "${red}fail2ban failed to start. Check logs: journalctl -u fail2ban -n 30${reset}"
+        return 1
+    fi
+
+    systemctl enable fail2ban 2>/dev/null
     echo "${green}$(msg f2b_ok) $ssh_port).${reset}"
 }
 
 setupWebJail() {
     echo -e "${cyan}$(msg webjail_setup)${reset}"
-    [ ! -f /etc/fail2ban/jail.local ] && setupFail2Ban
+    [ ! -f /etc/fail2ban/jail.local ] && setupFail2Ban || return 1
 
+    # Улучшенный фильтр — более точный regex, меньше ложных срабатываний
     cat > /etc/fail2ban/filter.d/nginx-probe.conf << 'EOF'
 [Definition]
-failregex = ^<HOST> - .* "(GET|POST|HEAD) .*(\.php|wp-login|admin|\.env|\.git|config\.js|setup\.cgi|xmlrpc).*" (400|403|404|405) \d+
-ignoreregex = ^<HOST> - .* "(GET|POST) /favicon.ico.*"
+# Ловим только явные попытки сканирования уязвимостей
+# — точные совпадения для CMS (.php, wp-*, xmlrpc)
+# — конфигурационные файлы (.env, .git, config.*)
+# — админ панели (admin.php, setup.cgi)
+failregex = ^<HOST> -.*"(GET|POST|HEAD)\s+.*(wp-login\.php|wp-admin|wp-content|wp-includes|xmlrpc\.php|\.env(\.bak|\.old)?|\.git(/|\.)|config\.(php|js|json|yml)|setup\.(cgi|php)|admin\.php|administrator|\.bashrc|\.ssh|phpmyadmin|pma|myadmin)\s.*"\s(400|403|404|405)\s\d+\s.*$
+            ^<HOST> -.*"(GET|POST|HEAD)\s+/.*(\.php\.bak|\.php\.old|\.php\.save|\.sql|\.tar\.gz|\.zip|\.rar|\.mdb|\.db)\s.*"\s(400|403|404)\s\d+\s.*$
+# Исключаем легитимные запросы
+ignoreregex = ^<HOST> -.*"(GET|POST)\s+/(favicon\.ico|robots\.txt|sitemap\.xml|apple-touch-icon.*)\s.*"
 EOF
 
-    if ! grep -q "\[nginx-probe\]" /etc/fail2ban/jail.local; then
+    # Добавляем nginx-probe jail если ещё нет
+    # УВЕЛИЧЕНО: maxretry=15 (было 5), findtime=5m — не банить за случайные 404
+    if ! grep -q "\[nginx-probe\]" /etc/fail2ban/jail.local 2>/dev/null; then
         cat >> /etc/fail2ban/jail.local << 'EOF'
 
 [nginx-probe]
@@ -144,11 +220,16 @@ enabled  = true
 port     = http,https
 filter   = nginx-probe
 logpath  = /var/log/nginx/access.log
-maxretry = 5
+# Важно: 15 попыток за 5 минут — только агрессивные сканеры попадают под бан
+# При Stream SNI легитимный трафик (неизвестные SNI → default backend) не банится
+maxretry = 15
+findtime = 5m
 bantime  = 24h
 EOF
     fi
-    systemctl restart fail2ban
+
+    # Перезапускаем fail2ban
+    systemctl restart fail2ban 2>/dev/null
 
     # Проверяем что fail2ban поднялся
     local attempts=0
@@ -174,7 +255,15 @@ EOF
         return 1
     fi
 
-    echo "${green}$(msg webjail_ok)${reset}"
+    # Показываем статистику
+    local jail_status
+    jail_status=$(fail2ban-client status nginx-probe 2>/dev/null | grep "Currently banned" || echo "")
+    if [ -n "$jail_status" ]; then
+        echo -e "${green}$(msg webjail_ok)${reset}"
+        echo "  $jail_status"
+    else
+        echo "${green}$(msg webjail_ok)${reset}"
+    fi
 }
 
 manageUFW() {
