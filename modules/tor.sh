@@ -145,7 +145,7 @@ applyTorOutbound() {
         local has_rule
         has_rule=$(jq '.routing.rules[] | select(.outboundTag=="tor")' "$cfg" 2>/dev/null)
         if [ -z "$has_rule" ]; then
-            jq '.routing.rules = [.routing.rules[0]] + [{"type":"field","domain":[],"outboundTag":"tor"}] + .routing.rules[1:]' \
+            jq '.routing.rules = [.routing.rules[0]] + [{"type":"field","domain":["domain:whoer.net"],"outboundTag":"tor"}] + .routing.rules[1:]' \
                 "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
         fi
     done
