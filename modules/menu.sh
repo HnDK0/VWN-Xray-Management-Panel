@@ -449,8 +449,8 @@ menu() {
             12) nano "$warpDomainsFile" && applyWarpDomains ;;
             13) checkWarpStatus ;;
             14) enableBBR ;;
-            15) setupFail2Ban ;;
-            16) setupWebJail ;;
+            15) manageFail2Ban ;;
+            16) manageWebJail ;;
             17) changeSshPort ;;
             18) manageUFW ;;
             19) toggleIPv6 ;;

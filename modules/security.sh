@@ -193,6 +193,175 @@ EOF
     echo "${green}$(msg f2b_ok) $ssh_port).${reset}"
 }
 
+removeFail2Ban() {
+    echo -e "${red}$(msg f2b_remove_confirm) $(msg yes_no)${reset}"
+    read -r confirm
+    [[ "$confirm" != "y" ]] && { echo "$(msg cancel)"; return 0; }
+
+    echo -e "${cyan}Removing Fail2Ban...${reset}"
+
+    # Останавливаем сервис
+    systemctl stop fail2ban 2>/dev/null || true
+    systemctl disable fail2ban 2>/dev/null || true
+
+    # Удаляем все iptables правила fail2ban
+    if command -v iptables &>/dev/null; then
+        echo "  Clearing iptables f2b rules..."
+        for chain in $(iptables -L -n 2>/dev/null | grep "f2b" | awk '{print $2}' | sort -u); do
+            iptables -F "$chain" 2>/dev/null || true
+            iptables -X "$chain" 2>/dev/null || true
+        done
+    fi
+
+    # Удаляем конфиги
+    rm -f /etc/fail2ban/jail.local
+    rm -f /etc/fail2ban/filter.d/nginx-probe.conf
+    rm -f /etc/fail2ban/jail.local.d/protect.conf 2>/dev/null || true
+    rm -rf /var/lib/fail2ban 2>/dev/null || true
+    rm -f /var/run/fail2ban/fail2ban.sock 2>/dev/null || true
+
+    # Удаляем пакет
+    if command -v apt &>/dev/null; then
+        apt purge -y fail2ban &>/dev/null || true
+        apt autoremove -y &>/dev/null || true
+    elif command -v dnf &>/dev/null; then
+        dnf remove -y fail2ban &>/dev/null || true
+    elif command -v yum &>/dev/null; then
+        yum remove -y fail2ban &>/dev/null || true
+    fi
+
+    echo "${green}$(msg f2b_removed)${reset}"
+}
+
+reinstallFail2Ban() {
+    echo -e "${cyan}Reinstalling Fail2Ban...${reset}"
+
+    # Сначала удаляем текущую версию
+    systemctl stop fail2ban 2>/dev/null || true
+    systemctl disable fail2ban 2>/dev/null || true
+
+    # Очищаем конфиги
+    rm -f /etc/fail2ban/jail.local
+    rm -f /etc/fail2ban/filter.d/nginx-probe.conf
+    rm -rf /var/lib/fail2ban 2>/dev/null || true
+
+    # Очищаем iptables правила
+    if command -v iptables &>/dev/null; then
+        for chain in $(iptables -L -n 2>/dev/null | grep "f2b" | awk '{print $2}' | sort -u); do
+            iptables -F "$chain" 2>/dev/null || true
+            iptables -X "$chain" 2>/dev/null || true
+        done
+    fi
+
+    # Пересоздаём с нуля
+    setupFail2Ban
+    if systemctl is-active --quiet fail2ban 2>/dev/null; then
+        echo "${green}$(msg f2b_reinstalled)${reset}"
+    else
+        echo "${red}Fail2Ban reinstallation failed. Check: journalctl -u fail2ban -n 30${reset}"
+        return 1
+    fi
+}
+
+rebuildFail2BanConfigs() {
+    echo -e "${cyan}Rebuilding Fail2Ban configs (keep bans)...${reset}"
+
+    # Сохраняем текущий banaction если есть
+    local old_banaction
+    old_banaction=$(grep -E '^banaction\s*=' /etc/fail2ban/jail.local 2>/dev/null | awk '{print $3}' | head -1)
+
+    # Сохраняем SSH порт
+    local ssh_port
+    ssh_port=$(grep -E "^Port " /etc/ssh/sshd_config | awk '{print $2}' | head -1)
+    ssh_port="${ssh_port:-22}"
+
+    # Определяем backend
+    local sshd_backend sshd_logpath
+    if [ -f /var/log/auth.log ]; then
+        sshd_backend="auto"
+        sshd_logpath="logpath  = /var/log/auth.log"
+    else
+        sshd_backend="systemd"
+        sshd_logpath=""
+    fi
+
+    # Получаем Cloudflare IP
+    local cf_ips=""
+    if command -v curl &>/dev/null; then
+        cf_ips=$(curl -fsSL --connect-timeout 5 "https://www.cloudflare.com/ips-v4" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g')
+    fi
+
+    # Используем сохранённый banaction или iptables
+    local ban_action="${old_banaction:-iptables-multiport}"
+
+    cat > /etc/fail2ban/jail.local << EOF
+[DEFAULT]
+# Принудительно используем iptables (nftables может отсутствовать)
+banaction = ${ban_action}
+bantime  = 2h
+findtime = 10m
+maxretry = 5
+
+# Whitelist: localhost + Cloudflare IPs (не банить CDN трафик)
+ignoreip = 127.0.0.1/8 ::1 ${cf_ips}
+
+[sshd]
+enabled  = true
+port     = $ssh_port
+filter   = sshd
+backend  = $sshd_backend
+$sshd_logpath
+maxretry = 3
+bantime  = 24h
+EOF
+
+    # Восстанавливаем nginx-probe если был фильтр
+    if [ -f /etc/fail2ban/filter.d/nginx-probe.conf ]; then
+        cat >> /etc/fail2ban/jail.local << 'EOF'
+
+[nginx-probe]
+enabled  = true
+port     = http,https
+filter   = nginx-probe
+logpath  = /var/log/nginx/access.log
+maxretry = 15
+findtime = 5m
+bantime  = 24h
+EOF
+    fi
+
+    systemctl restart fail2ban 2>/dev/null
+    if systemctl is-active --quiet fail2ban 2>/dev/null; then
+        echo "${green}Fail2Ban configs rebuilt.${reset}"
+    else
+        echo "${red}Failed to restart fail2ban. Check: journalctl -u fail2ban -n 30${reset}"
+        return 1
+    fi
+}
+
+removeWebJail() {
+    echo -e "${yellow}$(msg webjail_remove_confirm) $(msg yes_no)${reset}"
+    read -r confirm
+    [[ "$confirm" != "y" ]] && { echo "$(msg cancel)"; return 0; }
+
+    echo -e "${cyan}Removing Web-Jail (nginx-probe)...${reset}"
+
+    # Убираем nginx-probe из jail.local
+    if [ -f /etc/fail2ban/jail.local ]; then
+        sed -i '/^\[nginx-probe\]/,/^$/d' /etc/fail2ban/jail.local 2>/dev/null || true
+    fi
+
+    # Удаляем фильтр
+    rm -f /etc/fail2ban/filter.d/nginx-probe.conf
+
+    # Перезапускаем fail2ban если он работает
+    if systemctl is-active --quiet fail2ban 2>/dev/null; then
+        systemctl restart fail2ban 2>/dev/null || true
+    fi
+
+    echo "${green}$(msg webjail_removed)${reset}"
+}
+
 setupWebJail() {
     echo -e "${cyan}$(msg webjail_setup)${reset}"
     [ ! -f /etc/fail2ban/jail.local ] && setupFail2Ban || return 1
@@ -426,4 +595,112 @@ SYSCTL
     sysctl --system &>/dev/null
     sysctl -p /etc/sysctl.d/99-xray.conf &>/dev/null
     echo "${green}$(msg sysctl_ok)${reset}"
+}
+
+# ── Подменю Fail2Ban ──────────────────────────────────────────────
+
+manageFail2Ban() {
+    set +e
+    while true; do
+        clear
+        local s_f2b s_banaction s_ignoreip
+        s_f2b=$(getF2BStatus)
+
+        # Получаем banaction из конфига
+        s_banaction=$(grep -E '^banaction\s*=' /etc/fail2ban/jail.local 2>/dev/null | awk '{print $3}' | head -1)
+        [ -z "$s_banaction" ] && s_banaction="default (may be nftables)"
+
+        # Получаем ignoreip
+        s_ignoreip=$(grep -E '^ignoreip\s*=' /etc/fail2ban/jail.local 2>/dev/null | cut -d= -f2- | head -1 | cut -c1-50)
+        [ -z "$s_ignoreip" ] && s_ignoreip="not set"
+
+        echo -e "${cyan}================================================================${reset}"
+        printf "   ${red}Fail2Ban Management${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
+        echo -e "${cyan}----------------------------------------------------------------${reset}"
+        echo -e "  Status:     $s_f2b"
+        echo -e "  banaction:  ${green}${s_banaction}${reset}"
+        echo -e "  ignoreip:   ${green}${s_ignoreip}...${reset}"
+        echo -e "${cyan}----------------------------------------------------------------${reset}"
+        echo ""
+        echo -e "  ${green}1.${reset} $(msg f2b_setup)"
+        echo -e "  ${green}2.${reset} $(msg f2b_reinstall)"
+        echo -e "  ${green}3.${reset} $(msg f2b_remove)"
+        echo -e "  ${green}4.${reset} Rebuild configs"
+        echo -e "  ${green}5.${reset} Show status"
+        echo -e "  ${green}6.${reset} Show banned IPs"
+        echo -e "  ${green}7.${reset} Show logs"
+        echo -e "  ${green}0.${reset} $(msg back)"
+        echo ""
+        read -rp "$(msg choose)" choice
+        case $choice in
+            1) setupFail2Ban ;;
+            2) reinstallFail2Ban ;;
+            3) removeFail2Ban ;;
+            4) rebuildFail2BanConfigs ;;
+            5) fail2ban-client status && fail2ban-client status sshd 2>/dev/null || true ;;
+            6) fail2ban-client status sshd 2>/dev/null | grep "Banned IP" || echo "No banned IPs" ;;
+            7) journalctl -u fail2ban -n 50 --no-pager ;;
+            0) break ;;
+            *) echo -e "${red}$(msg invalid)${reset}" ;;
+        esac
+        [ "$choice" = "0" ] && continue
+        echo -e "\n${cyan}$(msg press_enter)${reset}"
+        read -r
+    done
+}
+
+# ── Подменю Web-Jail ──────────────────────────────────────────────
+
+manageWebJail() {
+    set +e
+    while true; do
+        clear
+        local s_jail s_maxretry s_banned
+        s_jail=$(getWebJailStatus)
+
+        # Получаем maxretry из конфига
+        s_maxretry=$(grep -A10 '\[nginx-probe\]' /etc/fail2ban/jail.local 2>/dev/null | grep 'maxretry' | awk '{print $3}' | head -1)
+        [ -z "$s_maxretry" ] && s_maxretry="N/A"
+
+        # Количество забаненных IP
+        s_banned=$(fail2ban-client status nginx-probe 2>/dev/null | grep "Currently banned" | awk '{print $NF}' || echo "0")
+
+        echo -e "${cyan}================================================================${reset}"
+        printf "   ${red}Web-Jail (nginx-probe)${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
+        echo -e "${cyan}----------------------------------------------------------------${reset}"
+        echo -e "  Status:     $s_jail"
+        echo -e "  maxretry:   ${green}${s_maxretry}${reset}"
+        echo -e "  Banned:     ${green}${s_banned:-0} IPs${reset}"
+        echo -e "${cyan}----------------------------------------------------------------${reset}"
+        echo ""
+        echo -e "  ${green}1.${reset} $(msg webjail_setup)"
+        echo -e "  ${green}2.${reset} $(msg webjail_remove)"
+        echo -e "  ${green}3.${reset} Show status"
+        echo -e "  ${green}4.${reset} Show banned IPs"
+        echo -e "  ${green}5.${reset} Show filter config"
+        echo -e "  ${green}6.${reset} Test filter (dry run)"
+        echo -e "  ${green}0.${reset} $(msg back)"
+        echo ""
+        read -rp "$(msg choose)" choice
+        case $choice in
+            1) setupWebJail ;;
+            2) removeWebJail ;;
+            3) fail2ban-client status nginx-probe 2>/dev/null || echo "Web-Jail not active" ;;
+            4) fail2ban-client status nginx-probe 2>/dev/null | grep "Banned IP" || echo "No banned IPs" ;;
+            5) cat /etc/fail2ban/filter.d/nginx-probe.conf 2>/dev/null || echo "Filter not found" ;;
+            6)
+                echo -e "${cyan}Testing filter against recent access log...${reset}"
+                if [ -f /var/log/nginx/access.log ]; then
+                    fail2ban-regex /var/log/nginx/access.log /etc/fail2ban/filter.d/nginx-probe.conf 2>/dev/null | tail -10
+                else
+                    echo "No access log found"
+                fi
+                ;;
+            0) break ;;
+            *) echo -e "${red}$(msg invalid)${reset}" ;;
+        esac
+        [ "$choice" = "0" ] && continue
+        echo -e "\n${cyan}$(msg press_enter)${reset}"
+        read -r
+    done
 }
