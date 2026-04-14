@@ -69,12 +69,12 @@ for module in lang core xray nginx warp reality relay psiphon tor security logs 
     fi
 done
 
-# Выбор языка при первом запуске
+# Выбор языка при первом запуске (и всегда вызываем _initLang для обновления MSG)
 VWN_CONF="/usr/local/etc/xray/vwn.conf"
 if [ ! -f "$VWN_CONF" ] || ! grep -q "VWN_LANG=" "$VWN_CONF" 2>/dev/null; then
     selectLang
-    _initLang
 fi
+_initLang
 
 # Системный DNS — предотвращает утечку через DNS хостера
 setupSystemDNS
