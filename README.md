@@ -414,6 +414,17 @@ Prevents anyone with server access from seeing where users connect.
 Sets `CPUWeight=200` and `Nice=-10` for xray, xray-reality, xray-vision, and nginx.
 Sets `CPUWeight=20` for `user.slice` (SSH sessions, background scripts).
 
+## 🛡️ DNS Leak Prevention
+
+If a DNS test shows your server's DNS, it means the client (phone/PC) is not resolving domains locally.
+
+**What to do:**
+In your application's DNS settings, change **Domain Strategy** to `UseIP`, `IPv4_only`, or `IPIfNonMatch`.
+
+**Important:**
+After changing this setting, make sure the application has working DNS servers configured.
+This forces the client to send a ready-made IP to the server, completely hiding the system DNS servers.
+
 ## Tunnels (items 6–8)
 
 All tunnels support **Global / Split / OFF** modes. Applied to WS, Reality, and Vision configs simultaneously.
@@ -1042,6 +1053,17 @@ stream {
 
 Устанавливает `CPUWeight=200` и `Nice=-10` для xray, xray-reality, xray-vision и nginx.
 Устанавливает `CPUWeight=20` для `user.slice` (SSH, фоновые процессы).
+
+## 🛡️ Устранение утечки DNS
+
+Если тест показывает DNS вашего сервера, значит клиент (телефон/ПК) не резолвит домены сам.
+
+**Что сделать:**
+В настройках DNS вашего приложения измените **Доменную стратегию** на `UseIP`, `IPv4_only` или `IPIfNonMatch`.
+
+**Важно:**
+После смены настройки убедитесь, что в приложении прописаны рабочие DNS.
+Это заставит клиент присылать на сервер готовый IP, полностью скрывая системные DNS сервера.
 
 ## Туннели (пункты 6–8)
 
