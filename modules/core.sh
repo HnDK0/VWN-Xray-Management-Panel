@@ -1,7 +1,29 @@
 #!/bin/bash
 # =================================================================
-# core.sh — Общие переменные, утилиты, статус-функции
+# core.sh — Общие системные функции, хелперы
 # =================================================================
+
+rebuildAllConfigs() {
+    echo -e "${cyan}Rebuilding ALL configs...${reset}"
+    echo ""
+
+    [ -f "$configPath" ] && {
+        rebuildXrayConfigs
+        echo ""
+    }
+
+    [ -f "$realityConfigPath" ] && {
+        rebuildRealityConfigs
+        echo ""
+    }
+
+    [ -f "$visionConfigPath" ] && {
+        rebuildVisionConfigs
+        echo ""
+    }
+
+    echo "${green}All configs rebuilt successfully.${reset}"
+}
 
 VWN_VERSION="3.1"
 VWN_LIB="/usr/local/lib/vwn"

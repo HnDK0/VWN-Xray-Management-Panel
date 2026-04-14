@@ -68,6 +68,9 @@ writeXrayConfig() {
         "error": "/var/log/xray/error.log",
         "loglevel": "error"
     },
+    "dns": {
+        "servers": [ "127.0.0.1" ]
+    },
     "inbounds": [{
         "port": $xrayPort,
         "listen": "127.0.0.1",
@@ -95,7 +98,7 @@ writeXrayConfig() {
         {
             "tag": "free",
             "protocol": "freedom",
-            "settings": {"domainStrategy": "UseIPv4"}
+            "settings": {"domainStrategy": "AsIs"}
         },
         {
             "tag": "warp",
@@ -110,6 +113,11 @@ writeXrayConfig() {
     "routing": {
         "domainStrategy": "AsIs",
         "rules": [
+            {
+                "type": "field",
+                "port": 53,
+                "outboundTag": "block"
+            },
             {
                 "type": "field",
                 "ip": ["geoip:private"],
@@ -484,4 +492,40 @@ updateXrayCore() {
     bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
     systemctl restart xray xray-reality 2>/dev/null || true
     echo "${green}$(msg xray_updated)${reset}"
+}
+
+rebuildXrayConfigs() {
+    if [ ! -f "$configPath" ]; then
+        echo "${red}$(msg xray_not_installed)${reset}"; return 1;
+    fi
+
+    local xrayPort wsPath domain
+    xrayPort=$(jq -r '.inbounds[0].port // ""' "$configPath" 2>/dev/null)
+    wsPath=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // ""' "$configPath" 2>/dev/null)
+    domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // ""' "$configPath" 2>/dev/null)
+
+    if [ -z "$xrayPort" ] || [ -z "$wsPath" ] || [ -z "$domain" ]; then
+        echo "${red}$(msg xray_not_installed) (missing params)${reset}"; return 1;
+    fi
+
+    echo -e "${cyan}Rebuilding WebSocket configs...${reset}"
+
+    echo -e "  ${cyan}[1/3] config.json...${reset}"
+    writeXrayConfig "$xrayPort" "$wsPath" "$domain"
+
+    echo -e "  ${cyan}[2/3] Applying active features...${reset}"
+    [ -f "$warpDomainsFile" ] && applyWarpDomains 2>/dev/null || true
+    [ -f "$relayConfigFile" ] && applyRelayDomains 2>/dev/null || true
+    [ -f "$psiphonConfigFile" ] && applyPsiphonDomains 2>/dev/null || true
+    [ -f "$torConfigFile" ] && applyTorDomains 2>/dev/null || true
+    _adblockIsEnabled && _adblockApplyToConfig "$configPath" 2>/dev/null || true
+    _privacyIsEnabled && _xrayDisableLog "$configPath" 2>/dev/null || true
+
+    echo -e "  ${cyan}[3/3] Restarting services...${reset}"
+    nginx -t && systemctl reload nginx || {
+        echo "${red}$(msg nginx_syntax_err)${reset}"; return 1;
+    }
+    systemctl restart xray 2>/dev/null || true
+
+    echo "${green}Done. WebSocket configs rebuilt.${reset}"
 }

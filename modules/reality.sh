@@ -65,6 +65,9 @@ writeRealityConfig() {
         "error": "/var/log/xray/reality-error.log",
         "loglevel": "error"
     },
+    "dns": {
+        "servers": [ "127.0.0.1" ]
+    },
     "inbounds": [{
         "port": $realityPort,
         "listen": "0.0.0.0",
@@ -90,7 +93,7 @@ writeRealityConfig() {
         {
             "tag": "free",
             "protocol": "freedom",
-            "settings": {"domainStrategy": "UseIPv4"}
+            "settings": {"domainStrategy": "AsIs"}
         },
         {
             "tag": "warp",
@@ -105,6 +108,11 @@ writeRealityConfig() {
     "routing": {
         "domainStrategy": "AsIs",
         "rules": [
+            {
+                "type": "field",
+                "port": 53,
+                "outboundTag": "block"
+            },
             {
                 "type": "field",
                 "ip": ["geoip:private"],
@@ -435,6 +443,40 @@ removeReality() {
     fi
 }
 
+rebuildRealityConfigs() {
+    if [ ! -f "$realityConfigPath" ]; then
+        echo "${red}$(msg reality_not_installed)${reset}"; return 1;
+    fi
+
+    local realityPort dest
+    realityPort=$(jq -r '.inbounds[0].port // ""' "$realityConfigPath" 2>/dev/null)
+    dest=$(jq -r '.inbounds[0].streamSettings.realitySettings.dest // ""' "$realityConfigPath" 2>/dev/null)
+
+    # ❗ НИКОГДА НЕ ГЕНЕРИРУЕМ НОВЫЕ КЛЮЧИ!
+    # Все ключи остаются нетронутыми, мы только перезаписываем шаблон
+
+    if [ -z "$realityPort" ] || [ -z "$dest" ]; then
+        echo "${red}$(msg reality_not_installed) (missing params)${reset}"; return 1;
+    fi
+
+    echo -e "${cyan}Rebuilding Reality configs...${reset}"
+
+    echo -e "  ${cyan}[1/2] reality.json...${reset}"
+    writeRealityConfig "$realityPort" "$dest"
+
+    echo -e "  ${cyan}[2/2] Applying active features...${reset}"
+    [ -f "$warpDomainsFile" ] && applyWarpDomains 2>/dev/null || true
+    [ -f "$relayConfigFile" ] && applyRelayDomains 2>/dev/null || true
+    [ -f "$psiphonConfigFile" ] && applyPsiphonDomains 2>/dev/null || true
+    [ -f "$torConfigFile" ] && applyTorDomains 2>/dev/null || true
+    _adblockIsEnabled && _adblockApplyToConfig "$realityConfigPath" 2>/dev/null || true
+    _privacyIsEnabled && _xrayDisableLog "$realityConfigPath" 2>/dev/null || true
+
+    systemctl restart xray-reality 2>/dev/null || true
+
+    echo "${green}Done. Reality configs rebuilt.${reset}"
+}
+
 manageReality() {
     set +e
     while true; do
@@ -463,6 +505,7 @@ manageReality() {
         echo -e "${green}9.${reset} $(msg reality_remove)"
         echo -e "${green}10.${reset} $(msg menu_stream_sni)"
         echo -e "${green}11.${reset} $(msg menu_stream_sni_disable)"
+        echo -e "${green}12.${reset} $(msg menu_rebuild_reality)"
         echo -e "${green}0.${reset} $(msg back)"
         echo ""
         read -rp "$(msg choose)" choice
@@ -480,6 +523,7 @@ manageReality() {
             9) removeReality ;;
             10) setupStreamSNI ;;
             11) disableStreamSNI ;;
+            12) rebuildRealityConfigs ;;
             0) break ;;
         esac
         [ "${choice}" = "0" ] && continue

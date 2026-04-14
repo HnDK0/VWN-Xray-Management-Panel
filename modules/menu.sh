@@ -295,9 +295,10 @@ manageWs() {
         echo -e "  ${green}11.${reset} $(msg menu_uuid)"
         echo -e "  ${green}12.${reset} $(msg menu_sub_auth)"
         echo -e "  ${green}13.${reset} $(msg menu_stream_sni)"
+        echo -e "  ${green}14.${reset} $(msg menu_rebuild_ws)"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
-        echo -e "  ${green}14.${reset} $(msg menu_install)"
-        echo -e "  ${green}15.${reset} $(msg menu_remove)"
+        echo -e "  ${green}15.${reset} $(msg menu_install)"
+        echo -e "  ${green}16.${reset} $(msg menu_remove)"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
         echo -e "  ${green}0.${reset}  $(msg back)"
         echo -e "${cyan}================================================================${reset}"
@@ -316,8 +317,9 @@ manageWs() {
             11) modifyXrayUUID ;;
             12) manageSubAuth ;;
             13) setupStreamSNI ;;
-            14) install ;;
-            15) removeWs ;;
+            14) rebuildXrayConfigs ;;
+            15) install ;;
+            16) removeWs ;;
             0)  break ;;
         esac
         [ "$choice" = "0" ] && continue
@@ -422,10 +424,11 @@ menu() {
         echo -e "  $(msg menu_sep_svc)"
         echo -e "  ${green}28.${reset} $(msg menu_restart)"
         echo -e "  ${green}29.${reset} $(msg menu_update_xray)"
-        echo -e "  ${green}30.${reset} $(msg menu_diag)"
-        echo -e "  ${green}31.${reset} $(msg menu_backup)"
-        echo -e "  ${green}32.${reset} $(msg menu_lang)"
-        echo -e "  ${green}33.${reset} $(msg menu_remove)"
+        echo -e "  ${green}30.${reset} $(msg menu_rebuild_all)"
+        echo -e "  ${green}31.${reset} $(msg menu_diag)"
+        echo -e "  ${green}32.${reset} $(msg menu_backup)"
+        echo -e "  ${green}33.${reset} $(msg menu_lang)"
+        echo -e "  ${green}34.${reset} $(msg menu_remove)"
         echo -e "  $(msg menu_sep_exit)"
         echo -e "  ${green}0.${reset}  $(msg menu_exit)"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
@@ -462,10 +465,11 @@ menu() {
             28) systemctl restart xray xray-reality xray-vision nginx warp-svc psiphon tor 2>/dev/null || true
                 echo "${green}$(msg all_services_restarted)${reset}" ;;
             29) updateXrayCore ;;
-            30) manageDiag ;;
-            31) manageBackup ;;
-            32) selectLang; _initLang ;;
-            33) fullRemove ;;
+            30) rebuildAllConfigs ;;
+            31) manageDiag ;;
+            32) manageBackup ;;
+            33) selectLang; _initLang ;;
+            34) fullRemove ;;
             0)  exit 0 ;;
             *)  echo -e "${red}$(msg invalid)${reset}"; sleep 1 ;;
         esac

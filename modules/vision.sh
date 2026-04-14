@@ -53,6 +53,9 @@ writeVisionConfig() {
         "loglevel": "error",
         "error": "/var/log/xray/vision-error.log"
     },
+    "dns": {
+        "servers": [ "127.0.0.1" ]
+    },
     "inbounds": [{
         "listen": "127.0.0.1",
         "port": ${port},
@@ -88,7 +91,7 @@ writeVisionConfig() {
         {
             "tag": "free",
             "protocol": "freedom",
-            "settings": {"domainStrategy": "UseIPv4"}
+            "settings": {"domainStrategy": "AsIs"}
         },
         {
             "tag": "warp",
@@ -113,6 +116,11 @@ writeVisionConfig() {
     "routing": {
         "domainStrategy": "AsIs",
         "rules": [
+            {
+                "type": "field",
+                "port": 53,
+                "outboundTag": "block"
+            },
             {
                 "type": "field",
                 "ip": ["geoip:private"],
@@ -758,7 +766,7 @@ manageVision() {
         echo -e "${green}4.${reset} $(msg vision_modify_uuid)"
         echo -e "${green}5.${reset} $(msg vision_modify_domain)"
         echo -e "${green}6.${reset} $(msg vision_remove)"
-        echo -e "${green}7.${reset} Rebuild configs (nginx + xray-vision)"
+        echo -e "${green}7.${reset} $(msg menu_rebuild_vision)"
         echo -e "${green}0.${reset} $(msg back)"
         echo ""
         read -rp "$(msg choose)" choice
