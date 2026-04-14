@@ -362,9 +362,76 @@ removeWebJail() {
     echo "${green}$(msg webjail_removed)${reset}"
 }
 
+rebuildWebJailConfigs() {
+    echo -e "${cyan}Rebuilding Web-Jail configs (keep bans)...${reset}"
+
+    # Пересоздаём фильтр
+    cat > /etc/fail2ban/filter.d/nginx-probe.conf << 'EOF'
+[Definition]
+# Ловим только явные попытки сканирования уязвимостей
+failregex = ^<HOST> -.*"(GET|POST|HEAD)\s+.*(wp-login\.php|wp-admin|wp-content|wp-includes|xmlrpc\.php|\.env(\.bak|\.old)?|\.git(/|\.)|config\.(php|js|json|yml)|setup\.(cgi|php)|admin\.php|administrator|\.bashrc|\.ssh|phpmyadmin|pma|myadmin)\s.*"\s(400|403|404|405)\s\d+\s.*$
+            ^<HOST> -.*"(GET|POST|HEAD)\s+/.*(\.php\.bak|\.php\.old|\.php\.save|\.sql|\.tar\.gz|\.zip|\.rar|\.mdb|\.db)\s.*"\s(400|403|404)\s\d+\s.*$
+ignoreregex = ^<HOST> -.*"(GET|POST)\s+/(favicon\.ico|robots\.txt|sitemap\.xml|apple-touch-icon.*)\s.*"
+EOF
+
+    # Обновляем jail.local — заменяем или добавляем секцию [nginx-probe]
+    if [ -f /etc/fail2ban/jail.local ]; then
+        if grep -q '^\[nginx-probe\]' /etc/fail2ban/jail.local; then
+            # Заменяем существующую секцию
+            python3 -c "
+import re
+with open('/etc/fail2ban/jail.local') as f:
+    content = f.read()
+new_section = '''[nginx-probe]
+enabled  = true
+port     = http,https
+filter   = nginx-probe
+logpath  = /var/log/nginx/access.log
+# Важно: 15 попыток за 5 минут — только агрессивные сканеры попадают под бан
+maxretry = 15
+findtime = 5m
+bantime  = 24h'''
+content = re.sub(r'\[nginx-probe\].*?(?=\n\[|\Z)', new_section, content, flags=re.DOTALL)
+with open('/etc/fail2ban/jail.local', 'w') as f:
+    f.write(content)
+"
+        else
+            # Добавляем секцию
+            cat >> /etc/fail2ban/jail.local << 'EOF'
+
+[nginx-probe]
+enabled  = true
+port     = http,https
+filter   = nginx-probe
+logpath  = /var/log/nginx/access.log
+# Важно: 15 попыток за 5 минут — только агрессивные сканеры попадают под бан
+maxretry = 15
+findtime = 5m
+bantime  = 24h
+EOF
+        fi
+    fi
+
+    # Перезапускаем fail2ban
+    if systemctl is-active --quiet fail2ban 2>/dev/null; then
+        fail2ban-client reload &>/dev/null
+        if fail2ban-client status nginx-probe &>/dev/null; then
+            echo "${green}Web-Jail configs rebuilt and jail active.${reset}"
+        else
+            echo "${yellow}Configs rebuilt, but jail not active. Restart fail2ban manually.${reset}"
+        fi
+    else
+        echo "${yellow}Configs rebuilt, but fail2ban not running.${reset}"
+    fi
+}
+
 setupWebJail() {
     echo -e "${cyan}$(msg webjail_setup)${reset}"
-    [ ! -f /etc/fail2ban/jail.local ] && setupFail2Ban || return 1
+
+    # Если jail.local ещё нет — создаём сначала
+    if [ ! -f /etc/fail2ban/jail.local ]; then
+        setupFail2Ban || return 1
+    fi
 
     # Улучшенный фильтр — более точный regex, меньше ложных срабатываний
     cat > /etc/fail2ban/filter.d/nginx-probe.conf << 'EOF'
@@ -615,20 +682,20 @@ manageFail2Ban() {
         [ -z "$s_ignoreip" ] && s_ignoreip="not set"
 
         echo -e "${cyan}================================================================${reset}"
-        printf "   ${red}Fail2Ban Management${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
+        printf "   ${red}$(msg f2b_manage_title)${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
-        echo -e "  Status:     $s_f2b"
-        echo -e "  banaction:  ${green}${s_banaction}${reset}"
-        echo -e "  ignoreip:   ${green}${s_ignoreip}...${reset}"
+        echo -e "  $(printf '%-12s' 'Status:')$s_f2b"
+        echo -e "  $(printf '%-12s' 'banaction:') ${green}${s_banaction}${reset}"
+        echo -e "  $(printf '%-12s' 'ignoreip:')  ${green}${s_ignoreip}...${reset}"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
         echo ""
         echo -e "  ${green}1.${reset} $(msg f2b_setup)"
         echo -e "  ${green}2.${reset} $(msg f2b_reinstall)"
         echo -e "  ${green}3.${reset} $(msg f2b_remove)"
-        echo -e "  ${green}4.${reset} Rebuild configs"
-        echo -e "  ${green}5.${reset} Show status"
-        echo -e "  ${green}6.${reset} Show banned IPs"
-        echo -e "  ${green}7.${reset} Show logs"
+        echo -e "  ${green}4.${reset} $(msg f2b_rebuild)"
+        echo -e "  ${green}5.${reset} $(msg f2b_show_status)"
+        echo -e "  ${green}6.${reset} $(msg f2b_show_banned)"
+        echo -e "  ${green}7.${reset} $(msg f2b_show_logs)"
         echo -e "  ${green}0.${reset} $(msg back)"
         echo ""
         read -rp "$(msg choose)" choice
@@ -666,30 +733,32 @@ manageWebJail() {
         s_banned=$(fail2ban-client status nginx-probe 2>/dev/null | grep "Currently banned" | awk '{print $NF}' || echo "0")
 
         echo -e "${cyan}================================================================${reset}"
-        printf "   ${red}Web-Jail (nginx-probe)${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
+        printf "   ${red}$(msg webjail_manage_title)${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
-        echo -e "  Status:     $s_jail"
-        echo -e "  maxretry:   ${green}${s_maxretry}${reset}"
-        echo -e "  Banned:     ${green}${s_banned:-0} IPs${reset}"
+        echo -e "  $(printf '%-12s' 'Status:')$s_jail"
+        echo -e "  $(printf '%-12s' 'maxretry:')  ${green}${s_maxretry}${reset}"
+        echo -e "  $(printf '%-12s' 'Banned:')    ${green}${s_banned:-0} IPs${reset}"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
         echo ""
         echo -e "  ${green}1.${reset} $(msg webjail_setup)"
         echo -e "  ${green}2.${reset} $(msg webjail_remove)"
-        echo -e "  ${green}3.${reset} Show status"
-        echo -e "  ${green}4.${reset} Show banned IPs"
-        echo -e "  ${green}5.${reset} Show filter config"
-        echo -e "  ${green}6.${reset} Test filter (dry run)"
+        echo -e "  ${green}3.${reset} $(msg webjail_rebuild)"
+        echo -e "  ${green}4.${reset} $(msg webjail_show_status)"
+        echo -e "  ${green}5.${reset} $(msg webjail_show_banned)"
+        echo -e "  ${green}6.${reset} $(msg webjail_show_filter)"
+        echo -e "  ${green}7.${reset} $(msg webjail_test_filter)"
         echo -e "  ${green}0.${reset} $(msg back)"
         echo ""
         read -rp "$(msg choose)" choice
         case $choice in
             1) setupWebJail ;;
             2) removeWebJail ;;
-            3) fail2ban-client status nginx-probe 2>/dev/null || echo "Web-Jail not active" ;;
-            4) fail2ban-client status nginx-probe 2>/dev/null | grep "Banned IP" || echo "No banned IPs" ;;
-            5) cat /etc/fail2ban/filter.d/nginx-probe.conf 2>/dev/null || echo "Filter not found" ;;
-            6)
-                echo -e "${cyan}Testing filter against recent access log...${reset}"
+            3) rebuildWebJailConfigs ;;
+            4) fail2ban-client status nginx-probe 2>/dev/null || echo "Web-Jail not active" ;;
+            5) fail2ban-client status nginx-probe 2>/dev/null | grep "Banned IP" || echo "No banned IPs" ;;
+            6) cat /etc/fail2ban/filter.d/nginx-probe.conf 2>/dev/null || echo "Filter not found" ;;
+            7)
+                echo -e "${cyan}$(msg webjail_test_filter)${reset}"
                 if [ -f /var/log/nginx/access.log ]; then
                     fail2ban-regex /var/log/nginx/access.log /etc/fail2ban/filter.d/nginx-probe.conf 2>/dev/null | tail -10
                 else
