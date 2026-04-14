@@ -706,6 +706,7 @@ removeVision() {
 # добавили vision.conf для nginx), но Vision уже установлен.
 
 rebuildVisionConfigs() {
+    local skip_sub="${1:-false}"
     if [ ! -f "$visionConfigPath" ]; then
         echo "${red}$(msg vision_not_installed)${reset}"; return 1
     fi
@@ -735,6 +736,8 @@ rebuildVisionConfigs() {
         echo "${red}$(msg nginx_syntax_err)${reset}"; return 1
     }
     systemctl restart xray-vision 2>/dev/null || true
+
+    $skip_sub || rebuildAllSubFiles 2>/dev/null || true
 
     echo "${green}Done. Vision configs rebuilt.${reset}"
 }

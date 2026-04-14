@@ -8,19 +8,22 @@ rebuildAllConfigs() {
     echo ""
 
     [ -f "$configPath" ] && {
-        rebuildXrayConfigs
+        rebuildXrayConfigs true
         echo ""
     }
 
     [ -f "$realityConfigPath" ] && {
-        rebuildRealityConfigs
+        rebuildRealityConfigs true
         echo ""
     }
 
     [ -f "$visionConfigPath" ] && {
-        rebuildVisionConfigs
+        rebuildVisionConfigs true
         echo ""
     }
+
+    echo -e "${cyan}Rebuilding subscription files...${reset}"
+    rebuildAllSubFiles 2>/dev/null || true
 
     echo "${green}All configs rebuilt successfully.${reset}"
 }

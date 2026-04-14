@@ -495,6 +495,7 @@ updateXrayCore() {
 }
 
 rebuildXrayConfigs() {
+    local skip_sub="${1:-false}"
     if [ ! -f "$configPath" ]; then
         echo "${red}$(msg xray_not_installed)${reset}"; return 1;
     fi
@@ -526,6 +527,8 @@ rebuildXrayConfigs() {
         echo "${red}$(msg nginx_syntax_err)${reset}"; return 1;
     }
     systemctl restart xray 2>/dev/null || true
+
+    $skip_sub || rebuildAllSubFiles 2>/dev/null || true
 
     echo "${green}Done. WebSocket configs rebuilt.${reset}"
 }

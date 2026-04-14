@@ -444,6 +444,7 @@ removeReality() {
 }
 
 rebuildRealityConfigs() {
+    local skip_sub="${1:-false}"
     if [ ! -f "$realityConfigPath" ]; then
         echo "${red}$(msg reality_not_installed)${reset}"; return 1;
     fi
@@ -473,6 +474,8 @@ rebuildRealityConfigs() {
     _privacyIsEnabled && _xrayDisableLog "$realityConfigPath" 2>/dev/null || true
 
     systemctl restart xray-reality 2>/dev/null || true
+
+    $skip_sub || rebuildAllSubFiles 2>/dev/null || true
 
     echo "${green}Done. Reality configs rebuilt.${reset}"
 }
