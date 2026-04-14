@@ -378,7 +378,6 @@ server {
     set_real_ip_from 127.0.0.1;
 
     location / {
-        resolver 1.1.1.1 ipv6=off;
         proxy_pass ${stub_url};
         proxy_http_version 1.1;
         proxy_set_header Host ${proxy_host};

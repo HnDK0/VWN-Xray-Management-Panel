@@ -71,10 +71,6 @@ http {
     keepalive_timeout 75s;
     keepalive_requests 10000;
 
-    # Глобальный DNS — предотвращает утечку через системный DNS
-    resolver 1.1.1.1 valid=300s ipv6=off;
-    resolver_timeout 5s;
-
     server_tokens off;
     gzip on;
     gzip_vary on;
@@ -151,7 +147,6 @@ server {
     }
 
     location / {
-        resolver 1.1.1.1 ipv6=off;
         proxy_pass $proxyUrl;
         proxy_http_version 1.1;
         proxy_set_header Host $proxy_host;
@@ -605,10 +600,6 @@ http {
     tcp_nodelay on;
     keepalive_timeout 75s;
     keepalive_requests 10000;
-
-    # Глобальный DNS — предотвращает утечку через системный DNS
-    resolver 1.1.1.1 valid=300s ipv6=off;
-    resolver_timeout 5s;
 
     server_tokens off;
     gzip on;
