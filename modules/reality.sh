@@ -66,7 +66,7 @@ writeRealityConfig() {
         "loglevel": "error"
     },
     "dns": {
-        "servers": [ "1.1.1.1" ]
+        "servers": [ "https://dns.quad9.net/dns-query" ]
     },
     "inbounds": [{
         "port": $realityPort,

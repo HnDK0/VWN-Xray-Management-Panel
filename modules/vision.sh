@@ -54,7 +54,7 @@ writeVisionConfig() {
         "error": "/var/log/xray/vision-error.log"
     },
     "dns": {
-        "servers": [ "1.1.1.1" ]
+        "servers": [ "https://dns.quad9.net/dns-query" ]
     },
     "inbounds": [{
         "listen": "127.0.0.1",
