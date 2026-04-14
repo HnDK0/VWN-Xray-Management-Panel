@@ -582,13 +582,18 @@ stream {
 $(printf '%b' "$map_lines")
         default     127.0.0.1:${default_port};
     }
+
+    # TCP оптимизации — совпадают с http блоком
+    tcp_nodelay on;
+
     server {
         listen 443;
         listen [::]:443;
         ssl_preread on;
         proxy_pass \$upstream_backend;
-        proxy_connect_timeout 10s;
+        proxy_connect_timeout 30s;
         proxy_timeout         3600s;
+        proxy_socket_keepalive on;
     }
 }
 
