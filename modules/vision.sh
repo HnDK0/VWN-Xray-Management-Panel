@@ -17,6 +17,14 @@ VISION_SERVICE="/etc/systemd/system/xray-vision.service"
 VISION_CERT_PEM="/etc/nginx/cert/vision.pem"
 VISION_CERT_KEY="/etc/nginx/cert/vision.key"
 
+_ensureVisionLogAccess() {
+    mkdir -p /var/log/xray
+    touch /var/log/xray/vision-error.log 2>/dev/null || true
+    chown -R xray:xray /var/log/xray 2>/dev/null || true
+    chmod 750 /var/log/xray 2>/dev/null || true
+    chmod 640 /var/log/xray/vision-error.log 2>/dev/null || true
+}
+
 # ── Статус ────────────────────────────────────────────────────────
 
 getVisionStatus() {
@@ -46,6 +54,7 @@ writeVisionConfig() {
     vision_h2_port=$(vwn_conf_get VISION_H2_PORT 2>/dev/null || echo "7446")
 
     mkdir -p "$(dirname "$visionConfigPath")"
+    _ensureVisionLogAccess
 
     cat > "$visionConfigPath" << EOF
 {
