@@ -273,10 +273,11 @@ writeXrayConfig() {
     "policy": {
         "levels": {
             "0": {
-                "handshake": 4,
+                "handshake": 10,
                 "connIdle": 600,
                 "uplinkOnly": 5,
-                "downlinkOnly": 10
+                "downlinkOnly": 10,
+                "bufferSize": 512
             }
         }
     }

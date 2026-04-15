@@ -64,16 +64,21 @@ http {
     include /etc/nginx/mime.types;
     default_type application/octet-stream;
     sendfile on;
+    tcp_nopush on;
     tcp_nodelay on;
 
-    # Keepalive — чуть больше чем у Cloudflare (70s), чтобы не рвать соединения
-    keepalive_timeout 75s;
+    # Таймауты для стабильного WebSocket
+    keepalive_timeout 65s;
     keepalive_requests 10000;
+    client_body_timeout 30s;
+    client_header_timeout 30s;
+    send_timeout 30s;
+    reset_timedout_connection on;
 
     server_tokens off;
     gzip on;
     gzip_vary on;
-    gzip_proxied off;
+    gzip_proxied any;
     gzip_comp_level 6;
     gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss;
     include /etc/nginx/conf.d/*.conf;
@@ -120,12 +125,18 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
+        
+        # Оптимизированные таймауты для WebSocket
+        proxy_connect_timeout 30s;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        
+        # Отключаем буферизацию для WebSocket
         proxy_buffering off;
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-        proxy_connect_timeout 10s;
+        proxy_cache off;
         proxy_request_buffering off;
         proxy_socket_keepalive on;
+        
         access_log             off;
         error_log              /dev/null crit;
     }
