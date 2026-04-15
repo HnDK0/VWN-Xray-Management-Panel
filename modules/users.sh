@@ -67,15 +67,9 @@ _applyUsersToConfigs() {
         jq --argjson c "$clients_r" '.inbounds[0].settings.clients = $c' \
             "$realityConfigPath" > "${realityConfigPath}.tmp" && mv "${realityConfigPath}.tmp" "$realityConfigPath"
     fi
-    # Vision использует flow xtls-rprx-vision — тот же формат clients что у Reality
-    if [ -f "$visionConfigPath" ]; then
-        jq --argjson c "$clients_r" '.inbounds[0].settings.clients = $c' \
-            "$visionConfigPath" > "${visionConfigPath}.tmp" && mv "${visionConfigPath}.tmp" "$visionConfigPath"
-    fi
 
     systemctl restart xray 2>/dev/null || true
     systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
 }
 
 # ── Инициализация ─────────────────────────────────────────────────
@@ -124,7 +118,7 @@ buildUserSubFile() {
         wep=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$wp" 2>/dev/null || echo "$wp")
         connect_host=$(getConnectHost 2>/dev/null || echo "$domain")
         [ -z "$connect_host" ] && connect_host="$domain"
-        name=$(_getConfigName "WS" "$label" "$server_ip")
+        name="${flag} VL-WS | ${label} ${flag}"
         encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$name" 2>/dev/null || echo "$name")
         lines+="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=ws&host=${domain}&path=${wep}#${encoded_name}"$'\n'
     fi
@@ -148,24 +142,9 @@ buildUserSubFile() {
         r_destHost=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0]' "$realityConfigPath" 2>/dev/null)
         r_pubKey=$(vwn_conf_get REALITY_PUBKEY 2>/dev/null)
         [ -z "$r_pubKey" ] && r_pubKey=$(grep "PublicKey:" /usr/local/etc/xray/reality_client.txt 2>/dev/null | awk '{print $NF}')
-        r_name=$(_getConfigName "Reality" "$label" "$server_ip")
+        r_name="${flag} VL-Reality | ${label} ${flag}"
         r_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$r_name" 2>/dev/null || echo "$r_name")
         lines+="vless://${r_uuid}@${server_ip}:${r_port}?encryption=none&security=reality&sni=${r_destHost}&fp=chrome&pbk=${r_pubKey}&sid=${r_shortId}&type=tcp&flow=xtls-rprx-vision#${r_encoded_name}"$'\n'
-    fi
-
-    if [ -f "$visionConfigPath" ]; then
-        local v_domain v_uuid v_name v_encoded_name
-        v_domain=$(vwn_conf_get VISION_DOMAIN 2>/dev/null || true)
-        v_uuid=$(jq -r --arg u "$uuid" \
-            '.inbounds[0].settings.clients[] | select(.id==$u) | .id' \
-            "$visionConfigPath" 2>/dev/null | head -1)
-        [ -z "$v_uuid" ] && \
-            v_uuid=$(jq -r '.inbounds[0].settings.clients[0].id' "$visionConfigPath" 2>/dev/null)
-        if [ -n "$v_domain" ] && [ -n "$v_uuid" ] && [ "$v_uuid" != "null" ]; then
-            v_name=$(_getConfigName "Vision" "$label" "$server_ip")
-            v_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$v_name" 2>/dev/null || echo "$v_name")
-            lines+="vless://${v_uuid}@${v_domain}:443?security=tls&flow=xtls-rprx-vision&type=tcp&sni=${v_domain}&fp=chrome&allowInsecure=0#${v_encoded_name}"$'\n'
-        fi
     fi
 
     local filename safe
@@ -232,18 +211,6 @@ try:
         print(f'    public-key: {pbk}')
         print(f'    short-id: {sid}')
         print(f'  flow: xtls-rprx-vision')
-    elif security == 'tls' and params.get('flow', '') == 'xtls-rprx-vision':
-        sni = params.get('sni', host)
-        print(f'- name: \"{name}\"')
-        print(f'  type: vless')
-        print(f'  server: {host}')
-        print(f'  port: {port}')
-        print(f'  uuid: {uuid}')
-        print(f'  tls: true')
-        print(f'  servername: {sni}')
-        print(f'  client-fingerprint: chrome')
-        print(f'  network: tcp')
-        print(f'  flow: xtls-rprx-vision')
 except Exception as e:
     pass
 " "$url" 2>/dev/null
@@ -289,7 +256,6 @@ h2{color:#6c7086;font-size:11px;font-weight:700;text-transform:uppercase;letter-
 .reality{background:#302520;color:#fab387}
 .sub{background:#252540;color:#89dceb}
 .clash{background:#2a2040;color:#cba6f7}
-.vision{background:#252535;color:#b4befe}
 .url{font-size:11px;word-break:break-all;color:#cdd6f4;line-height:1.5;margin-bottom:8px;padding:6px;background:#111;border-radius:4px;white-space:pre-wrap}
 .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .btn{background:#313244;color:#cdd6f4;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:11px}
@@ -312,7 +278,6 @@ HTMLEOF
         local proto_label="VLESS" proto_class=""
         echo "$cfg" | grep -q "type=ws"            && proto_label="WS+TLS"  && proto_class="ws"
         echo "$cfg" | grep -q "security=reality"   && proto_label="Reality" && proto_class="reality"
-        echo "$cfg" | grep -q "flow=xtls-rprx-vision" && echo "$cfg" | grep -q "security=tls" && proto_label="Vision+TLS" && proto_class="vision"
         cat >> "$htmlfile" << CARDEOF
 <div class="card">
   <span class="proto ${proto_class}">${proto_label}</span>
@@ -518,7 +483,7 @@ showUserQR() {
     echo ""
     if [ -n "$sub_url" ]; then
         echo -e "${cyan}[ Subscription URL ]${reset}"
-        qrencode -s 3 -m 2 -t ANSIUTF8 "$sub_url" 2>/dev/null || true
+        qrencode -s 1 -m 1 -t ANSIUTF8 "$sub_url" 2>/dev/null || true
         echo -e "\n${green}${sub_url}${reset}"
         echo -e "${yellow}v2rayNG: + → Subscription group → URL${reset}"
         # Дополнительная ссылка по IP (когда домен ещё не проброшен через CDN)

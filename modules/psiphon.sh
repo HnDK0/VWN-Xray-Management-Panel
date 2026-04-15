@@ -153,7 +153,7 @@ applyPsiphonOutbound() {
     # Добавляет psiphon outbound (SOCKS5 на 40002) в оба конфига Xray
     local psiphon_ob='{"tag":"psiphon","protocol":"socks","settings":{"servers":[{"address":"127.0.0.1","port":40002}]}}'
 
-    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath"; do
         [ -f "$cfg" ] || continue
         local has_ob
         has_ob=$(jq '.outbounds[] | select(.tag=="psiphon")' "$cfg" 2>/dev/null)
@@ -164,8 +164,8 @@ applyPsiphonOutbound() {
         local has_rule
         has_rule=$(jq '.routing.rules[] | select(.outboundTag=="psiphon")' "$cfg" 2>/dev/null)
         if [ -z "$has_rule" ]; then
-            # Вставляем правило с whoer.net по умолчанию (Xray 26.x запрещает domain:[])
-            jq '.routing.rules = [.routing.rules[0]] + [{"type":"field","domain":["domain:whoer.net"],"outboundTag":"psiphon"}] + .routing.rules[1:]' \
+            # Вставляем правило после block, перед warp
+            jq '.routing.rules = [.routing.rules[0]] + [{"type":"field","domain":[],"outboundTag":"psiphon"}] + .routing.rules[1:]' \
                 "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
         fi
     done
@@ -186,40 +186,36 @@ applyPsiphonDomains() {
 
     applyPsiphonOutbound
 
-    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath"; do
         [ -f "$cfg" ] || continue
         jq "(.routing.rules[] | select(.outboundTag == \"psiphon\")) |= (.domain = [$domains_json] | del(.port))" \
             "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
     done
     systemctl restart xray 2>/dev/null || true
     systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
     echo "${green}$(msg psiphon_split_ok)${reset}"
 }
 
 togglePsiphonGlobal() {
     applyPsiphonOutbound
-    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath"; do
         [ -f "$cfg" ] || continue
         jq '(.routing.rules[] | select(.outboundTag == "psiphon")) |= (.port = "0-65535" | del(.domain))' \
             "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
     done
     systemctl restart xray 2>/dev/null || true
     systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
-    rebuildAllSubFiles 2>/dev/null || true
     echo "${green}$(msg psiphon_global_ok)${reset}"
 }
 
 removePsiphonFromConfigs() {
-    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath"; do
         [ -f "$cfg" ] || continue
         jq 'del(.outbounds[] | select(.tag=="psiphon")) | del(.routing.rules[] | select(.outboundTag=="psiphon"))' \
             "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
     done
     systemctl restart xray 2>/dev/null || true
     systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
 }
 
 checkPsiphonIP() {

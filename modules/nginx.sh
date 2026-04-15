@@ -67,13 +67,9 @@ http {
     tcp_nopush on;
     tcp_nodelay on;
 
-    # Таймауты для стабильного WebSocket
-    keepalive_timeout 65s;
+    # Keepalive — чуть больше чем у Cloudflare (70s), чтобы не рвать соединения
+    keepalive_timeout 75s;
     keepalive_requests 10000;
-    client_body_timeout 30s;
-    client_header_timeout 30s;
-    send_timeout 30s;
-    reset_timedout_connection on;
 
     server_tokens off;
     gzip on;
@@ -125,18 +121,11 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-        
-        # Оптимизированные таймауты для WebSocket
-        proxy_connect_timeout 30s;
-        proxy_read_timeout 300s;
-        proxy_send_timeout 300s;
-        
-        # Отключаем буферизацию для WebSocket
-        proxy_buffering off;
-        proxy_cache off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_connect_timeout 10s;
         proxy_request_buffering off;
         proxy_socket_keepalive on;
-        
         access_log             off;
         error_log              /dev/null crit;
     }
@@ -191,9 +180,6 @@ map \$uri \$sub_label {
     default                                                    "${country_code} VLESS";
 }
 MAPEOF
-    # Сохраняем URL фейкового сайта — используется в writeVisionNginxConfig
-    vwn_conf_set STUB_URL "$proxyUrl"
-
     # Восстанавливаем реальный IP — всегда нужно при Cloudflare
     setupRealIpRestore
 
@@ -545,35 +531,6 @@ _writeStreamNginxConf() {
     local nginx_port="$2"
     local reality_port="$3"
 
-    # ── Строим map из STREAM_DOMAINS + текущего WS домена ────────────────────
-    # Формат STREAM_DOMAINS: domain1:port1,domain2:port2,...
-    local stream_domains
-    stream_domains=$(vwn_conf_get STREAM_DOMAINS 2>/dev/null || true)
-
-    # Убеждаемся что WS домен присутствует в списке
-    local ws_entry="${domain}:${nginx_port}"
-    if [ -z "$stream_domains" ]; then
-        stream_domains="$ws_entry"
-        vwn_conf_set STREAM_DOMAINS "$stream_domains"
-    elif ! echo "$stream_domains" | grep -q "^${domain}:"; then
-        stream_domains="${ws_entry},${stream_domains}"
-        vwn_conf_set STREAM_DOMAINS "$stream_domains"
-    fi
-
-    local default_port="${reality_port}"
-    vwn_conf_set STREAM_DEFAULT "$default_port"
-
-    # Генерируем строки map из STREAM_DOMAINS
-    local map_lines=""
-    IFS=',' read -ra _entries <<< "$stream_domains"
-    for _entry in "${_entries[@]}"; do
-        local _d _p
-        _d=$(echo "$_entry" | cut -d: -f1)
-        _p=$(echo "$_entry" | cut -d: -f2)
-        [ -z "$_d" ] || [ -z "$_p" ] && continue
-        map_lines="${map_lines}        ${_d}   127.0.0.1:${_p};\n"
-    done
-
     cat > /etc/nginx/nginx.conf << NGINXSTREAM
 user www-data;
 worker_processes auto;
@@ -588,23 +545,20 @@ events {
 }
 
 # ── Stream: SNI-маршрутизация на порту 443 ──────────────────────────────────
+# Ваш домен (${domain}) → nginx HTTP (${nginx_port})
+# Всё остальное (SNI чужих сайтов для Reality) → xray-reality (${reality_port})
 stream {
     map \$ssl_preread_server_name \$upstream_backend {
-$(printf '%b' "$map_lines")
-        default     127.0.0.1:${default_port};
+        ${domain}   127.0.0.1:${nginx_port};
+        default     127.0.0.1:${reality_port};
     }
-
-    # TCP оптимизации — совпадают с http блоком
-    tcp_nodelay on;
-
     server {
         listen 443;
         listen [::]:443;
         ssl_preread on;
         proxy_pass \$upstream_backend;
-        proxy_connect_timeout 30s;
+        proxy_connect_timeout 10s;
         proxy_timeout         3600s;
-        proxy_socket_keepalive on;
     }
 }
 
@@ -612,77 +566,19 @@ http {
     include /etc/nginx/mime.types;
     default_type application/octet-stream;
     sendfile on;
+    tcp_nopush on;
     tcp_nodelay on;
     keepalive_timeout 75s;
     keepalive_requests 10000;
-
     server_tokens off;
     gzip on;
     gzip_vary on;
-    gzip_proxied off;
+    gzip_proxied any;
     gzip_comp_level 6;
     gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss;
     include /etc/nginx/conf.d/*.conf;
 }
 NGINXSTREAM
-}
-
-# Добавляет домен:порт в stream map и перегенерирует nginx.conf.
-# Использование: addDomainToStream domain port
-addDomainToStream() {
-    local new_domain="$1" new_port="$2"
-    [ -z "$new_domain" ] || [ -z "$new_port" ] && return 1
-
-    local stream_domains default_port ws_domain nginx_port
-    stream_domains=$(vwn_conf_get STREAM_DOMAINS 2>/dev/null || true)
-    default_port=$(vwn_conf_get STREAM_DEFAULT 2>/dev/null || echo "10443")
-
-    # Убираем старую запись для этого домена если есть
-    local new_entry="${new_domain}:${new_port}"
-    local filtered=""
-    IFS=',' read -ra _entries <<< "$stream_domains"
-    for _e in "${_entries[@]}"; do
-        [ -z "$_e" ] && continue
-        local _ed; _ed=$(echo "$_e" | cut -d: -f1)
-        [ "$_ed" = "$new_domain" ] && continue
-        filtered="${filtered:+${filtered},}${_e}"
-    done
-    stream_domains="${filtered:+${filtered},}${new_entry}"
-    vwn_conf_set STREAM_DOMAINS "$stream_domains"
-
-    # Читаем WS домен и nginx_port для вызова _writeStreamNginxConf
-    ws_domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // empty' "$configPath" 2>/dev/null)
-    nginx_port=$(vwn_conf_get NGINX_HTTPS_PORT 2>/dev/null || echo "7443")
-    [ -z "$ws_domain" ] && ws_domain=$(vwn_conf_get DOMAIN 2>/dev/null || echo "")
-
-    _writeStreamNginxConf "$ws_domain" "$nginx_port" "$default_port"
-}
-
-# Удаляет домен из stream map и перегенерирует nginx.conf.
-# Использование: removeDomainFromStream domain
-removeDomainFromStream() {
-    local rem_domain="$1"
-    [ -z "$rem_domain" ] && return 1
-
-    local stream_domains default_port ws_domain nginx_port
-    stream_domains=$(vwn_conf_get STREAM_DOMAINS 2>/dev/null || true)
-    default_port=$(vwn_conf_get STREAM_DEFAULT 2>/dev/null || echo "10443")
-
-    local filtered=""
-    IFS=',' read -ra _entries <<< "$stream_domains"
-    for _e in "${_entries[@]}"; do
-        [ -z "$_e" ] && continue
-        local _ed; _ed=$(echo "$_e" | cut -d: -f1)
-        [ "$_ed" = "$rem_domain" ] && continue
-        filtered="${filtered:+${filtered},}${_e}"
-    done
-    vwn_conf_set STREAM_DOMAINS "$filtered"
-
-    ws_domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // empty' "$configPath" 2>/dev/null)
-    nginx_port=$(vwn_conf_get NGINX_HTTPS_PORT 2>/dev/null || echo "7443")
-    [ -z "$ws_domain" ] && ws_domain=$(vwn_conf_get DOMAIN 2>/dev/null || echo "")
-
-    _writeStreamNginxConf "$ws_domain" "$nginx_port" "$default_port"
 }
 
 setupStreamSNI() {

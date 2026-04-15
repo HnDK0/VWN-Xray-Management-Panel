@@ -65,7 +65,7 @@ applyWarpDomains() {
 
     local warp_rule="{\"type\":\"field\",\"domain\":[$domains_json],\"outboundTag\":\"warp\"}"
 
-    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath"; do
         [ -f "$cfg" ] || continue
         local has_rule
         has_rule=$(jq '.routing.rules[] | select(.outboundTag=="warp")' "$cfg" 2>/dev/null)
@@ -83,7 +83,6 @@ applyWarpDomains() {
     done
     systemctl restart xray 2>/dev/null || true
     systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
 }
 
 toggleWarpMode() {
@@ -97,7 +96,7 @@ toggleWarpMode() {
     case "$warp_mode" in
         1)
             local warp_global='{"type":"field","port":"0-65535","outboundTag":"warp"}'
-            for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+            for cfg in "$configPath" "$realityConfigPath"; do
                 [ -f "$cfg" ] || continue
                 local has_rule
                 has_rule=$(jq '.routing.rules[] | select(.outboundTag=="warp")' "$cfg" 2>/dev/null)
@@ -113,15 +112,13 @@ toggleWarpMode() {
             echo "${green}$(msg warp_global_ok)${reset}"
             systemctl restart xray 2>/dev/null || true
             systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
-            rebuildAllSubFiles 2>/dev/null || true
             ;;
         2)
             applyWarpDomains
             echo "${green}$(msg warp_split_ok)${reset}"
             ;;
         3)
-            for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+            for cfg in "$configPath" "$realityConfigPath"; do
                 [ -f "$cfg" ] || continue
                 jq 'del(.routing.rules[] | select(.outboundTag == "warp"))' \
                     "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
@@ -129,7 +126,6 @@ toggleWarpMode() {
             echo "${green}$(msg warp_off_ok)${reset}"
             systemctl restart xray 2>/dev/null || true
             systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
             ;;
         0) return 0 ;;
         *) echo "${red}$(msg cancel)${reset}" ;;
@@ -139,49 +135,10 @@ toggleWarpMode() {
 checkWarpStatus() {
     echo "--------------------------------------------------"
     local real_ip warp_ip
-
-    # Получаем реальный IP сервера
     real_ip=$(getServerIP)
+    warp_ip=$(curl -s --connect-timeout 5 -x socks5://127.0.0.1:40000 https://api.ipify.org 2>/dev/null | tr -d '[:space:]' || echo "Error/Offline")
     echo "$(msg warp_real_ip) : $real_ip"
-
-    # Проверяем, установлен ли WARP
-    if ! command -v warp-cli &>/dev/null; then
-        echo "$(msg warp_ip) : ${red}WARP not installed${reset}"
-        echo "--------------------------------------------------"
-        return
-    fi
-
-    # Проверяем статус сервиса WARP
-    if ! systemctl is-active --quiet warp-svc 2>/dev/null; then
-        echo "$(msg warp_ip) : ${red}warp-svc not running${reset}"
-        echo "--------------------------------------------------"
-        return
-    fi
-
-    # Проверяем подключение WARP
-    local warp_status
-    warp_status=$(warp-cli --accept-tos status 2>/dev/null || warp-cli status 2>/dev/null)
-    if ! echo "$warp_status" | grep -q "Connected"; then
-        echo "$(msg warp_ip) : ${yellow}WARP not connected ($warp_status)${reset}"
-        echo "--------------------------------------------------"
-        return
-    fi
-
-    # Пробуем получить IP через WARP SOCKS5 (несколько попыток с увеличенным таймаутом)
-    warp_ip=$(curl -s --connect-timeout 10 --max-time 15 -x socks5://127.0.0.1:40000 https://api.ipify.org 2>/dev/null | tr -d '[:space:]')
-    
-    if [ -n "$warp_ip" ] && [[ "$warp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        echo "$(msg warp_ip) : ${green}$warp_ip${reset}"
-    else
-        # Пробуем альтернативный сервис для проверки
-        warp_ip=$(curl -s --connect-timeout 10 --max-time 15 -x socks5://127.0.0.1:40000 https://ipv4.wtfismyip.com/text 2>/dev/null | tr -d '[:space:]')
-        if [ -n "$warp_ip" ] && [[ "$warp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "$(msg warp_ip) : ${green}$warp_ip${reset}"
-        else
-            echo "$(msg warp_ip) : ${red}Failed to get WARP IP (SOCKS5 may not be responding)${reset}"
-            echo "${yellow}Hint: Try 'warp-cli status' and check if proxy port is set${reset}"
-        fi
-    fi
+    echo "$(msg warp_ip) : $warp_ip"
     echo "--------------------------------------------------"
 }
 

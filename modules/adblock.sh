@@ -86,7 +86,7 @@ enableAdblock() {
     echo -e "${cyan}$(msg adblock_enabling)${reset}"
 
     local applied=0
-    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath"; do
         [ -f "$cfg" ] || continue
         _adblockApplyToConfig "$cfg"
         applied=$((applied + 1))
@@ -99,7 +99,6 @@ enableAdblock() {
 
     systemctl restart xray 2>/dev/null || true
     systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
 
     vwn_conf_set adblock_enabled 1
     echo "${green}$(msg adblock_enabled)${reset}"
@@ -111,13 +110,12 @@ enableAdblock() {
 disableAdblock() {
     echo -e "${yellow}$(msg adblock_disabling)${reset}"
 
-    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath"; do
         _adblockRemoveFromConfig "$cfg"
     done
 
     systemctl restart xray 2>/dev/null || true
     systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
 
     vwn_conf_set adblock_enabled 0
     echo "${green}$(msg adblock_disabled)${reset}"
@@ -140,10 +138,10 @@ showAdblockStatus() {
     echo -e "${cyan}$(msg adblock_status_title)${reset}"
     echo ""
 
-    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath"; do
         [ -f "$cfg" ] || continue
         local label
-        [[ "$cfg" == *reality* ]] && label="Reality" || { [[ "$cfg" == *vision* ]] && label="Vision" || label="WS"; }
+        [[ "$cfg" == *reality* ]] && label="Reality" || label="WS"
 
         local found
         found=$(_adblockCount "$cfg")

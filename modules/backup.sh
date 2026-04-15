@@ -17,7 +17,6 @@ _BACKUP_PATHS=(
     /etc/sysctl.d/99-xray.conf
     /etc/fail2ban/jail.local
     /etc/fail2ban/filter.d/nginx-probe.conf
-    /etc/systemd/system/xray-vision.service
 )
 
 createBackup() {

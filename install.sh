@@ -20,17 +20,8 @@
 #   --cf-email    you@example.com          Email Cloudflare (при --cert-method cf)
 #   --cf-key      YOUR_CF_API_KEY          API Key Cloudflare (при --cert-method cf)
 #   --skip-ws                              Пропустить установку WS (только Reality)
-#   --ssh-port    22222                    Сменить порт SSH                  [умолч: не менять]
-#   --ipv6                                 Включить IPv6                     [умолч: выключен]
-#   --cpu-guard                            Включить CPU Guard                [умолч: выключен]
 #   --bbr                                  Включить BBR TCP
 #   --fail2ban                             Установить Fail2Ban
-#   --jail                                 Включить WebJail (nginx-probe)
-#   --adblock                              Включить Adblock
-#   --privacy                              Включить Privacy Mode
-#   --psiphon                              Установить Psiphon
-#   --psiphon-country DE                   Страна Psiphon (DE, NL, US...)
-#   --psiphon-warp                         Psiphon через WARP
 #   --no-warp                              Не настраивать Cloudflare WARP
 #
 # Примеры:
@@ -64,7 +55,7 @@ yellow=$(_c setaf 3)$(_c bold)
 cyan=$(_c setaf 6)$(_c bold)
 reset=$(_c sgr0)
 
-MODULES="lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision menu"
+MODULES="lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock menu"
 
 # ── Флаги режима ───────────────────────────────────────────────────
 UPDATE_ONLY=false
@@ -85,21 +76,6 @@ OPT_SKIP_WS=false
 OPT_BBR=false
 OPT_FAIL2BAN=false
 OPT_NO_WARP=false
-OPT_VISION=false
-OPT_VISION_DOMAIN=""
-OPT_VISION_CERT_METHOD=""
-OPT_STREAM=false
-
-# ── Новые опциональные компоненты ──
-OPT_SSH_PORT=""
-OPT_JAIL=false
-OPT_IPV6=false
-OPT_CPU_GUARD=false
-OPT_ADBLOCK=false
-OPT_PRIVACY=false
-OPT_PSIPHON=false
-OPT_PSIPHON_COUNTRY=""
-OPT_PSIPHON_WARP=false
 
 # =================================================================
 # Fallback msg() — работает ДО загрузки lang.sh
@@ -154,20 +130,6 @@ _parse_args() {
             --bbr)            OPT_BBR=true ;;
             --fail2ban)       OPT_FAIL2BAN=true ;;
             --no-warp)        OPT_NO_WARP=true ;;
-            --stream)         OPT_STREAM=true ;;
-            --vision)         OPT_VISION=true ;;
-            --vision-domain)  OPT_VISION_DOMAIN="$2";       shift ;;
-            --vision-cert-method) OPT_VISION_CERT_METHOD="$2"; shift ;;
-            --ssh-port)       OPT_SSH_PORT="$2";            shift ;;
-            --jail)           OPT_JAIL=true ;;
-            --ipv6)           OPT_IPV6=true ;;
-            --no-ipv6)        OPT_IPV6=false ;;
-            --cpu-guard)      OPT_CPU_GUARD=true ;;
-            --adblock)        OPT_ADBLOCK=true ;;
-            --privacy)        OPT_PRIVACY=true ;;
-            --psiphon)        OPT_PSIPHON=true ;;
-            --psiphon-country) OPT_PSIPHON_COUNTRY="$2";    shift ;;
-            --psiphon-warp)   OPT_PSIPHON_WARP=true ;;
             --help|-h)        _show_help; exit 0 ;;
             *) echo "${yellow}Unknown argument: $1${reset}" ;;
         esac
@@ -198,46 +160,25 @@ OPTIONS for --auto:
   --cf-email    EMAIL        Cloudflare email (for cf method)
   --cf-key      KEY          Cloudflare API key (for cf method)
   --skip-ws                  Skip WS install (Reality only)
-  --ssh-port    PORT         Change SSH port (1-65535)
-  --ipv6                     Enable IPv6 (default: disabled)
-  --cpu-guard                Enable CPU Guard (priority for xray/nginx)
   --bbr                      Enable BBR TCP congestion control
-  --fail2ban                 Install Fail2Ban
-  --jail                     Enable WebJail (nginx-probe, requires --fail2ban)
-  --adblock                  Enable Adblock (geosite:category-ads-all)
-  --privacy                  Enable Privacy Mode (no traffic logs)
-  --psiphon                  Install Psiphon proxy
-  --psiphon-country CODE     Psiphon exit country (DE, NL, US, GB, FR, etc.)
-  --psiphon-warp             Route Psiphon through WARP
+  --fail2ban                 Install Fail2Ban + WebJail
   --no-warp                  Skip Cloudflare WARP setup
-  --stream                   Activate Stream SNI (required for Vision)
-  --vision                   Install Vision (VLESS+TLS+Vision flow)
-  --vision-domain DOMAIN     Domain for Vision (no Cloudflare proxy!)
-  --vision-cert-method cf|standalone  SSL method for Vision domain
 
 EXAMPLES:
   # Simple: WS+CDN, standalone SSL
   bash install.sh --auto --domain vpn.example.com
 
-  # Full: WS + Reality, Cloudflare DNS SSL, BBR, Fail2Ban, Jail, Adblock
+  # Full: WS + Reality, Cloudflare DNS SSL, BBR, Fail2Ban
   bash install.sh --auto \
     --domain vpn.example.com \
     --stub https://microsoft.com/ \
     --cert-method cf --cf-email me@me.com --cf-key AbCd1234 \
     --reality --reality-dest www.apple.com:443 --reality-port 8443 \
-    --bbr --fail2ban --jail --adblock
+    --bbr --fail2ban
 
   # Reality only (no WS, no Nginx/SSL needed)
   bash install.sh --auto --skip-ws \
     --reality --reality-dest microsoft.com:443 --reality-port 8443
-
-  # Full stack: WS + Reality + Psiphon + all security features
-  bash install.sh --auto \
-    --domain vpn.example.com \
-    --ssh-port 22222 \
-    --cpu-guard --ipv6 --fail2ban --jail --adblock --privacy \
-    --psiphon --psiphon-country DE \
-    --reality --bbr
 
 HELPEOF
 }
@@ -259,19 +200,6 @@ _validate_auto_params() {
         fi
     fi
 
-    if $OPT_VISION; then
-        if [ -z "$OPT_VISION_DOMAIN" ]; then
-            echo "${red}ERROR: --vision-domain is required with --vision${reset}"
-            exit 1
-        fi
-        if $OPT_SKIP_WS; then
-            echo "${red}ERROR: --vision requires WS+TLS (cannot use --skip-ws with --vision)${reset}"
-            exit 1
-        fi
-        # Vision подразумевает stream
-        OPT_STREAM=true
-    fi
-
     if ! [[ "$OPT_PORT" =~ ^[0-9]+$ ]] || [ "$OPT_PORT" -lt 443 ] || [ "$OPT_PORT" -gt 65535 ]; then
         echo "${red}Invalid --port: $OPT_PORT (must be 1024-65535)${reset}"
         exit 1
@@ -286,58 +214,22 @@ _validate_auto_params() {
         echo "${red}Invalid --cert-method: $OPT_CERT_METHOD (must be cf or standalone)${reset}"
         exit 1
     fi
-
-    # Валидация SSH порта
-    if [ -n "$OPT_SSH_PORT" ]; then
-        if ! [[ "$OPT_SSH_PORT" =~ ^[0-9]+$ ]] || [ "$OPT_SSH_PORT" -lt 1 ] || [ "$OPT_SSH_PORT" -gt 65535 ]; then
-            echo "${red}Invalid --ssh-port: $OPT_SSH_PORT (must be 1-65535)${reset}"
-            exit 1
-        fi
-    fi
-
-    # Валидация страны Psiphon (2-буквенный код)
-    if $OPT_PSIPHON && [ -n "$OPT_PSIPHON_COUNTRY" ]; then
-        if ! [[ "$OPT_PSIPHON_COUNTRY" =~ ^[A-Z]{2}$ ]] && ! [[ "$OPT_PSIPHON_COUNTRY" =~ ^[a-z]{2}$ ]]; then
-            echo "${red}Invalid --psiphon-country: $OPT_PSIPHON_COUNTRY (must be 2-letter country code, e.g. DE, NL, US)${reset}"
-            exit 1
-        fi
-    fi
-
-    # Psiphon WARP требует WARP
-    if $OPT_PSIPHON_WARP && $OPT_NO_WARP; then
-        echo "${red}ERROR: --psiphon-warp requires WARP (cannot use --no-warp)${reset}"
-        exit 1
-    fi
 }
 
 _print_auto_params() {
     echo -e "${cyan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
     echo -e "   $(msg auto_params):"
     echo -e "${cyan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-    # Строка Mode — перечисляем все активные компоненты
-    local _mode=""
-    $OPT_SKIP_WS  && _mode="Reality only (WS skipped)" || _mode="WS+TLS+CDN"
-    $OPT_REALITY  && _mode="${_mode} + Reality"
-    $OPT_VISION   && _mode="${_mode} + Vision"
-    $OPT_STREAM && ! $OPT_VISION && _mode="${_mode} + Stream SNI"
-    $OPT_SKIP_WS  && echo -e "  Mode        : ${yellow}${_mode}${reset}"                   || echo -e "  Mode        : ${green}${_mode}${reset}"
-    [ -n "$OPT_DOMAIN" ]        && echo -e "  Domain      : ${green}$OPT_DOMAIN${reset}"
-    $OPT_SKIP_WS                || echo -e "  Stub URL    : $OPT_STUB"
-    $OPT_SKIP_WS                || echo -e "  Xray port   : $OPT_PORT"
-    $OPT_SKIP_WS                || echo -e "  SSL method  : $OPT_CERT_METHOD"
-    $OPT_REALITY                && echo -e "  Reality     : ${green}$OPT_REALITY_DEST  port=$OPT_REALITY_PORT${reset}"
-    $OPT_VISION                 && echo -e "  Vision      : ${green}$OPT_VISION_DOMAIN${reset}"
-    $OPT_STREAM && ! $OPT_VISION && echo -e "  Stream SNI  : ${green}enabled${reset}"
-    [ -n "$OPT_SSH_PORT" ]      && echo -e "  SSH port    : ${green}$OPT_SSH_PORT${reset}"
-    $OPT_IPV6                   && echo -e "  IPv6        : ${green}enabled${reset}"
-    $OPT_CPU_GUARD              && echo -e "  CPU Guard   : ${green}enabled${reset}"
-    $OPT_FAIL2BAN               && echo -e "  Fail2Ban    : ${green}enabled${reset}"
-    $OPT_JAIL                   && echo -e "  Jail        : ${green}enabled${reset}"
-    $OPT_ADBLOCK                && echo -e "  Adblock     : ${green}enabled${reset}"
-    $OPT_PRIVACY                && echo -e "  Privacy     : ${green}enabled${reset}"
-    $OPT_PSIPHON                && echo -e "  Psiphon     : ${green}enabled${reset}${OPT_PSIPHON_COUNTRY:+ (country=$OPT_PSIPHON_COUNTRY)}${OPT_PSIPHON_WARP:+ [WARP]}"
-    $OPT_BBR                    && echo -e "  BBR         : ${green}enabled${reset}"
-    $OPT_NO_WARP                && echo -e "  WARP        : ${yellow}skipped${reset}"
+    $OPT_SKIP_WS  && echo -e "  Mode        : ${yellow}Reality only (WS skipped)${reset}" \
+                  || echo -e "  Mode        : ${green}WS+TLS+CDN${OPT_REALITY:+ + Reality}${reset}"
+    [ -n "$OPT_DOMAIN" ]   && echo -e "  Domain      : ${green}$OPT_DOMAIN${reset}"
+    $OPT_SKIP_WS           || echo -e "  Stub URL    : $OPT_STUB"
+    $OPT_SKIP_WS           || echo -e "  Xray port   : $OPT_PORT"
+    $OPT_SKIP_WS           || echo -e "  SSL method  : $OPT_CERT_METHOD"
+    $OPT_REALITY           && echo -e "  Reality     : ${green}$OPT_REALITY_DEST  port=$OPT_REALITY_PORT${reset}"
+    $OPT_BBR               && echo -e "  BBR         : ${green}enabled${reset}"
+    $OPT_FAIL2BAN          && echo -e "  Fail2Ban    : ${green}enabled${reset}"
+    $OPT_NO_WARP           && echo -e "  WARP        : ${yellow}skipped${reset}"
     echo -e "  Language    : $OPT_LANG"
     echo -e "${cyan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
     echo ""
@@ -404,44 +296,19 @@ download_modules() {
     echo -e "${cyan}$(msg install_modules)${reset}"
     mkdir -p "$VWN_LIB"
 
-    local updated=0 unchanged=0 failed=0
-
     for module in $MODULES; do
-        local mod_file="${VWN_LIB}/${module}.sh"
-        local old_hash="" new_hash=""
-
-        # Сохраняем хеш старого файла (если есть)
-        [ -f "$mod_file" ] && old_hash=$(md5sum "$mod_file" 2>/dev/null | awk '{print $1}')
-
-        echo -n "  ${module}.sh... "
+        echo -n "  $(msg loading) ${module}.sh... "
         if curl -fsSL --connect-timeout 15 \
             "${GITHUB_RAW}/modules/${module}.sh" \
-            -o "${mod_file}" 2>/dev/null; then
-
-            new_hash=$(md5sum "$mod_file" 2>/dev/null | awk '{print $1}')
-            chmod 644 "$mod_file"
-
-            if [ "$old_hash" = "$new_hash" ]; then
-                echo -e "${yellow}SAME${reset}"
-                unchanged=$((unchanged + 1))
-            else
-                local mod_date
-                mod_date=$(stat -c '%y' "$mod_file" 2>/dev/null | cut -d. -f1)
-                echo -e "${green}UPDATED${reset} (${mod_date})"
-                updated=$((updated + 1))
-            fi
+            -o "${VWN_LIB}/${module}.sh" 2>/dev/null; then
+            echo "${green}OK${reset}"
         else
-            echo -e "${red}FAIL${reset}"
-            echo "    $(msg module_fail) ${module}.sh"
-            failed=$((failed + 1))
+            echo "${red}$(msg error)${reset}"
+            echo "$(msg module_fail) ${module}.sh"
+            return 1
         fi
+        chmod 644 "${VWN_LIB}/${module}.sh"
     done
-
-    # Итог
-    echo ""
-    echo -e "${cyan}────────────────────────────────────────────────────────${reset}"
-    echo -e "  Updated: ${green}${updated}${reset}  |  Same: ${yellow}${unchanged}${reset}  |  Failed: ${red}${failed}${reset}"
-    echo -e "${cyan}────────────────────────────────────────────────────────${reset}"
 }
 
 install_vwn_binary() {
@@ -570,9 +437,6 @@ _auto_install_ws() {
     # Sysctl
     applySysctl
 
-    # Системный DNS — предотвращает утечку через DNS хостера
-    setupSystemDNS
-
     # Генерируем WS path
     local wsPath
     wsPath=$(generateRandomPath)
@@ -650,164 +514,6 @@ _auto_install_reality() {
 }
 
 # =================================================================
-# Неинтерактивная установка Vision
-# =================================================================
-_auto_install_vision() {
-    echo -e "\n${cyan}━━━ Vision ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-
-    # Stream SNI обязателен — активируем автоматически
-    if ! grep -q "ssl_preread on" /etc/nginx/nginx.conf 2>/dev/null; then
-        echo -e "${cyan}Activating Stream SNI for Vision...${reset}"
-        setupStreamSNI 7443 10443 || {
-            echo "${red}ERROR: Stream SNI activation failed. Vision cannot be installed.${reset}"
-            return 1
-        }
-    fi
-
-    # Метод SSL: если не задан — берём тот же что для WS
-    local cert_method="${OPT_VISION_CERT_METHOD:-${OPT_CERT_METHOD:-standalone}}"
-
-    echo -e "${cyan}Installing Vision for domain: $OPT_VISION_DOMAIN${reset}"
-    echo -e "${cyan}SSL method: $cert_method${reset}"
-
-    # Вызываем installVision с предустановленными параметрами
-    VISION_AUTO_DOMAIN="$OPT_VISION_DOMAIN" \
-    VISION_AUTO_CERT_METHOD="$cert_method" \
-    VISION_AUTO_CF_EMAIL="${OPT_CF_EMAIL:-}" \
-    VISION_AUTO_CF_KEY="${OPT_CF_KEY:-}" \
-        installVision --auto || {
-            echo "${red}Vision installation failed.${reset}"
-            return 1
-        }
-
-    echo -e "${green}Vision done. Domain: $OPT_VISION_DOMAIN${reset}"
-}
-
-# =================================================================
-# Helper-функции для неинтерактивной установки
-# =================================================================
-
-# Неинтерактивная смена SSH порта
-_auto_change_ssh_port() {
-    local new_port="$1"
-    local old_port
-    old_port=$(grep -E "^Port " /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -1)
-    old_port="${old_port:-22}"
-
-    echo -e "${cyan}Changing SSH port: $old_port → $new_port${reset}"
-    ufw allow "$new_port"/tcp comment 'SSH' &>/dev/null || true
-    sed -i "s/^#\?Port [0-9]*/Port $new_port/" /etc/ssh/sshd_config
-    systemctl restart sshd 2>/dev/null || systemctl restart ssh
-    echo "${green}SSH port changed to $new_port.${reset}"
-
-    # Обновляем fail2ban если установлен
-    if systemctl is-active --quiet fail2ban 2>/dev/null; then
-        echo -e "${cyan}Updating Fail2Ban SSH port...${reset}"
-        local sshd_backend sshd_logpath
-        if [ -f /var/log/auth.log ]; then
-            sshd_backend="auto"
-            sshd_logpath="logpath  = /var/log/auth.log"
-        else
-            sshd_backend="systemd"
-            sshd_logpath=""
-        fi
-        local cf_ips=""
-        if command -v curl &>/dev/null; then
-            cf_ips=$(curl -fsSL --connect-timeout 5 "https://www.cloudflare.com/ips-v4" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g')
-        fi
-        python3 - "$new_port" "$sshd_backend" "$sshd_logpath" "$cf_ips" << 'PEOF'
-import sys, re
-new_port    = sys.argv[1]
-backend     = sys.argv[2]
-logpath_str = sys.argv[3]
-cf_ips      = sys.argv[4]
-jail_path = "/etc/fail2ban/jail.local"
-try:
-    with open(jail_path) as f:
-        content = f.read()
-except FileNotFoundError:
-    sys.exit(0)
-logpath_line = ("\n" + logpath_str) if logpath_str else ""
-new_sshd = (
-    "[sshd]\n"
-    "enabled  = true\n"
-    "port     = " + new_port + "\n"
-    "filter   = sshd\n"
-    "backend  = " + backend +
-    logpath_line + "\n"
-    "maxretry = 3\n"
-    "bantime  = 24h"
-)
-default_replacement = (
-    "[DEFAULT]\n"
-    "banaction = iptables-multiport\n"
-    "bantime  = 2h\n"
-    "findtime = 10m\n"
-    "maxretry = 5\n"
-    "ignoreip = 127.0.0.1/8 ::1 " + cf_ips + "\n"
-)
-content = re.sub(r'\[DEFAULT\].*?(?=\n\[)', default_replacement, content, flags=re.DOTALL)
-content = re.sub(r'\[sshd\].*?(?=\n\[|\Z)', new_sshd, content, flags=re.DOTALL)
-with open(jail_path, "w") as f:
-    f.write(content)
-PEOF
-        systemctl restart fail2ban
-        echo "${green}Fail2Ban updated SSH port.${reset}"
-    fi
-}
-
-# Неинтерактивная установка Psiphon
-_auto_install_psiphon() {
-    local country="${1:-DE}"
-    local warp_mode="${2:-false}"  # true/false
-
-    echo -e "${cyan}━━━ Psiphon ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-
-    # Скачиваем бинарь
-    installPsiphonBinary || return 1
-
-    local tunnel_mode="plain"
-    if $warp_mode; then
-        if ! systemctl is-active --quiet warp-svc 2>/dev/null || ! ss -tlnp 2>/dev/null | grep -q ':40000'; then
-            echo "${yellow}WARP not running, using plain mode for Psiphon${reset}"
-        else
-            tunnel_mode="warp"
-        fi
-    fi
-
-    # Записываем конфиг
-    writePsiphonConfig "$country" "$tunnel_mode"
-    setupPsiphonService
-
-    # Добавляем в Xray конфиги
-    applyPsiphonOutbound
-    # Пустой список доменов = rule удалён (пользователь добавит позже)
-    if [ -f "$psiphonDomainsFile" ] && [ -s "$psiphonDomainsFile" ]; then
-        applyPsiphonDomains
-    fi
-
-    echo -e "${green}Psiphon installed. Country: $country, Mode: $tunnel_mode${reset}"
-}
-
-# Неинтерактивное включение IPv6
-_auto_toggle_ipv6() {
-    local current
-    current=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)
-    if [ "$current" = "1" ]; then
-        echo -e "${cyan}Enabling IPv6...${reset}"
-        sysctl -w net.ipv6.conf.all.disable_ipv6=0 &>/dev/null
-        sysctl -w net.ipv6.conf.default.disable_ipv6=0 &>/dev/null
-        sysctl -w net.ipv6.conf.lo.disable_ipv6=0 &>/dev/null
-        sysctl -w net.ipv6.icmp.echo_ignore_all=0 &>/dev/null
-        sed -i '/disable_ipv6/d' /etc/sysctl.d/99-xray.conf 2>/dev/null || true
-        sed -i '/ipv6.*icmp.*ignore/d' /etc/sysctl.d/99-xray.conf 2>/dev/null || true
-        echo "${green}IPv6 enabled.${reset}"
-    else
-        echo -e "${yellow}IPv6 already enabled, skipping.${reset}"
-    fi
-}
-
-# =================================================================
 # Основная функция --auto
 # =================================================================
 _run_auto() {
@@ -827,9 +533,6 @@ _run_auto() {
     mkdir -p "$(dirname "$VWN_CONF")"
     vwn_conf_set "VWN_LANG" "$OPT_LANG"
     _initLang
-
-    # Системный DNS — предотвращает утечку через DNS хостера
-    setupSystemDNS
 
     # Системные пакеты + swap
     echo -e "${cyan}━━━ System packages ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
@@ -873,79 +576,16 @@ _run_auto() {
         _auto_install_reality
     fi
 
-    # Stream SNI — если явно указан и Vision не перекрывает (Vision активирует сам)
-    if $OPT_STREAM && ! $OPT_VISION; then
-        echo -e "\n${cyan}━━━ Stream SNI ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-        setupStreamSNI 7443 10443 || echo "${yellow}Stream SNI failed (non-fatal)${reset}"
-    fi
-
-    # Vision установка
-    if $OPT_VISION; then
-        set +e
-        _auto_install_vision
-        _vision_exit=$?
-        set -e
-        [ $_vision_exit -ne 0 ] && echo -e "${red}Vision install failed (exit $_vision_exit), continuing...${reset}"
-    fi
-
-    # Опциональные компоненты — порядок важен!
-    # 1. Смена SSH порта (перед Fail2Ban чтобы f2b знал правильный порт)
-    if [ -n "$OPT_SSH_PORT" ]; then
-        echo -e "${cyan}━━━ SSH Port ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-        _auto_change_ssh_port "$OPT_SSH_PORT"
-    fi
-
-    # 2. IPv6
-    if $OPT_IPV6; then
-        echo -e "${cyan}━━━ IPv6 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-        _auto_toggle_ipv6
-    fi
-
-    # 3. CPU Guard
-    if $OPT_CPU_GUARD; then
-        echo -e "${cyan}━━━ CPU Guard ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-        setupCpuGuard
-    fi
-
-    # 4. Fail2Ban
-    if $OPT_FAIL2BAN; then
-        echo -e "${cyan}━━━ Fail2Ban ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-        setupFail2Ban
-    fi
-
-    # 5. WebJail (требует Fail2Ban)
-    if $OPT_JAIL; then
-        if ! $OPT_FAIL2BAN; then
-            echo "${yellow}WARNING: --jail requires --fail2ban, installing Fail2Ban first${reset}"
-            setupFail2Ban
-        fi
-        echo -e "${cyan}━━━ WebJail ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-        setupWebJail
-    fi
-
-    # 6. Adblock
-    if $OPT_ADBLOCK; then
-        echo -e "${cyan}━━━ Adblock ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-        enableAdblock
-    fi
-
-    # 7. Privacy Mode
-    if $OPT_PRIVACY; then
-        echo -e "${cyan}━━━ Privacy Mode ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-        enablePrivacyMode
-    fi
-
-    # 8. Psiphon
-    if $OPT_PSIPHON; then
-        local ps_country
-        ps_country="${OPT_PSIPHON_COUNTRY:-DE}"
-        _auto_install_psiphon "$ps_country" "$OPT_PSIPHON_WARP"
-    fi
-
-    # 9. BBR
+    # Опциональные компоненты
     if $OPT_BBR; then
         echo -e "${cyan}━━━ BBR ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
         enableBBR
+    fi
+
+    if $OPT_FAIL2BAN; then
+        echo -e "${cyan}━━━ Fail2Ban ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
+        setupFail2Ban
+        setupWebJail
     fi
 
     # Итоговая сводка
@@ -966,44 +606,6 @@ _run_auto() {
         echo -e "  ${cyan}Reality:${reset}"
         echo -e "    Port   : ${green}$OPT_REALITY_PORT${reset}"
         echo -e "    SNI    : ${green}$OPT_REALITY_DEST${reset}"
-    fi
-
-    if $OPT_VISION; then
-        echo -e "  ${cyan}Vision:${reset}"
-        echo -e "    Domain : ${green}$OPT_VISION_DOMAIN${reset}"
-        echo -e "    Port   : ${green}$(vwn_conf_get vision_port 2>/dev/null || echo '20xxx')${reset}"
-    fi
-
-    if [ -n "$OPT_SSH_PORT" ]; then
-        echo -e "  ${cyan}SSH Port:${reset} ${green}$OPT_SSH_PORT${reset}"
-    fi
-
-    if $OPT_IPV6; then
-        echo -e "  ${cyan}IPv6:${reset} ${green}enabled${reset}"
-    fi
-
-    if $OPT_CPU_GUARD; then
-        echo -e "  ${cyan}CPU Guard:${reset} ${green}enabled${reset}"
-    fi
-
-    if $OPT_JAIL; then
-        echo -e "  ${cyan}WebJail:${reset} ${green}enabled${reset}"
-    fi
-
-    if $OPT_ADBLOCK; then
-        echo -e "  ${cyan}Adblock:${reset} ${green}enabled${reset}"
-    fi
-
-    if $OPT_PRIVACY; then
-        echo -e "  ${cyan}Privacy:${reset} ${green}enabled${reset}"
-    fi
-
-    if $OPT_PSIPHON; then
-        local ps_country
-        ps_country="${OPT_PSIPHON_COUNTRY:-DE}"
-        local ps_mode
-        ps_mode="$($OPT_PSIPHON_WARP && echo 'WARP+' || echo '')Psiphon"
-        echo -e "  ${cyan}Psiphon:${reset} ${green}$ps_mode ($ps_country)${reset}"
     fi
 
     echo ""
@@ -1061,10 +663,6 @@ main() {
             _initLang
         fi
         install_vwn_binary
-
-        # Системный DNS — предотвращает утечку через DNS хостера
-        _load_modules
-        setupSystemDNS
 
         echo -e "\n${green}================================================================${reset}"
         echo -e "   $(msg install_done) $VWN_LIB"
