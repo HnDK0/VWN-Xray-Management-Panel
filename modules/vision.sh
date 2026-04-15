@@ -70,8 +70,8 @@ writeVisionConfig() {
             "clients": [{"id": "${uuid}", "flow": "xtls-rprx-vision"}],
             "decryption": "none",
             "fallbacks": [
-                {"alpn": "h2", "dest": ${vision_h2_port}, "xver": 1},
-                {"dest": ${vision_h1_port}, "xver": 1}
+                {"alpn": "h2", "dest": ${vision_h2_port}},
+                {"dest": ${vision_h1_port}}
             ]
         },
         "streamSettings": {
@@ -742,6 +742,11 @@ rebuildVisionConfigs() {
         echo "${red}$(msg nginx_syntax_err)${reset}"; return 1
     }
     systemctl restart xray-vision 2>/dev/null || true
+    if ! systemctl is-active --quiet xray-vision 2>/dev/null; then
+        echo "${red}xray-vision failed to start after rebuild.${reset}"
+        journalctl -u xray-vision -n 30 --no-pager 2>/dev/null || true
+        return 1
+    fi
 
     $skip_sub || rebuildAllSubFiles 2>/dev/null || true
 
