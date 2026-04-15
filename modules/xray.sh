@@ -180,8 +180,7 @@ writeXrayConfig() {
             {
                 "address": "https://9.9.9.9/dns-query",
                 "port": 443
-            },
-            "8.8.8.8"
+            }
         ],
         "queryStrategy": "UseIPv4"
     },
@@ -216,7 +215,7 @@ writeXrayConfig() {
         {
             "tag": "free",
             "protocol": "freedom",
-            "settings": {"domainStrategy": "AsIs"}
+            "settings": {"domainStrategy": "UseIPv4"}
         },
         {
             "tag": "warp",
@@ -231,11 +230,6 @@ writeXrayConfig() {
     "routing": {
         "domainStrategy": "AsIs",
         "rules": [
-            {
-                "type": "field",
-                "port": 53,
-                "outboundTag": "dns-out"
-            },
             {
                 "type": "field",
                 "ip": ["geoip:private"],

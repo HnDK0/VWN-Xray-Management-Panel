@@ -70,8 +70,7 @@ writeRealityConfig() {
             {
                 "address": "https://9.9.9.9/dns-query",
                 "port": 443
-            },
-            "8.8.8.8"
+            }
         ],
         "queryStrategy": "UseIPv4"
     },
@@ -104,7 +103,7 @@ writeRealityConfig() {
         {
             "tag": "free",
             "protocol": "freedom",
-            "settings": {"domainStrategy": "AsIs"}
+            "settings": {"domainStrategy": "UseIPv4"}
         },
         {
             "tag": "warp",
@@ -119,11 +118,6 @@ writeRealityConfig() {
     "routing": {
         "domainStrategy": "AsIs",
         "rules": [
-            {
-                "type": "field",
-                "port": 53,
-                "outboundTag": "dns-out"
-            },
             {
                 "type": "field",
                 "ip": ["geoip:private"],
@@ -161,7 +155,7 @@ writeRealityConfig() {
     "policy": {
         "levels": {
             "0": {
-                "handshake": 4,
+                "handshake": 10,
                 "connIdle": 600,
                 "uplinkOnly": 5,
                 "downlinkOnly": 10
@@ -485,6 +479,14 @@ rebuildRealityConfigs() {
 
     echo -e "  ${cyan}[1/2] reality.json...${reset}"
     writeRealityConfig "$realityPort" "$dest"
+
+    # Если Stream SNI активен — nginx делает ssl_preread и проксирует внутрь,
+    # поэтому Reality должен слушать 127.0.0.1, а не 0.0.0.0
+    if grep -q "ssl_preread on" /etc/nginx/nginx.conf 2>/dev/null; then
+        jq '.inbounds[0].listen = "127.0.0.1"' \
+            "$realityConfigPath" > "${realityConfigPath}.tmp" \
+            && mv "${realityConfigPath}.tmp" "$realityConfigPath"
+    fi
 
     echo -e "  ${cyan}[2/2] Applying active features...${reset}"
     [ -f "$warpDomainsFile" ] && applyWarpDomains 2>/dev/null || true
