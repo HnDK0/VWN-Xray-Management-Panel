@@ -726,6 +726,29 @@ vwn  # item 4 → 8
 vwn  # item 5 → 7
 ```
 
+---
+
+### ❌ Silent failures / Timeouts with empty logs
+```bash
+# ✅ Most common problem — no logs even when there are errors
+# If connections timeout but journalctl is empty:
+
+# 1. Temporarily enable info log level
+sed -i 's/"loglevel": "none"/"loglevel": "info"/' /usr/local/etc/xray/*.json
+systemctl restart xray xray-reality xray-vision
+
+# 2. Now you will see handshake errors and connection attempts
+journalctl -f -u xray -u xray-reality -u xray-vision -p info
+
+# 3. After debugging revert back:
+# ✅ Официальный правильный способ:
+vwn  # item 30 (Rebuild all configs)
+
+# Или вручную:
+sed -i 's/"loglevel": "info"/"loglevel": "none"/' /usr/local/etc/xray/*.json
+systemctl restart xray xray-reality xray-vision
+```
+
 > 💡 If nothing else helps — always run `vwn status` first, it will show the problem in 90% of cases.
 
 ## Removal
@@ -1480,6 +1503,29 @@ vwn  # пункт 4 → 8
 
 # Vision — пересоздать конфиги после обновления модулей
 vwn  # пункт 5 → 7
+```
+
+---
+
+### ❌ Тихие падения / Таймауты с пустыми логами
+```bash
+# ✅ Самая частая проблема — нет логов даже когда есть ошибки
+# Если подключения падают по таймауту а journalctl пустой:
+
+# 1. Временно включить логи уровня info
+sed -i 's/"loglevel": "none"/"loglevel": "info"/' /usr/local/etc/xray/*.json
+systemctl restart xray xray-reality xray-vision
+
+# 2. Теперь будут видны ошибки рукопожатия и попытки подключений
+journalctl -f -u xray -u xray-reality -u xray-vision -p info
+
+# 3. После отладки верни как было:
+# ✅ Официальный правильный способ:
+vwn  # пункт 30 (Пересоздать все конфиги)
+
+# Или вручную:
+sed -i 's/"loglevel": "info"/"loglevel": "none"/' /usr/local/etc/xray/*.json
+systemctl restart xray xray-reality xray-vision
 ```
 
 > 💡 Если ничего не помогает — всегда запустите сначала `vwn status`, он покажет проблему в 90% случаев.
