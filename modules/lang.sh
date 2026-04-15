@@ -647,6 +647,10 @@ _initLang() {
     MSG[users_last_warn]=$(   [ "$VWN_LANG" = en ] && echo "Cannot delete last user." || echo "Нельзя удалить последнего пользователя.")
     MSG[users_qr_prompt]=$(   [ "$VWN_LANG" = en ] && echo "Enter number: "      || echo "Введите номер: ")
     MSG[users_html_hint]=$(   [ "$VWN_LANG" = en ] && echo "HTML page (browser, QR + copy buttons)" || echo "HTML страница (браузер, QR + кнопки копирования)")
+    MSG[btn_copy]=$(          [ "$VWN_LANG" = en ] && echo "Copy" || echo "Копировать")
+    MSG[btn_copy_all]=$(      [ "$VWN_LANG" = en ] && echo "Copy all" || echo "Скопировать все")
+    MSG[btn_copied]=$(        [ "$VWN_LANG" = en ] && echo "Copied" || echo "Скопировано")
+    MSG[btn_qr]=$(            [ "$VWN_LANG" = en ] && echo "QR code" || echo "QR-код")
     MSG[users_rename_prompt]=$( [ "$VWN_LANG" = en ] && echo "Enter number: "    || echo "Введите номер: ")
     MSG[users_migrated]=$(    [ "$VWN_LANG" = en ] && echo "Existing UUID imported" || echo "Существующий UUID импортирован")
 

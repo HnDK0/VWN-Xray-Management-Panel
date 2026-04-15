@@ -252,8 +252,13 @@ except Exception as e:
 buildUserHtmlPage() {
     local uuid="$1" label="$2" token="$3" lines="$4"
     local domain safe htmlfile sub_url
+    local btn_copy_text btn_copy_all_text btn_copied_text btn_qr_text
     domain=$(_getDomain)
     [ -z "$domain" ] && return 0
+    btn_copy_text=$(msg btn_copy)
+    btn_copy_all_text=$(msg btn_copy_all)
+    btn_copied_text=$(msg btn_copied)
+    btn_qr_text=$(msg btn_qr)
     safe=$(_safeLabel "$label")
     htmlfile="${SUB_DIR}/${safe}_${token}.html"
     sub_url="https://${domain}/sub/${safe}_${token}.txt"
@@ -308,24 +313,43 @@ HTMLEOF
     echo "<h1 style='color:#89b4fa;font-size:15px;margin-bottom:16px;padding-bottom:8px;border-bottom:1px solid #2a2a2a'>📡 ${label}</h1>" >> "$htmlfile"
 
     local i=0
+    local all_vless=""
+    local vless_count=0
     for cfg in "${configs[@]}"; do
         local proto_label="VLESS" proto_class=""
         echo "$cfg" | grep -q "type=ws"            && proto_label="WS+TLS"  && proto_class="ws"
         echo "$cfg" | grep -q "security=reality"   && proto_label="Reality" && proto_class="reality"
         echo "$cfg" | grep -q "flow=xtls-rprx-vision" && echo "$cfg" | grep -q "security=tls" && proto_label="Vision+TLS" && proto_class="vision"
+        if [[ "$cfg" == vless://* ]]; then
+            all_vless="${all_vless}${cfg}"$'\n'
+            vless_count=$((vless_count+1))
+        fi
         cat >> "$htmlfile" << CARDEOF
 <div class="card">
   <span class="proto ${proto_class}">${proto_label}</span>
   <div class="url" id="u${i}">${cfg}</div>
   <div class="actions">
-    <button class="btn" onclick="cp('u${i}',this)">📋 Копировать</button>
-    <button class="btn qr-btn" onclick="tqr(${i})">QR-код</button>
+    <button class="btn" onclick="cp('u${i}',this)">📋 ${btn_copy_text}</button>
+    <button class="btn qr-btn" onclick="tqr(${i})">${btn_qr_text}</button>
   </div>
   <div class="qr-wrap" id="qr${i}"><div class="qr-inner" id="qrc${i}"></div></div>
 </div>
 CARDEOF
         i=$((i+1))
     done
+
+    if [ "$vless_count" -gt 1 ]; then
+        all_vless="${all_vless%$'\n'}"
+        cat >> "$htmlfile" << ALLVLESSEOF
+<div class="card">
+  <span class="proto sub">VLESS</span>
+  <div class="actions">
+    <button class="btn" onclick="cp('uallvless',this)">${btn_copy_all_text}</button>
+  </div>
+  <div class="url" id="uallvless" style="display:none">${all_vless}</div>
+</div>
+ALLVLESSEOF
+    fi
 
     # Clash блок
     if [ -n "$clash_yaml" ]; then
@@ -335,7 +359,7 @@ CARDEOF
   <span class="proto clash">Clash</span>
   <div class="url" id="uclash">${clash_yaml}</div>
   <div class="actions">
-    <button class="btn" onclick="cp('uclash',this)">📋 Копировать</button>
+    <button class="btn" onclick="cp('uclash',this)">📋 ${btn_copy_text}</button>
   </div>
 </div>
 CLASHEOF
@@ -348,8 +372,8 @@ CLASHEOF
   <span class="proto sub">SUB</span>
   <div class="url" id="usub">${sub_url}</div>
   <div class="actions">
-    <button class="btn" onclick="cp('usub',this)">📋 Копировать</button>
-    <button class="btn qr-btn" onclick="tqr('sub')">QR-код</button>
+    <button class="btn" onclick="cp('usub',this)">📋 ${btn_copy_text}</button>
+    <button class="btn qr-btn" onclick="tqr('sub')">${btn_qr_text}</button>
   </div>
   <div class="qr-wrap" id="qrsub"><div class="qr-inner" id="qrcsub"></div></div>
 </div>
@@ -359,7 +383,7 @@ CLASHEOF
 var Q={};
 function cp(id,btn){
   navigator.clipboard.writeText(document.getElementById(id).textContent.trim()).then(function(){
-    var o=btn.textContent;btn.textContent='✓ Скопировано';
+    var o=btn.textContent;btn.textContent='✓ ${btn_copied_text}';
     setTimeout(function(){btn.textContent=o;},1500);
   });
 }
