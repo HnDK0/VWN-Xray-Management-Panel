@@ -214,3 +214,140 @@ deleteDomainFromWarpProxy() {
     fi
 }
 
+# Интерактивная установка WARP
+installWarpInteractive() {
+    isRoot
+    clear
+    echo -e "${cyan}================================================================${reset}"
+    echo -e "   $(msg warp_install_title)"
+    echo -e "${cyan}================================================================${reset}"
+    echo ""
+    
+    if command -v warp-cli &>/dev/null; then
+        echo "${yellow}$(msg warp_already_installed)${reset}"
+        echo ""
+        echo -e "${green}1.${reset} $(msg warp_reinstall)"
+        echo -e "${green}0.${reset} $(msg back)"
+        read -rp "$(msg choose)" choice
+        case "$choice" in
+            1) ;;
+            *) return 0 ;;
+        esac
+    fi
+    
+    echo -e "${cyan}$(msg warp_installing)${reset}"
+    run_task "Установка WARP" installWarp
+    run_task "Настройка WARP" configWarp
+    
+    # Применяем правила WARP если есть конфиги
+    [ -f "$warpDomainsFile" ] && applyWarpDomains
+    
+    echo ""
+    echo "${green}$(msg warp_install_complete)${reset}"
+    checkWarpStatus
+    echo -e "\n${cyan}$(msg press_enter)${reset}"
+    read -r
+}
+
+# Интерактивное удаление WARP
+removeWarpInteractive() {
+    isRoot
+    clear
+    echo -e "${cyan}================================================================${reset}"
+    echo -e "   $(msg warp_remove_title)"
+    echo -e "${cyan}================================================================${reset}"
+    echo ""
+    
+    if ! command -v warp-cli &>/dev/null; then
+        echo "${yellow}$(msg warp_not_installed)${reset}"
+        echo -e "\n${cyan}$(msg press_enter)${reset}"
+        read -r
+        return 0
+    fi
+    
+    echo -e "${red}$(msg warp_remove_confirm)${reset}"
+    read -r confirm
+    [[ "$confirm" != "y" ]] && return 0
+    
+    echo -e "${cyan}$(msg warp_removing)${reset}"
+    
+    # Останавливаем и отключаем сервис
+    systemctl stop warp-svc 2>/dev/null || true
+    systemctl disable warp-svc 2>/dev/null || true
+    
+    # Отключаемся
+    warp-cli disconnect 2>/dev/null || true
+    
+    # Удаляем правило маршрутизации из конфигов Xray
+    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+        if [ -f "$cfg" ]; then
+            jq 'del(.routing.rules[] | select(.outboundTag == "warp"))' \
+                "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
+        fi
+    done
+    
+    # Удаляем пакет
+    if command -v apt &>/dev/null; then
+        apt-get remove -y cloudflare-warp 2>/dev/null || true
+        rm -f /etc/apt/sources.list.d/cloudflare-client.list
+        rm -f /usr/share/keyrings/cloudflare-warp.gpg
+    elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
+        ${PACKAGE_MANAGEMENT_REMOVE} -y cloudflare-warp 2>/dev/null || true
+        rm -f /etc/yum.repos.d/cloudflare-warp.repo
+    fi
+    
+    # Перезапускаем сервисы
+    systemctl restart xray 2>/dev/null || true
+    systemctl restart xray-reality 2>/dev/null || true
+    systemctl restart xray-vision 2>/dev/null || true
+    
+    # Удаляем файл доменов
+    rm -f "$warpDomainsFile"
+    
+    echo "${green}$(msg warp_remove_complete)${reset}"
+    echo -e "\n${cyan}$(msg press_enter)${reset}"
+    read -r
+}
+
+# Меню управления WARP
+manageWarp() {
+    set +e
+    while true; do
+        clear
+        local s_warp
+        s_warp=$(getWarpStatus)
+        
+        echo -e "${cyan}================================================================${reset}"
+        echo -e "   $(msg warp_manage_title)"
+        echo -e "${cyan}================================================================${reset}"
+        echo ""
+        echo -e "  $(msg status): $s_warp"
+        echo ""
+        echo -e "  ${green}1.${reset}  $(msg menu_warp_mode)"
+        echo -e "  ${green}2.${reset}  $(msg menu_warp_add)"
+        echo -e "  ${green}3.${reset}  $(msg menu_warp_del)"
+        echo -e "  ${green}4.${reset}  $(msg menu_warp_edit)"
+        echo -e "  ${green}5.${reset}  $(msg menu_warp_check)"
+        echo -e "  ${green}6.${reset}  $(msg menu_warp_install)"
+        echo -e "  ${green}7.${reset}  $(msg menu_warp_remove)"
+        echo -e "${cyan}----------------------------------------------------------------${reset}"
+        echo -e "  ${green}0.${reset}  $(msg back)"
+        echo -e "${cyan}================================================================${reset}"
+        read -rp "$(msg choose)" choice
+        case $choice in
+            1)  toggleWarpMode ;;
+            2)  addDomainToWarpProxy ;;
+            3)  deleteDomainFromWarpProxy ;;
+            4)  nano "$warpDomainsFile" && applyWarpDomains ;;
+            5)  checkWarpStatus ;;
+            6)  installWarpInteractive ;;
+            7)  removeWarpInteractive ;;
+            0)  break ;;
+            *)  echo -e "${red}$(msg invalid)${reset}"; sleep 1 ;;
+        esac
+        [ "$choice" = "0" ] && continue
+        echo -e "\n${cyan}$(msg press_enter)${reset}"
+        read -r
+    done
+}
+
