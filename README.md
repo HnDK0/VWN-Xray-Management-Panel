@@ -578,182 +578,128 @@ Backup management: create, list, restore, delete.
 
 ## Troubleshooting
 
-### 🚀 Quick start
+> **Ping won't show VLESS issues.** Ping is ICMP, VLESS runs over TCP/HTTPS. ICMP may be blocked (Anti-Ping) while VLESS works fine. Test connectivity through your client (v2rayNG, Hiddify, Nekoray).
+
+### 🔴 Connection timeouts (most common issue)
+
+**Symptom:** client hangs on "Connecting...", then timeout. You run `journalctl -f -u xray` — **empty, nothing shows up**.
+
+**Reason:** the request may **never reach Xray**. Connection chain:
+
+```
+Client → Cloudflare → Nginx (port 443) → Xray WS (port 16500) → outbound
+Client → IP:8443 → Xray Reality → outbound
+Client → domain:443 → Stream SNI → Xray Vision → outbound
+```
+
+If the break is at the first link — Xray logs will be empty. You need to look **at the link where the break happens**.
+
+---
+
+#### Step 1. Find where the break is (30 seconds)
+
 ```bash
-# ✅ RUN THIS FIRST — full automatic diagnostics
+# Monitor ALL logs at once:
+tail -f /var/log/nginx/access.log /var/log/nginx/error.log /var/log/xray/access.log /var/log/xray/error.log 2>/dev/null
+
+# In ONE window journalctl (all services):
+journalctl -f -u xray -u xray-reality -u xray-vision -u nginx --no-pager
+```
+
+Now **try connecting from your client** to VLESS. Watch where a record appears:
+
+| Where the record appears | Where the break | What to do |
+|---------------------|-----------|------------|
+| **Nginx access.log** — record exists, Xray logs empty | Between Nginx and Xray | Nginx not proxying to Xray. Check `proxy_pass` in `/etc/nginx/conf.d/xray.conf` |
+| **Nginx access.log** — NO record | Before Nginx (network/CF Guard) | See Step 2 below |
+| **Nginx error.log** — error exists | Nginx can't handle | Read the error in error.log |
+| **Xray access.log** — `accepted` record | Everything works, outbound issue | See Step 3 |
+| **Xray error.log** — error exists | Xray accepted but can't process | Read the error |
+| **Everywhere empty** | Request not reaching server | See Step 2 |
+
+---
+
+#### Step 2. Request not reaching the server
+
+```bash
+# Check 1: domain resolves?
+dig +short your-domain.com
+
+# Check 2: port 443 accessible from outside?
+curl -vI https://your-domain.com/  # from EXTERNAL IP (not from server!)
+
+# Check 3: CF Guard blocking?
+# If Nginx access.log has no records — CF Guard may have blocked before Xray
+# Check:
+grep -A5 "CF Guard" /etc/nginx/conf.d/xray.conf
+# If CF Guard ON — add your IP to whitelist: vwn → 3 → 7
+
+# Check 4: Nginx running at all?
+nginx -t && systemctl status nginx
+
+# Check 5: port 443 listening?
+ss -tlnp | grep :443
+```
+
+---
+
+#### Step 3. Request reached Xray but connection fails
+
+```bash
+# Enable DEBUG logs (disabled by default):
+for f in /usr/local/etc/xray/*.json; do
+    sed -i 's/"loglevel": ".*"/"loglevel": "debug"/' "$f"
+    sed -i 's/"access": ".*"/"access": "\/var\/log\/xray\/access.log"/' "$f"
+done
+
+# Remove systemd stub (no-journal) so journalctl works:
+for svc in xray xray-reality xray-vision; do
+    rm -f /etc/systemd/system/${svc}.service.d/no-journal.conf 2>/dev/null
+done
+
+systemctl daemon-reload
+systemctl restart xray xray-reality xray-vision
+
+# Now watch logs:
+journalctl -f -u xray -u xray-reality -u xray-vision --no-pager
+
+# Typical errors in logs:
+# "invalid user ID"         → wrong UUID in client
+# "failed to validate host" → WS path mismatch
+# "tls: bad certificate"    → SSL cert doesn't match domain
+# "failed to listen"        → Xray didn't start on port
+# "outbound tag not found"  → routing config broken
+
+# After debugging — disable logs back:
+vwn → item 30 (Rebuild all configs)
+```
+
+---
+
+#### Step 4. Quick problem table
+
+| Symptom | Where to look | Command | Fix |
+|---------|-------------|---------|-----|
+| **Timeout WS, all logs empty** | Before Nginx | `curl -vI https://your-domain.com/` | Check DNS, CF Guard, firewall |
+| **Timeout WS, Nginx access.log has record** | Nginx → Xray | `grep proxy_pass /etc/nginx/conf.d/xray.conf` | Check proxy_pass points to correct Xray port |
+| **Timeout WS, Nginx error.log has record** | Nginx error | `tail -20 /var/log/nginx/error.log` | Read the error |
+| **Timeout Reality, logs empty** | Before Xray Reality | `ss -tlnp \| grep 8443` | Port not listening → `systemctl restart xray-reality` |
+| **Timeout Reality, Xray error.log has record** | Xray error | `journalctl -f -u xray-reality` | Read the error |
+| **Timeout Vision, logs empty** | Before Xray Vision | `ss -tlnp \| grep 200` | Port not listening → `systemctl restart xray-vision` |
+| **Connection works, no internet** | Outbound | `grep -A5 "outbounds" /usr/local/etc/xray/*.json` | outbound down (WARP/Psiphon/Tor crashed) |
+| **All timeouts** | Xray config | `xray -test -config /usr/local/etc/xray/config.json` | Config broken → vwn → 30 |
+
+---
+
+### 🚀 Automatic diagnostics
+
+```bash
+# Full diagnostics of all components
 vwn status
 
-# Or via menu: vwn → item 31
-
-# Update modules before troubleshooting
+# Update modules before diagnostics
 vwn update
 ```
-
----
-
-### 🔍 VLESS Configs validation
-```bash
-# ✅ Check ALL configs at once
-for cfg in /usr/local/etc/xray/*.json; do echo -n "$cfg: "; xray -test -config $cfg 2>&1 | head -1; done
-
-# WebSocket + TLS
-xray -test -config /usr/local/etc/xray/config.json
-systemctl status xray
-journalctl -u xray -n 30 --no-pager
-ss -tlnp | grep $(jq -r '.inbounds[0].port' /usr/local/etc/xray/config.json)
-
-# Reality
-xray -test -config /usr/local/etc/xray/reality.json
-systemctl status xray-reality
-journalctl -u xray-reality -n 30 --no-pager
-ss -tlnp | grep $(jq -r '.inbounds[0].port' /usr/local/etc/xray/reality.json)
-
-# Vision (XTLS)
-xray -test -config /usr/local/etc/xray/vision.json
-systemctl status xray-vision
-journalctl -u xray-vision -n 30 --no-pager
-ss -tlnp | grep 200
-```
-
----
-
-### 🌐 Nginx diagnostics
-```bash
-# ✅ Most important nginx command
-nginx -t
-
-systemctl status nginx
-journalctl -u nginx -n 30 --no-pager
-ss -tlnp | grep :443
-
-# Check Stream SNI map
-grep -A20 "map \$ssl_preread" /etc/nginx/nginx.conf
-
-# SSL certificate
-openssl x509 -enddate -noout -in /etc/nginx/cert/cert.pem
-openssl x509 -noout -text -in /etc/nginx/cert/cert.pem | grep DNS:
-
-# Fix after IPv6 disable
-sed -i '/listen \[::\]:443/d' /etc/nginx/conf.d/xray.conf && nginx -t && systemctl reload nginx
-```
-
----
-
-### 🚨 Real time error monitoring
-```bash
-# ✅ Best command for debugging - all errors at once
-journalctl -f -u xray -u xray-reality -u xray-vision -u nginx -p err
-
-# Only Xray errors
-journalctl -f -u 'xray*' -p warning
-
-# Only Nginx errors
-journalctl -f -u nginx -p err
-tail -f /var/log/nginx/error.log
-
-# Services status live
-watch -n 1 'systemctl status xray xray-reality xray-vision nginx warp-svc | grep Active'
-```
-
----
-
-### 📋 Logs
-```bash
-# Xray logs
-journalctl -u xray -n 100 --no-pager
-journalctl -u xray-reality -n 100 --no-pager
-journalctl -u xray-vision -n 100 --no-pager
-
-# Nginx logs
-tail -100 /var/log/nginx/access.log
-tail -100 /var/log/nginx/error.log
-
-grep -i error /var/log/nginx/error.log | tail -50
-```
-
----
-
-### 🔌 Tunnels & WARP
-```bash
-# WARP won't connect
-systemctl restart warp-svc && sleep 5 && warp-cli connect
-warp-cli status
-curl -x socks5://127.0.0.1:40000 https://api.ipify.org
-
-# Psiphon
-tail -50 /var/log/psiphon/psiphon.log
-
-# Tor
-tail -50 /var/log/tor/notices.log
-vwn  # item 8 → 8 (Renew circuit)
-vwn  # item 8 → 14 (Upgrade Tor)
-```
-
----
-
-### 🛡️ Additional checks
-```bash
-# CPU Guard
-systemctl show xray.service -p CPUWeight
-systemctl show nginx.service -p CPUWeight
-
-# Privacy Mode
-grep -E "access|loglevel" /usr/local/etc/xray/*.json
-grep access_log /etc/nginx/conf.d/xray.conf
-vwn  # item 27 → item 4 (Show status)
-
-# Adblock
-vwn  # item 21
-
-# Subscription not updating
-vwn  # item 2 → item 5 (Rebuild all subscription files)
-```
-
----
-
-### 🔧 Quick fixes
-```bash
-# Rebuild ALL configs
-vwn  # item 30
-
-# Restart all services
-vwn  # item 28
-
-# Reality — rebuild without regenerating keys
-vwn  # item 4 → 8
-
-# Vision — rebuild configs after module update
-vwn  # item 5 → 7
-```
-
----
-
-### ❌ Silent failures / Timeouts with empty logs
-```bash
-# ✅ Most common problem — no logs even when there are errors
-# If connections timeout but journalctl is empty:
-
-# 1. Temporarily enable FULL debug logging (works ALWAYS)
-sed -i 's/"loglevel": ".*"/"loglevel": "info"/' /usr/local/etc/xray/*.json
-sed -i 's/"access": ".*"/"access": "console"/' /usr/local/etc/xray/*.json
-
-systemctl restart xray xray-reality xray-vision
-
-# 2. Now you will see handshake errors and connection attempts
-journalctl -f -u xray -u xray-reality -u xray-vision -p info
-
-# 3. After debugging revert back:
-# ✅ Official correct method:
-vwn  # item 30 (Rebuild all configs)
-
-# Or manually:
-sed -i 's/"loglevel": ".*"/"loglevel": "error"/' /usr/local/etc/xray/*.json
-sed -i 's/"access": ".*"/"access": "none"/' /usr/local/etc/xray/*.json
-
-systemctl restart xray xray-reality xray-vision
-```
-
-> 💡 If nothing else helps — always run `vwn status` first, it will show the problem in 90% of cases.
 
 ## Removal
 
@@ -1361,182 +1307,128 @@ WARP автоматически переподключается с логико
 
 ## Решение проблем
 
-### 🚀 Быстрый старт
-```bash
-# ✅ ЗАПУСТИ ЭТО В ПЕРВУЮ ОЧЕРЕДЬ — полная автоматическая диагностика
-vwn status
+> **Ping не покажет проблему с VLESS.** Ping — это ICMP, VLESS идёт через TCP/HTTPS. ICMP может быть заблокирован (Anti-Ping), а VLESS при этом работать. Проверяй подключение через клиент (v2rayNG, Hiddify, Nekoray).
 
-# Или через меню: vwn → пункт 31
+### 🔴 Таймауты подключений (самая частая проблема)
+
+**Симптом:** клиент зависает на "Connecting...", потом timeout. Запускаешь `journalctl -f -u xray` — **пусто, ничего не пишет**.
+
+**Причина:** запрос может **не доходить до Xray**. Цепочка подключения:
+
+```
+Клиент → Cloudflare → Nginx (порт 443) → Xray WS (порт 16500) → outbound
+Клиент → IP:8443 → Xray Reality → outbound
+Клиент → domain:443 → Stream SNI → Xray Vision → outbound
+```
+
+Если обрыв на первом звене — в логах Xray будет пусто. Нужно смотреть **на том звене где обрыв**.
+
+---
+
+#### Шаг 1. Определи где обрыв (30 секунд)
+
+```bash
+# Запусти МОНИТОР ВСЕХ логов сразу:
+tail -f /var/log/nginx/access.log /var/log/nginx/error.log /var/log/xray/access.log /var/log/xray/error.log 2>/dev/null
+
+# В ОДНОМ окне journalctl (все сервисы):
+journalctl -f -u xray -u xray-reality -u xray-vision -u nginx --no-pager
+```
+
+Теперь **с клиента попробуй подключиться** к VLESS. Смотри где появилась запись:
+
+| Где появилась запись | Где обрыв | Что делать |
+|---------------------|-----------|------------|
+| **Nginx access.log** — запись есть, Xray логи пустые | Между Nginx и Xray | Nginx не проксирует в Xray. Проверь `proxy_pass` в `/etc/nginx/conf.d/xray.conf` |
+| **Nginx access.log** — записи НЕТ | До Nginx (сеть/CF Guard) | Смотри Шаг 2 ниже |
+| **Nginx error.log** — есть ошибка | Nginx не может обработать | Читай ошибку в error.log |
+| **Xray access.log** — запись `accepted` | Всё работает, проблема в outbound | Смотри Шаг 3 |
+| **Xray error.log** — есть ошибка | Xray принял но не может обработать | Читай ошибку |
+| **Везде пусто** | Запрос не доходит до сервера | Смотри Шаг 2 |
+
+---
+
+#### Шаг 2. Запрос не доходит до сервера
+
+```bash
+# Проверь 1: домен резолвится?
+dig +short your-domain.com
+
+# Проверь 2: порт 443 доступен снаружи?
+curl -vI https://your-domain.com/  # с ВНЕШНЕГО IP (не с сервера!)
+
+# Проверь 3: CF Guard блокирует?
+# Если в Nginx access.log нет записей — возможно CF Guard отсек до Xray
+# Проверь:
+grep -A5 "CF Guard" /etc/nginx/conf.d/xray.conf
+# Если CF Guard ON — добавь свой IP в whitelist: vwn → 3 → 7
+
+# Проверь 4: Nginx вообще работает?
+nginx -t && systemctl status nginx
+
+# Проверь 5: порт 443 слушается?
+ss -tlnp | grep :443
+```
+
+---
+
+#### Шаг 3. Запрос дошёл до Xray но подключение не работает
+
+```bash
+# Включи ДЕБАГ логи (по умолчанию они отключены):
+for f in /usr/local/etc/xray/*.json; do
+    sed -i 's/"loglevel": ".*"/"loglevel": "debug"/' "$f"
+    sed -i 's/"access": ".*"/"access": "\/var\/log\/xray\/access.log"/' "$f"
+done
+
+# Убери заглушку systemd (no-journal) чтобы journalctl работал:
+for svc in xray xray-reality xray-vision; do
+    rm -f /etc/systemd/system/${svc}.service.d/no-journal.conf 2>/dev/null
+done
+
+systemctl daemon-reload
+systemctl restart xray xray-reality xray-vision
+
+# Теперь смотри логи:
+journalctl -f -u xray -u xray-reality -u xray-vision --no-pager
+
+# Типичные ошибки в логах:
+# "invalid user ID"         → неверный UUID в клиенте
+# "failed to validate host" → WS path не совпадает
+# "tls: bad certificate"    → SSL сертификат не совпадает с доменом
+# "failed to listen"        → Xray не запустился на порту
+# "outbound tag not found"  → конфиг роутинга сломан
+
+# После отладки — выключить логи обратно:
+vwn → пункт 30 (Пересоздать все конфиги)
+```
+
+---
+
+#### Шаг 4. Быстрая таблица проблем
+
+| Симптом | Где смотреть | Команда | Решение |
+|---------|-------------|---------|---------|
+| **Timeout WS, логи пустые везде** | До Nginx | `curl -vI https://your-domain.com/` | Проверь DNS, CF Guard, firewall |
+| **Timeout WS, Nginx access.log есть** | Nginx → Xray | `grep proxy_pass /etc/nginx/conf.d/xray.conf` | Проверь что proxy_pass указывает на правильный порт Xray |
+| **Timeout WS, Nginx error.log есть** | Nginx ошибка | `tail -20 /var/log/nginx/error.log` | Читай ошибку |
+| **Timeout Reality, логи пустые** | До Xray Reality | `ss -tlnp \| grep 8443` | Порт не слушается → `systemctl restart xray-reality` |
+| **Timeout Reality, Xray error.log есть** | Xray ошибка | `journalctl -f -u xray-reality` | Читай ошибку |
+| **Timeout Vision, логи пустые** | До Xray Vision | `ss -tlnp \| grep 200` | Порт не слушается → `systemctl restart xray-vision` |
+| **Подключение есть, интернет нет** | Outbound | `grep -A5 "outbounds" /usr/local/etc/xray/*.json` | outbound не работает (WARP/Psiphon/Tor упал) |
+| **Все таймауты** | Xray конфиг | `xray -test -config /usr/local/etc/xray/config.json` | Конфиг сломан → vwn → 30 |
+
+---
+
+### 🚀 Автоматическая диагностика
+
+```bash
+# Полная проверка всех компонентов
+vwn status
 
 # Обновить модули перед диагностикой
 vwn update
 ```
-
----
-
-### 🔍 Проверка VLESS конфигов
-```bash
-# ✅ Проверить ВСЕ конфиги сразу
-for cfg in /usr/local/etc/xray/*.json; do echo -n "$cfg: "; xray -test -config $cfg 2>&1 | head -1; done
-
-# WebSocket + TLS
-xray -test -config /usr/local/etc/xray/config.json
-systemctl status xray
-journalctl -u xray -n 30 --no-pager
-ss -tlnp | grep $(jq -r '.inbounds[0].port' /usr/local/etc/xray/config.json)
-
-# Reality
-xray -test -config /usr/local/etc/xray/reality.json
-systemctl status xray-reality
-journalctl -u xray-reality -n 30 --no-pager
-ss -tlnp | grep $(jq -r '.inbounds[0].port' /usr/local/etc/xray/reality.json)
-
-# Vision (XTLS)
-xray -test -config /usr/local/etc/xray/vision.json
-systemctl status xray-vision
-journalctl -u xray-vision -n 30 --no-pager
-ss -tlnp | grep 200
-```
-
----
-
-### 🌐 Диагностика Nginx
-```bash
-# ✅ Самая главная команда для Nginx
-nginx -t
-
-systemctl status nginx
-journalctl -u nginx -n 30 --no-pager
-ss -tlnp | grep :443
-
-# Проверить карту Stream SNI
-grep -A20 "map \$ssl_preread" /etc/nginx/nginx.conf
-
-# SSL сертификат
-openssl x509 -enddate -noout -in /etc/nginx/cert/cert.pem
-openssl x509 -noout -text -in /etc/nginx/cert/cert.pem | grep DNS:
-
-# Фикс после отключения IPv6
-sed -i '/listen \[::\]:443/d' /etc/nginx/conf.d/xray.conf && nginx -t && systemctl reload nginx
-```
-
----
-
-### 🚨 Отслеживание ошибок в реальном времени
-```bash
-# ✅ Лучшая команда для отладки - все ошибки сразу
-journalctl -f -u xray -u xray-reality -u xray-vision -u nginx -p err
-
-# Только ошибки Xray
-journalctl -f -u 'xray*' -p warning
-
-# Только ошибки Nginx
-journalctl -f -u nginx -p err
-tail -f /var/log/nginx/error.log
-
-# Статус сервисов в реальном времени
-watch -n 1 'systemctl status xray xray-reality xray-vision nginx warp-svc | grep Active'
-```
-
----
-
-### 📋 Логи
-```bash
-# Xray логи
-journalctl -u xray -n 100 --no-pager
-journalctl -u xray-reality -n 100 --no-pager
-journalctl -u xray-vision -n 100 --no-pager
-
-# Nginx логи
-tail -100 /var/log/nginx/access.log
-tail -100 /var/log/nginx/error.log
-
-grep -i error /var/log/nginx/error.log | tail -50
-```
-
----
-
-### 🔌 Туннели и WARP
-```bash
-# WARP не подключается
-systemctl restart warp-svc && sleep 5 && warp-cli connect
-warp-cli status
-curl -x socks5://127.0.0.1:40000 https://api.ipify.org
-
-# Psiphon
-tail -50 /var/log/psiphon/psiphon.log
-
-# Tor
-tail -50 /var/log/tor/notices.log
-vwn  # пункт 8 → 8 (Обновить цепь)
-vwn  # пункт 8 → 14 (Обновить Tor)
-```
-
----
-
-### 🛡️ Дополнительные проверки
-```bash
-# CPU Guard
-systemctl show xray.service -p CPUWeight
-systemctl show nginx.service -p CPUWeight
-
-# Режим приватности
-grep -E "access|loglevel" /usr/local/etc/xray/*.json
-grep access_log /etc/nginx/conf.d/xray.conf
-vwn  # пункт 27 → пункт 4 (Показать статус)
-
-# Блокировка рекламы
-vwn  # пункт 21
-
-# Подписка не обновляется
-vwn  # пункт 2 → пункт 5 (Пересоздать файлы подписки)
-```
-
----
-
-### 🔧 Быстрые фиксы
-```bash
-# Пересоздать ВСЕ конфиги
-vwn  # пункт 30
-
-# Перезапустить все сервисы
-vwn  # пункт 28
-
-# Reality — пересоздать без перегенерации ключей
-vwn  # пункт 4 → 8
-
-# Vision — пересоздать конфиги после обновления модулей
-vwn  # пункт 5 → 7
-```
-
----
-
-### ❌ Тихие падения / Таймауты с пустыми логами
-```bash
-# ✅ Самая частая проблема — нет логов даже когда есть ошибки
-# Если подключения падают по таймауту а journalctl пустой:
-
-# 1. Временно включить ПОЛНЫЕ логи (РАБОТАЕТ ВСЕГДА)
-sed -i 's/"loglevel": ".*"/"loglevel": "info"/' /usr/local/etc/xray/*.json
-sed -i 's/"access": ".*"/"access": "console"/' /usr/local/etc/xray/*.json
-
-systemctl restart xray xray-reality xray-vision
-
-# 2. Теперь будут видны ошибки рукопожатия и попытки подключений
-journalctl -f -u xray -u xray-reality -u xray-vision -p info
-
-# 3. После отладки верни как было:
-# ✅ Официальный правильный способ:
-vwn  # пункт 30 (Пересоздать все конфиги)
-
-# Или вручную:
-sed -i 's/"loglevel": ".*"/"loglevel": "error"/' /usr/local/etc/xray/*.json
-sed -i 's/"access": ".*"/"access": "none"/' /usr/local/etc/xray/*.json
-
-systemctl restart xray xray-reality xray-vision
-```
-
-> 💡 Если ничего не помогает — всегда запустите сначала `vwn status`, он покажет проблему в 90% случаев.
 
 ## Удаление
 
