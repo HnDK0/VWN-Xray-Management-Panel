@@ -754,10 +754,12 @@ _initLang() {
     MSG[stream_sni_disabled]=$(   [ "$VWN_LANG" = en ] && echo "Stream SNI disabled"               || echo "Stream SNI отключён")
     MSG[stream_sni_disabling]=$(  [ "$VWN_LANG" = en ] && echo "Disabling Stream SNI before removing Reality..." || echo "Отключаем Stream SNI перед удалением Reality...")
     MSG[menu_stream_sni_disable]=$( [ "$VWN_LANG" = en ] && echo "Disable Stream SNI (restore direct port)" || echo "Отключить Stream SNI (вернуть прямой порт)")
+    MSG[stream_sni_change_in_main_menu]=$( [ "$VWN_LANG" = en ] && echo "Internal port is managed via the dedicated Stream SNI section in main menu" || echo "Внутренний порт настраивается через отдельный раздел Stream SNI в главном меню")
     MSG[reality_port_updated]=$(  [ "$VWN_LANG" = en ] && echo "Reality port updated"              || echo "Порт Reality обновлён")
     # ── Пункты меню ──────────────────────────────────────────────────────────
     MSG[menu_sub_auth]=$(         [ "$VWN_LANG" = en ] && echo "Subscription auth (basic auth)"    || echo "Пароль на подписки (basic auth)")
     MSG[menu_stream_sni]=$(       [ "$VWN_LANG" = en ] && echo "Stream SNI — Reality on port 443"  || echo "Stream SNI — Reality на порту 443")
+    MSG[menu_stream_sni_manage]=$( [ "$VWN_LANG" = en ] && echo "Manage Stream SNI" || echo "Управление Stream SNI")
     MSG[stream_sni_no_nginx]=$(   [ "$VWN_LANG" = en ] && echo "nginx is not installed. Install WS first." || echo "nginx не установлен. Сначала установите WS.")
     MSG[stream_sni_nginx_stopped]=$( [ "$VWN_LANG" = en ] && echo "nginx is not running"              || echo "nginx не запущен")
     MSG[stream_sni_nginx_start_hint]=$( [ "$VWN_LANG" = en ] && echo "Start nginx first: systemctl start nginx" || echo "Сначала запустите nginx: systemctl start nginx")

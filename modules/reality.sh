@@ -393,7 +393,7 @@ modifyRealityPort() {
         local internal_port
         internal_port=$(jq -r '.inbounds[0].port' "$realityConfigPath")
         echo "${yellow}Stream SNI активен. Reality снаружи работает на порту 443.${reset}"
-        echo "${yellow}Внутренний порт: ${internal_port}. Для смены используйте пункт 13 (Stream SNI).${reset}"
+        echo "${yellow}$(msg stream_sni_change_in_main_menu): ${internal_port}${reset}"
         return 0
     fi
 
@@ -529,9 +529,7 @@ manageReality() {
         echo -e "${green}7.${reset} $(msg reality_restart)"
         echo -e "${green}8.${reset} $(msg reality_logs)"
         echo -e "${green}9.${reset} $(msg reality_remove)"
-        echo -e "${green}10.${reset} $(msg menu_stream_sni)"
-        echo -e "${green}11.${reset} $(msg menu_stream_sni_disable)"
-        echo -e "${green}12.${reset} $(msg menu_rebuild_reality)"
+        echo -e "${green}10.${reset} $(msg menu_rebuild_reality)"
         echo -e "${green}0.${reset} $(msg back)"
         echo ""
         read -rp "$(msg choose)" choice
@@ -547,9 +545,7 @@ manageReality() {
                echo "---"
                tail -n 30 /var/log/xray/reality-error.log 2>/dev/null || true ;;
             9) removeReality ;;
-            10) setupStreamSNI ;;
-            11) disableStreamSNI ;;
-            12) rebuildRealityConfigs ;;
+            10) rebuildRealityConfigs ;;
             0) break ;;
         esac
         [ "${choice}" = "0" ] && continue

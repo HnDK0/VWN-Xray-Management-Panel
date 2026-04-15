@@ -294,11 +294,10 @@ manageWs() {
         echo -e "  ${green}10.${reset} $(msg menu_log_cron)"
         echo -e "  ${green}11.${reset} $(msg menu_uuid)"
         echo -e "  ${green}12.${reset} $(msg menu_sub_auth)"
-        echo -e "  ${green}13.${reset} $(msg menu_stream_sni)"
-        echo -e "  ${green}14.${reset} $(msg menu_rebuild_ws)"
+        echo -e "  ${green}13.${reset} $(msg menu_rebuild_ws)"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
-        echo -e "  ${green}15.${reset} $(msg menu_install)"
-        echo -e "  ${green}16.${reset} $(msg menu_remove)"
+        echo -e "  ${green}14.${reset} $(msg menu_install)"
+        echo -e "  ${green}15.${reset} $(msg menu_remove)"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
         echo -e "  ${green}0.${reset}  $(msg back)"
         echo -e "${cyan}================================================================${reset}"
@@ -316,10 +315,9 @@ manageWs() {
             10) manageLogClearCron ;;
             11) modifyXrayUUID ;;
             12) manageSubAuth ;;
-            13) setupStreamSNI ;;
-            14) rebuildXrayConfigs ;;
-            15) install ;;
-            16) removeWs ;;
+            13) rebuildXrayConfigs ;;
+            14) install ;;
+            15) removeWs ;;
             0)  break ;;
         esac
         [ "$choice" = "0" ] && continue
@@ -432,6 +430,7 @@ menu() {
         echo -e "  ${green}35.${reset} $(msg menu_backup)"
         echo -e "  ${green}36.${reset} $(msg menu_lang)"
         echo -e "  ${green}37.${reset} $(msg menu_remove)"
+        echo -e "  ${green}38.${reset} $(msg menu_stream_sni_manage)"
         echo -e "  $(msg menu_sep_exit)"
         echo -e "  ${green}0.${reset}  $(msg menu_exit)"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
@@ -476,6 +475,7 @@ menu() {
             35) manageBackup ;;
             36) selectLang; _initLang ;;
             37) fullRemove ;;
+            38) manageStreamSNI ;;
             0)  exit 0 ;;
             *)  echo -e "${red}$(msg invalid)${reset}"; sleep 1 ;;
         esac
