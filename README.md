@@ -578,52 +578,146 @@ Backup management: create, list, restore, delete.
 
 ## Troubleshooting
 
+### 🚀 Quick start
 ```bash
-# Something not working — run diagnostics
-vwn  # item 31
+# ✅ RUN THIS FIRST — full automatic diagnostics
+vwn status
 
-# WARP won't connect
-systemctl restart warp-svc && sleep 5 && warp-cli connect
+# Or via menu: vwn → item 31
 
-# Psiphon logs
-tail -50 /var/log/psiphon/psiphon.log
+# Update modules before troubleshooting
+vwn update
+```
 
-# Reality won't start
+---
+
+### 🔍 VLESS Configs validation
+```bash
+# ✅ Check ALL configs at once
+for cfg in /usr/local/etc/xray/*.json; do echo -n "$cfg: "; xray -test -config $cfg 2>&1 | head -1; done
+
+# WebSocket + TLS
+xray -test -config /usr/local/etc/xray/config.json
+systemctl status xray
+journalctl -u xray -n 30 --no-pager
+ss -tlnp | grep $(jq -r '.inbounds[0].port' /usr/local/etc/xray/config.json)
+
+# Reality
 xray -test -config /usr/local/etc/xray/reality.json
+systemctl status xray-reality
+journalctl -u xray-reality -n 30 --no-pager
+ss -tlnp | grep $(jq -r '.inbounds[0].port' /usr/local/etc/xray/reality.json)
 
-# Vision won't start
+# Vision (XTLS)
 xray -test -config /usr/local/etc/xray/vision.json
+systemctl status xray-vision
 journalctl -u xray-vision -n 30 --no-pager
-
-# Vision — check port is listening
 ss -tlnp | grep 200
+```
 
-# Stream SNI — check nginx map
+---
+
+### 🌐 Nginx diagnostics
+```bash
+# ✅ Most important nginx command
+nginx -t
+
+systemctl status nginx
+journalctl -u nginx -n 30 --no-pager
+ss -tlnp | grep :443
+
+# Check Stream SNI map
 grep -A20 "map \$ssl_preread" /etc/nginx/nginx.conf
 
-# Nginx after IPv6 disable
+# SSL certificate
+openssl x509 -enddate -noout -in /etc/nginx/cert/cert.pem
+openssl x509 -noout -text -in /etc/nginx/cert/cert.pem | grep DNS:
+
+# Fix after IPv6 disable
 sed -i '/listen \[::\]:443/d' /etc/nginx/conf.d/xray.conf && nginx -t && systemctl reload nginx
+```
 
-# Tor — try bridges (item 8 → 11)
+---
+
+### 🚨 Real time error monitoring
+```bash
+# ✅ Best command for debugging - all errors at once
+journalctl -f -u xray -u xray-reality -u xray-vision -u nginx -p err
+
+# Only Xray errors
+journalctl -f -u 'xray*' -p warning
+
+# Only Nginx errors
+journalctl -f -u nginx -p err
+tail -f /var/log/nginx/error.log
+
+# Services status live
+watch -n 1 'systemctl status xray xray-reality xray-vision nginx warp-svc | grep Active'
+```
+
+---
+
+### 📋 Logs
+```bash
+# Xray logs
+journalctl -u xray -n 100 --no-pager
+journalctl -u xray-reality -n 100 --no-pager
+journalctl -u xray-vision -n 100 --no-pager
+
+# Nginx logs
+tail -100 /var/log/nginx/access.log
+tail -100 /var/log/nginx/error.log
+
+grep -i error /var/log/nginx/error.log | tail -50
+```
+
+---
+
+### 🔌 Tunnels & WARP
+```bash
+# WARP won't connect
+systemctl restart warp-svc && sleep 5 && warp-cli connect
+warp-cli status
+curl -x socks5://127.0.0.1:40000 https://api.ipify.org
+
+# Psiphon
+tail -50 /var/log/psiphon/psiphon.log
+
+# Tor
 tail -50 /var/log/tor/notices.log
-
-# Renew Tor circuit
 vwn  # item 8 → 8 (Renew circuit)
+vwn  # item 8 → 14 (Upgrade Tor)
+```
+
+---
+
+### 🛡️ Additional checks
+```bash
+# CPU Guard
+systemctl show xray.service -p CPUWeight
+systemctl show nginx.service -p CPUWeight
+
+# Privacy Mode
+grep -E "access|loglevel" /usr/local/etc/xray/*.json
+grep access_log /etc/nginx/conf.d/xray.conf
+vwn  # item 27 → item 4 (Show status)
+
+# Adblock
+vwn  # item 21
 
 # Subscription not updating
 vwn  # item 2 → item 5 (Rebuild all subscription files)
+```
 
-# Adblock — enable/disable
-vwn  # item 21
+---
 
-# Privacy Mode — verify status
-vwn  # item 27 → item 4 (Show status)
+### 🔧 Quick fixes
+```bash
+# Rebuild ALL configs
+vwn  # item 30
 
-# CPU Guard — check priorities
-systemctl show xray.service -p CPUWeight
-
-# Upgrade Tor to latest version
-vwn  # item 8 → 14 (Upgrade Tor)
+# Restart all services
+vwn  # item 28
 
 # Reality — rebuild without regenerating keys
 vwn  # item 4 → 8
@@ -631,6 +725,8 @@ vwn  # item 4 → 8
 # Vision — rebuild configs after module update
 vwn  # item 5 → 7
 ```
+
+> 💡 If nothing else helps — always run `vwn status` first, it will show the problem in 90% of cases.
 
 ## Removal
 
@@ -1238,59 +1334,155 @@ WARP автоматически переподключается с логико
 
 ## Решение проблем
 
+### 🚀 Быстрый старт
 ```bash
-# Что-то не работает — запустить диагностику
-vwn  # пункт 31
+# ✅ ЗАПУСТИ ЭТО В ПЕРВУЮ ОЧЕРЕДЬ — полная автоматическая диагностика
+vwn status
 
-# WARP не подключается
-systemctl restart warp-svc && sleep 5 && warp-cli connect
+# Или через меню: vwn → пункт 31
 
-# Логи Psiphon
-tail -50 /var/log/psiphon/psiphon.log
+# Обновить модули перед диагностикой
+vwn update
+```
 
-# Reality не запускается
+---
+
+### 🔍 Проверка VLESS конфигов
+```bash
+# ✅ Проверить ВСЕ конфиги сразу
+for cfg in /usr/local/etc/xray/*.json; do echo -n "$cfg: "; xray -test -config $cfg 2>&1 | head -1; done
+
+# WebSocket + TLS
+xray -test -config /usr/local/etc/xray/config.json
+systemctl status xray
+journalctl -u xray -n 30 --no-pager
+ss -tlnp | grep $(jq -r '.inbounds[0].port' /usr/local/etc/xray/config.json)
+
+# Reality
 xray -test -config /usr/local/etc/xray/reality.json
+systemctl status xray-reality
+journalctl -u xray-reality -n 30 --no-pager
+ss -tlnp | grep $(jq -r '.inbounds[0].port' /usr/local/etc/xray/reality.json)
 
-# Vision не запускается
+# Vision (XTLS)
 xray -test -config /usr/local/etc/xray/vision.json
+systemctl status xray-vision
 journalctl -u xray-vision -n 30 --no-pager
-
-# Vision — проверить что порт слушается
 ss -tlnp | grep 200
+```
 
-# Stream SNI — проверить карту маршрутизации
+---
+
+### 🌐 Диагностика Nginx
+```bash
+# ✅ Самая главная команда для Nginx
+nginx -t
+
+systemctl status nginx
+journalctl -u nginx -n 30 --no-pager
+ss -tlnp | grep :443
+
+# Проверить карту Stream SNI
 grep -A20 "map \$ssl_preread" /etc/nginx/nginx.conf
 
-# Nginx после отключения IPv6
+# SSL сертификат
+openssl x509 -enddate -noout -in /etc/nginx/cert/cert.pem
+openssl x509 -noout -text -in /etc/nginx/cert/cert.pem | grep DNS:
+
+# Фикс после отключения IPv6
 sed -i '/listen \[::\]:443/d' /etc/nginx/conf.d/xray.conf && nginx -t && systemctl reload nginx
+```
 
-# Tor — попробовать мосты (пункт 8 → 11)
+---
+
+### 🚨 Отслеживание ошибок в реальном времени
+```bash
+# ✅ Лучшая команда для отладки - все ошибки сразу
+journalctl -f -u xray -u xray-reality -u xray-vision -u nginx -p err
+
+# Только ошибки Xray
+journalctl -f -u 'xray*' -p warning
+
+# Только ошибки Nginx
+journalctl -f -u nginx -p err
+tail -f /var/log/nginx/error.log
+
+# Статус сервисов в реальном времени
+watch -n 1 'systemctl status xray xray-reality xray-vision nginx warp-svc | grep Active'
+```
+
+---
+
+### 📋 Логи
+```bash
+# Xray логи
+journalctl -u xray -n 100 --no-pager
+journalctl -u xray-reality -n 100 --no-pager
+journalctl -u xray-vision -n 100 --no-pager
+
+# Nginx логи
+tail -100 /var/log/nginx/access.log
+tail -100 /var/log/nginx/error.log
+
+grep -i error /var/log/nginx/error.log | tail -50
+```
+
+---
+
+### 🔌 Туннели и WARP
+```bash
+# WARP не подключается
+systemctl restart warp-svc && sleep 5 && warp-cli connect
+warp-cli status
+curl -x socks5://127.0.0.1:40000 https://api.ipify.org
+
+# Psiphon
+tail -50 /var/log/psiphon/psiphon.log
+
+# Tor
 tail -50 /var/log/tor/notices.log
-
-# Обновить цепь Tor
 vwn  # пункт 8 → 8 (Обновить цепь)
+vwn  # пункт 8 → 14 (Обновить Tor)
+```
+
+---
+
+### 🛡️ Дополнительные проверки
+```bash
+# CPU Guard
+systemctl show xray.service -p CPUWeight
+systemctl show nginx.service -p CPUWeight
+
+# Режим приватности
+grep -E "access|loglevel" /usr/local/etc/xray/*.json
+grep access_log /etc/nginx/conf.d/xray.conf
+vwn  # пункт 27 → пункт 4 (Показать статус)
+
+# Блокировка рекламы
+vwn  # пункт 21
 
 # Подписка не обновляется
 vwn  # пункт 2 → пункт 5 (Пересоздать файлы подписки)
+```
 
-# Блокировка рекламы — включить/выключить
-vwn  # пункт 21
+---
 
-# Режим приватности — проверить статус
-vwn  # пункт 27 → пункт 4 (Показать статус)
+### 🔧 Быстрые фиксы
+```bash
+# Пересоздать ВСЕ конфиги
+vwn  # пункт 30
 
-# CPU Guard — проверить приоритеты
-systemctl show xray.service -p CPUWeight
+# Перезапустить все сервисы
+vwn  # пункт 28
 
-# Обновить Tor до последней версии
-vwn  # пункт 8 → 14 (Обновить Tor)
-
-# Reality — пересоздать конфиги без перегенерации ключей
+# Reality — пересоздать без перегенерации ключей
 vwn  # пункт 4 → 8
 
 # Vision — пересоздать конфиги после обновления модулей
 vwn  # пункт 5 → 7
 ```
+
+> 💡 Если ничего не помогает — всегда запустите сначала `vwn status`, он покажет проблему в 90% случаев.
 
 ## Удаление
 
