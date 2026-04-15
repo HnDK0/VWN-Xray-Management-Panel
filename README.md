@@ -733,19 +733,23 @@ vwn  # item 5 → 7
 # ✅ Most common problem — no logs even when there are errors
 # If connections timeout but journalctl is empty:
 
-# 1. Temporarily enable info log level
-sed -i 's/"loglevel": "none"/"loglevel": "info"/' /usr/local/etc/xray/*.json
+# 1. Temporarily enable FULL debug logging (works ALWAYS)
+sed -i 's/"loglevel": ".*"/"loglevel": "info"/' /usr/local/etc/xray/*.json
+sed -i 's/"access": ".*"/"access": "console"/' /usr/local/etc/xray/*.json
+
 systemctl restart xray xray-reality xray-vision
 
 # 2. Now you will see handshake errors and connection attempts
 journalctl -f -u xray -u xray-reality -u xray-vision -p info
 
 # 3. After debugging revert back:
-# ✅ Официальный правильный способ:
+# ✅ Official correct method:
 vwn  # item 30 (Rebuild all configs)
 
-# Или вручную:
-sed -i 's/"loglevel": "info"/"loglevel": "none"/' /usr/local/etc/xray/*.json
+# Or manually:
+sed -i 's/"loglevel": ".*"/"loglevel": "error"/' /usr/local/etc/xray/*.json
+sed -i 's/"access": ".*"/"access": "none"/' /usr/local/etc/xray/*.json
+
 systemctl restart xray xray-reality xray-vision
 ```
 
@@ -1512,8 +1516,10 @@ vwn  # пункт 5 → 7
 # ✅ Самая частая проблема — нет логов даже когда есть ошибки
 # Если подключения падают по таймауту а journalctl пустой:
 
-# 1. Временно включить логи уровня info
-sed -i 's/"loglevel": "none"/"loglevel": "info"/' /usr/local/etc/xray/*.json
+# 1. Временно включить ПОЛНЫЕ логи (РАБОТАЕТ ВСЕГДА)
+sed -i 's/"loglevel": ".*"/"loglevel": "info"/' /usr/local/etc/xray/*.json
+sed -i 's/"access": ".*"/"access": "console"/' /usr/local/etc/xray/*.json
+
 systemctl restart xray xray-reality xray-vision
 
 # 2. Теперь будут видны ошибки рукопожатия и попытки подключений
@@ -1524,7 +1530,9 @@ journalctl -f -u xray -u xray-reality -u xray-vision -p info
 vwn  # пункт 30 (Пересоздать все конфиги)
 
 # Или вручную:
-sed -i 's/"loglevel": "info"/"loglevel": "none"/' /usr/local/etc/xray/*.json
+sed -i 's/"loglevel": ".*"/"loglevel": "error"/' /usr/local/etc/xray/*.json
+sed -i 's/"access": ".*"/"access": "none"/' /usr/local/etc/xray/*.json
+
 systemctl restart xray xray-reality xray-vision
 ```
 
