@@ -1,0 +1,109 @@
+{
+    "log": {
+        "loglevel": "error",
+        "error": "/var/log/xray/reality-error.log"
+    },
+    "dns": {
+        "servers": [
+            {
+                "address": "https://9.9.9.9/dns-query",
+                "port": 443
+            }
+        ],
+        "queryStrategy": "UseIPv4"
+    },
+    "inbounds": [{
+        "port": __REALITY_PORT__,
+        "listen": "0.0.0.0",
+        "protocol": "vless",
+        "settings": {
+            "clients": [
+                {"id": "__UUID__", "flow": "xtls-rprx-vision", "email": "default"}
+            ],
+            "decryption": "none"
+        },
+        "streamSettings": {
+            "network": "tcp",
+            "security": "reality",
+            "realitySettings": {
+                "show": false,
+                "dest": "__DEST__",
+                "xver": 0,
+                "serverNames": ["__SERVER_NAME__"],
+                "privateKey": "__PRIVATE_KEY__",
+                "shortIds": ["__SHORT_ID__"]
+            }
+        },
+        "sniffing": {
+            "enabled": true,
+            "destOverride": ["http", "tls"],
+            "routeOnly": true
+        }
+    }],
+    "outbounds": [
+        {
+            "tag": "dns-out",
+            "protocol": "dns"
+        },
+        {
+            "tag": "free",
+            "protocol": "freedom",
+            "settings": {"domainStrategy": "UseIPv4"}
+        },
+        {
+            "tag": "warp",
+            "protocol": "socks",
+            "settings": {"servers": [{"address": "127.0.0.1", "port": 40000}]}
+        },
+        {
+            "tag": "psiphon",
+            "protocol": "socks",
+            "settings": {"servers": [{"address": "127.0.0.1", "port": 40002}]}
+        },
+        {
+            "tag": "tor",
+            "protocol": "socks",
+            "settings": {"servers": [{"address": "127.0.0.1", "port": 40003}]}
+        },
+        {
+            "tag": "block",
+            "protocol": "blackhole"
+        }
+    ],
+    "routing": {
+        "domainStrategy": "AsIs",
+        "rules": [
+            {
+                "type": "field",
+                "ip": ["geoip:private"],
+                "outboundTag": "block"
+            },
+            {
+                "type": "field",
+                "port": "25, 587, 465, 2525",
+                "network": "tcp",
+                "outboundTag": "block"
+            },
+            {
+                "type": "field",
+                "protocol": ["bittorrent"],
+                "outboundTag": "block"
+            },
+            {
+                "type": "field",
+                "port": "0-65535",
+                "outboundTag": "free"
+            }
+        ]
+    },
+    "policy": {
+        "levels": {
+            "0": {
+                "handshake": 10,
+                "connIdle": 600,
+                "uplinkOnly": 5,
+                "downlinkOnly": 10
+            }
+        }
+    }
+}

@@ -432,19 +432,23 @@ _diagVision() {
         _fail "$(msg diag_vision_stopped)"
     fi
 
-    # Порт слушается
-    local vision_port
-    vision_port=$(jq -r '.inbounds[0].port // empty' "$visionConfigPath" 2>/dev/null)
-    if [ -n "$vision_port" ] && ss -tlnp 2>/dev/null | grep -q ":${vision_port}"; then
-        _pass "$(msg diag_port_listen): $vision_port (internal)"
+    # Порт 443 слушается (Vision напрямую)
+    if ss -tlnp 2>/dev/null | grep -q ":443 "; then
+        local vision_proc
+        vision_proc=$(ss -tlnp 'sport = :443' 2>/dev/null | awk 'NR>1{print $NF}' | head -1)
+        if echo "$vision_proc" | grep -q "xray"; then
+            _pass "$(msg diag_port_listen): 443 (xray-vision)"
+        else
+            _warn "$(msg diag_port_listen): 443 ($vision_proc)"
+        fi
     else
-        _fail "$(msg diag_port_not_listen): ${vision_port:-?}"
+        _fail "$(msg diag_port_not_listen): 443"
     fi
 
-    # SSL сертификат Vision
-    if [ -f /etc/nginx/cert/vision.pem ]; then
+    # SSL сертификат (общий с WS)
+    if [ -f /etc/nginx/cert/cert.pem ]; then
         local expire_date expire_epoch now_epoch days_left
-        expire_date=$(openssl x509 -enddate -noout -in /etc/nginx/cert/vision.pem 2>/dev/null | cut -d= -f2)
+        expire_date=$(openssl x509 -enddate -noout -in /etc/nginx/cert/cert.pem 2>/dev/null | cut -d= -f2)
         expire_epoch=$(date -d "$expire_date" +%s 2>/dev/null)
         now_epoch=$(date +%s)
         days_left=$(( (expire_epoch - now_epoch) / 86400 ))

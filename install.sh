@@ -65,6 +65,7 @@ cyan=$(_c setaf 6)$(_c bold)
 reset=$(_c sgr0)
 
 MODULES="lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision menu"
+VWN_CONFIG="/usr/local/lib/vwn/config"
 
 # ── Флаги режима ───────────────────────────────────────────────────
 UPDATE_ONLY=false
@@ -210,8 +211,8 @@ OPTIONS for --auto:
   --psiphon-country CODE     Psiphon exit country (DE, NL, US, GB, FR, etc.)
   --psiphon-warp             Route Psiphon through WARP
   --no-warp                  Skip Cloudflare WARP setup
-  --stream                   Activate Stream SNI (required for Vision)
-  --vision                   Install Vision (VLESS+TLS+Vision flow)
+  --stream                   Activate Stream SNI (mutually exclusive with --vision)
+  --vision                   Install Vision (VLESS+TLS+Vision, direct on 443)
   --vision-domain DOMAIN     Domain for Vision (no Cloudflare proxy!)
   --vision-cert-method cf|standalone  SSL method for Vision domain
 
@@ -268,8 +269,11 @@ _validate_auto_params() {
             echo "${red}ERROR: --vision requires WS+TLS (cannot use --skip-ws with --vision)${reset}"
             exit 1
         fi
-        # Vision подразумевает stream
-        OPT_STREAM=true
+        # Vision и Stream SNI несовместимы
+        if $OPT_STREAM; then
+            echo "${red}ERROR: --vision and --stream are mutually exclusive${reset}"
+            exit 1
+        fi
     fi
 
     if ! [[ "$OPT_PORT" =~ ^[0-9]+$ ]] || [ "$OPT_PORT" -lt 443 ] || [ "$OPT_PORT" -gt 65535 ]; then
@@ -442,6 +446,31 @@ download_modules() {
     echo -e "${cyan}────────────────────────────────────────────────────────${reset}"
     echo -e "  Updated: ${green}${updated}${reset}  |  Same: ${yellow}${unchanged}${reset}  |  Failed: ${red}${failed}${reset}"
     echo -e "${cyan}────────────────────────────────────────────────────────${reset}"
+
+    # Копируем шаблоны конфигов
+    echo -e "\n${cyan}Downloading config templates...${reset}"
+    mkdir -p "$VWN_CONFIG"
+    local cfg_updated=0 cfg_unchanged=0
+    for cfg in nginx_main.conf nginx_base.conf nginx_vision.conf nginx_stream.conf nginx_stream_ws.conf nginx_default.conf sub_map.conf xray_ws.json xray_vision.json xray_reality.json xray-vision.service; do
+        local cfg_file="${VWN_CONFIG}/${cfg}"
+        local old_hash="" new_hash=""
+        [ -f "$cfg_file" ] && old_hash=$(md5sum "$cfg_file" 2>/dev/null | awk '{print $1}')
+        echo -n "  ${cfg}... "
+        if curl -fsSL --connect-timeout 15 \
+            "${GITHUB_RAW}/config/${cfg}" \
+            -o "$cfg_file" 2>/dev/null; then
+            new_hash=$(md5sum "$cfg_file" 2>/dev/null | awk '{print $1}')
+            chmod 644 "$cfg_file"
+            if [ "$old_hash" = "$new_hash" ]; then
+                echo -e "${yellow}SAME${reset}"; cfg_unchanged=$((cfg_unchanged + 1))
+            else
+                echo -e "${green}UPDATED${reset}"; cfg_updated=$((cfg_updated + 1))
+            fi
+        else
+            echo -e "${red}FAIL${reset}"
+        fi
+    done
+    echo -e "  Configs: ${green}${cfg_updated}${reset} updated, ${yellow}${cfg_unchanged}${reset} same"
 }
 
 install_vwn_binary() {
@@ -655,11 +684,11 @@ _auto_install_reality() {
 _auto_install_vision() {
     echo -e "\n${cyan}━━━ Vision ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
 
-    # Stream SNI обязателен — активируем автоматически
-    if ! grep -q "ssl_preread on" /etc/nginx/nginx.conf 2>/dev/null; then
-        echo -e "${cyan}Activating Stream SNI for Vision...${reset}"
-        setupStreamSNI 7443 10443 || {
-            echo "${red}ERROR: Stream SNI activation failed. Vision cannot be installed.${reset}"
+    # Если Stream SNI активен — отключаем автоматически (Vision несовместим с Stream)
+    if grep -q "ssl_preread on" /etc/nginx/nginx.conf 2>/dev/null; then
+        echo -e "${yellow}Stream SNI active — disabling for Vision (incompatible)...${reset}"
+        _doDisableStreamSNI || {
+            echo "${red}ERROR: Stream SNI disable failed. Vision cannot be installed.${reset}"
             return 1
         }
     fi

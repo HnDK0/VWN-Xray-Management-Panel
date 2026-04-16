@@ -77,7 +77,7 @@ fi
 _initLang
 
 # Системный DNS — предотвращает утечку через DNS хостера
-setupSystemDNS
+#setupSystemDNS
 
 isRoot
 menu "$@"

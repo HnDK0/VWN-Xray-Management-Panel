@@ -155,7 +155,7 @@ writeRealityConfig() {
     "policy": {
         "levels": {
             "0": {
-                "handshake": 10,
+                "handshake": 30,
                 "connIdle": 600,
                 "uplinkOnly": 5,
                 "downlinkOnly": 10
@@ -290,6 +290,9 @@ installReality() {
 
     writeRealityConfig "$realityPort" "$dest" || return 1
     setupRealityService || return 1
+
+    # Сохраняем порт Reality в vwn.conf для последующего rollback при отключении Stream SNI
+    vwn_conf_set REALITY_PORT "$realityPort"
 
     # Синхронизируем WARP и Relay домены в новый конфиг
     [ -f "$warpDomainsFile" ] && applyWarpDomains

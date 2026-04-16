@@ -3,6 +3,21 @@
 # core.sh — Общие системные функции, хелперы
 # =================================================================
 
+VWN_CONFIG_DIR="/usr/local/lib/vwn/config"
+
+# Рендерит шаблон конфиг с подстановкой переменных
+# render_config шаблон.json выходной.json
+render_config() {
+    local template="$1" output="$2"; shift 2
+    local content
+    content=$(cat "$template")
+    while [ $# -ge 2 ]; do
+        content="${content//__${1}__/$2}"
+        shift 2
+    done
+    echo "$content" > "$output"
+}
+
 rebuildAllConfigs() {
     echo -e "${cyan}Rebuilding ALL configs...${reset}"
     echo ""

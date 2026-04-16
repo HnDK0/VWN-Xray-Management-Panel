@@ -1,0 +1,113 @@
+{
+    "log": {
+        "loglevel": "error",
+        "error": "/var/log/xray/vision-error.log"
+    },
+    "dns": {
+        "servers": [
+            {
+                "address": "https://9.9.9.9/dns-query",
+                "port": 443
+            }
+        ],
+        "queryStrategy": "UseIPv4"
+    },
+    "inbounds": [{
+        "listen": "0.0.0.0",
+        "port": 443,
+        "protocol": "vless",
+        "settings": {
+            "clients": [{"id": "__UUID__", "flow": "xtls-rprx-vision"}],
+            "decryption": "none",
+            "fallbacks": [
+                {"dest": 7443}
+            ]
+        },
+        "streamSettings": {
+            "network": "tcp",
+            "security": "tls",
+            "tlsSettings": {
+                "rejectUnknownSni": false,
+                "minVersion": "1.2",
+                "alpn": ["h2", "http/1.1"],
+                "certificates": [
+                    {
+                        "certificateFile": "/etc/nginx/cert/cert.pem",
+                        "keyFile": "/etc/nginx/cert/cert.key"
+                    }
+                ]
+            }
+        },
+        "sniffing": {
+            "enabled": true,
+            "destOverride": ["http", "tls"],
+            "routeOnly": true
+        }
+    }],
+    "outbounds": [
+        {
+            "tag": "dns-out",
+            "protocol": "dns"
+        },
+        {
+            "tag": "free",
+            "protocol": "freedom",
+            "settings": {"domainStrategy": "UseIPv4"}
+        },
+        {
+            "tag": "warp",
+            "protocol": "socks",
+            "settings": {"servers": [{"address": "127.0.0.1", "port": 40000}]}
+        },
+        {
+            "tag": "psiphon",
+            "protocol": "socks",
+            "settings": {"servers": [{"address": "127.0.0.1", "port": 40002}]}
+        },
+        {
+            "tag": "tor",
+            "protocol": "socks",
+            "settings": {"servers": [{"address": "127.0.0.1", "port": 40003}]}
+        },
+        {
+            "tag": "block",
+            "protocol": "blackhole"
+        }
+    ],
+    "routing": {
+        "domainStrategy": "AsIs",
+        "rules": [
+            {
+                "type": "field",
+                "ip": ["geoip:private"],
+                "outboundTag": "block"
+            },
+            {
+                "type": "field",
+                "port": "25, 587, 465, 2525",
+                "network": "tcp",
+                "outboundTag": "block"
+            },
+            {
+                "type": "field",
+                "protocol": ["bittorrent"],
+                "outboundTag": "block"
+            },
+            {
+                "type": "field",
+                "port": "0-65535",
+                "outboundTag": "free"
+            }
+        ]
+    },
+    "policy": {
+        "levels": {
+            "0": {
+                "handshake": 10,
+                "connIdle": 600,
+                "uplinkOnly": 5,
+                "downlinkOnly": 10
+            }
+        }
+    }
+}

@@ -1,7 +1,14 @@
 #!/bin/bash
 # =================================================================
 # nginx.sh — Nginx конфиг, CDN, SSL сертификаты
+#
+# Три режима:
+#   base   — WS+TLS на 443 (Nginx напрямую с SSL)
+#   vision — Vision на 443 (Nginx на 7443 без SSL, fallback)
+#   stream — Stream SNI на 443 (nginx.conf со stream{} блоком)
 # =================================================================
+
+VWN_CONFIG_DIR="${VWN_CONFIG_DIR:-/usr/local/lib/vwn/config}"
 
 _getCountryCode() {
     local ip="$1"
@@ -24,618 +31,99 @@ setNginxCert() {
     fi
 }
 
-writeNginxConfig() {
-    local xrayPort="$1"
-    # Внутренний порт nginx HTTPS (7443 когда stream SNI активен, иначе 443)
-    local nginx_https_port="${NGINX_HTTPS_PORT:-443}"
-    local domain="$2"
-    local proxyUrl="$3"
+# ── Режим BASE: WS+TLS на 443 напрямую ──────────────────────────
 
-    # Запоминаем ДО перезаписи — был ли активен stream SNI
-    local _stream_sni_was_active=false
-    local _sni_np _sni_rp _sni_domain
-    if grep -q "ssl_preread on" /etc/nginx/nginx.conf 2>/dev/null; then
-        _stream_sni_was_active=true
-        _sni_np=$(vwn_conf_get NGINX_HTTPS_PORT)
-        _sni_rp=$(vwn_conf_get REALITY_INTERNAL_PORT)
-        _sni_domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // ""' "$configPath" 2>/dev/null)
-    fi
-    local wsPath="$4"
-
+writeNginxConfigBase() {
+    local xrayPort="$1" domain="$2" proxyUrl="$3" wsPath="$4"
     local proxy_host
     proxy_host=$(echo "$proxyUrl" | sed 's|https://||;s|http://||;s|/.*||')
 
     setNginxCert
 
-    cat > /etc/nginx/nginx.conf << NGINXMAIN
-user www-data;
-worker_processes auto;
-worker_rlimit_nofile 65535;
-error_log /var/log/nginx/error.log warn;
-pid /run/nginx.pid;
+    # nginx.conf — общая часть
+    cp "$VWN_CONFIG_DIR/nginx_main.conf" /etc/nginx/nginx.conf
 
-events {
-    worker_connections 4096;
-    multi_accept on;
-    use epoll;
-}
+    # default.conf
+    cp "$VWN_CONFIG_DIR/nginx_default.conf" /etc/nginx/conf.d/default.conf
 
-http {
-    include /etc/nginx/mime.types;
-    default_type application/octet-stream;
-    sendfile on;
-    tcp_nopush on;
-    tcp_nodelay on;
+    # xray.conf — WS server block
+    render_config "$VWN_CONFIG_DIR/nginx_base.conf" "$nginxPath" \
+        DOMAIN "$domain" XRAY_PORT "$xrayPort" WS_PATH "$wsPath" \
+        PROXY_URL "$proxyUrl" PROXY_HOST "$proxy_host"
 
-    # Таймауты для стабильного WebSocket
-    keepalive_timeout 65s;
-    keepalive_requests 10000;
-    client_body_timeout 30s;
-    client_header_timeout 30s;
-    send_timeout 30s;
-    reset_timedout_connection on;
-
-    server_tokens off;
-    gzip on;
-    gzip_vary on;
-    gzip_proxied any;
-    gzip_comp_level 6;
-    gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss;
-    include /etc/nginx/conf.d/*.conf;
-}
-NGINXMAIN
-
-    cat > /etc/nginx/conf.d/default.conf << DEFAULTCONF
-server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
-    server_name _;
-    return 301 https://\$host\$request_uri;
-}
-
-server {
-    # Fallback: дропаем всё без совпадения с доменом
-    listen ${nginx_https_port} ssl default_server;
-    ssl_certificate     /etc/nginx/cert/default.crt;
-    ssl_certificate_key /etc/nginx/cert/default.key;
-    server_name _;
-    return 444;
-}
-DEFAULTCONF
-
-    cat > "$nginxPath" << EOF
-server {
-    # Слушает на внутреннем порту — снаружи через stream на 443
-    listen ${nginx_https_port} ssl;
-    server_name $domain;
-
-    ssl_certificate     /etc/nginx/cert/cert.pem;
-    ssl_certificate_key /etc/nginx/cert/cert.key;
-    ssl_protocols       TLSv1.2 TLSv1.3;
-    ssl_ciphers         HIGH:!aNULL:!MD5;
-    ssl_session_cache   shared:SSL:10m;
-    ssl_session_timeout 10m;
-
-    location $wsPath {
-        proxy_pass http://127.0.0.1:${xrayPort};
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        
-        # Оптимизированные таймауты для WebSocket
-        proxy_connect_timeout 30s;
-        proxy_read_timeout 300s;
-        proxy_send_timeout 300s;
-        
-        # Отключаем буферизацию для WebSocket
-        proxy_buffering off;
-        proxy_cache off;
-        proxy_request_buffering off;
-        proxy_socket_keepalive on;
-        
-        access_log             off;
-        error_log              /dev/null crit;
-    }
-
-    location ~ ^/sub/[A-Za-z0-9_-]+_[A-Za-z0-9]+\.html$ {
-        root /usr/local/etc/xray;
-        try_files \$uri =404;
-        types { text/html html; }
-        add_header Cache-Control 'no-cache, no-store, must-revalidate';
-    }
-
-    location ~ ^/sub/[A-Za-z0-9_-]+_[A-Za-z0-9]+\.txt$ {
-        root /usr/local/etc/xray;
-        try_files \$uri =404;
-        default_type text/plain;
-        add_header Content-Disposition "attachment; filename=\"\$sub_label.txt\"";
-        add_header profile-title "\$sub_label";
-        add_header Cache-Control 'no-cache, no-store, must-revalidate';
-    }
-
-    location / {
-        proxy_pass $proxyUrl;
-        proxy_http_version 1.1;
-        proxy_set_header Host $proxy_host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_ssl_server_name on;
-        proxy_read_timeout 60s;
-
-        # Скрываем fingerprint-заголовки фейкового сайта
-        proxy_hide_header X-Powered-By;
-        proxy_hide_header Via;
-        proxy_hide_header X-Cache;
-        proxy_hide_header Content-Security-Policy;
-        proxy_hide_header X-Runtime;
-        proxy_hide_header Server;
-    }
-
-    access_log /var/log/nginx/access.log;
-    error_log  /var/log/nginx/error.log;
-}
-EOF
-
-    # Генерируем map-блок для имён подписок
-    local server_ip country_code
-    server_ip=$(getServerIP 2>/dev/null || curl -s --connect-timeout 5 ifconfig.me)
-    country_code=$(_getCountryCode "$server_ip")
-    cat > /etc/nginx/conf.d/sub_map.conf << MAPEOF
-map \$uri \$sub_label {
-    ~^/sub/(?<label>[A-Za-z0-9_-]+)_[A-Za-z0-9]+\\.txt\$  "${country_code} VLESS | \$label";
-    default                                                    "${country_code} VLESS";
-}
-MAPEOF
-    # Сохраняем URL фейкового сайта — используется в writeVisionNginxConfig
     vwn_conf_set STUB_URL "$proxyUrl"
+    vwn_conf_set NGINX_MODE "base"
 
-    # Восстанавливаем реальный IP — всегда нужно при Cloudflare
     setupRealIpRestore
-
-    # Если stream SNI был активен до вызова writeNginxConfig — восстанавливаем stream-блок,
-    # потому что writeNginxConfig перезаписала nginx.conf только с http{} блоком
-    if $_stream_sni_was_active && [ -n "$_sni_np" ] && [ -n "$_sni_rp" ] && [ -n "$_sni_domain" ]; then
-        _writeStreamNginxConf "$_sni_domain" "$_sni_np" "$_sni_rp"
-    fi
+    _writeSubMapConf
 }
 
-# Восстановление реального IP клиента из CF-Connecting-IP.
-# Вызывается автоматически при writeNginxConfig.
-# nginx.conf уже содержит include conf.d/*.conf — отдельный include не нужен.
-setupRealIpRestore() {
-    echo -e "${cyan}$(msg cf_ips_setup)${reset}"
-    local tmp
-    tmp=$(mktemp) || return 1
-    trap 'rm -f "$tmp"' RETURN
+# ── Режим VISION: Vision на 443, Nginx fallback на 7443 без SSL ──
 
-    printf '# Cloudflare real IP restore — auto-generated\n' > "$tmp"
+writeNginxConfigVision() {
+    local proxyUrl="$1" visionDomain="$2"
+    local proxy_host
+    proxy_host=$(echo "$proxyUrl" | sed 's|https://||;s|http://||;s|/.*||')
 
-    local ok=0
-    for t in v4 v6; do
-        local result
-        result=$(curl -fsSL --connect-timeout 10 "https://www.cloudflare.com/ips-$t" 2>/dev/null) || continue
-        while IFS= read -r ip; do
-            [ -z "$ip" ] && continue
-            echo "set_real_ip_from $ip;" >> "$tmp"
-            ok=1
-        done < <(echo "$result" | grep -E '^[0-9a-fA-F:.]+(/[0-9]+)?$')
-    done
+    setNginxCert
 
-    [ "$ok" -eq 0 ] && { echo "${red}$(msg cf_ips_fail)${reset}"; return 1; }
+    # nginx.conf — общая часть
+    cp "$VWN_CONFIG_DIR/nginx_main.conf" /etc/nginx/nginx.conf
 
-    printf 'real_ip_header CF-Connecting-IP;\nreal_ip_recursive on;\n' >> "$tmp"
+    # xray.conf — Vision fallback server block (HTTP, без SSL!)
+    render_config "$VWN_CONFIG_DIR/nginx_vision.conf" "$nginxPath" \
+        VISION_DOMAIN "$visionDomain" PROXY_URL "$proxyUrl" PROXY_HOST "$proxy_host"
 
-    mkdir -p /etc/nginx/conf.d
-    mv -f "$tmp" /etc/nginx/conf.d/real_ip_restore.conf
-    echo "${green}$(msg cf_ips_ok)${reset}"
+    vwn_conf_set STUB_URL "$proxyUrl"
+    vwn_conf_set NGINX_MODE "vision"
+
+    _writeSubMapConf
 }
 
-# CF Guard — блокировка прямого доступа, только Cloudflare IP.
-# Включается вручную через меню (пункт 3→7).
-_fetchCfGuardIPs() {
-    local tmp
-    tmp=$(mktemp) || return 1
+# ── Режим STREAM SNI: WS + Reality на 443 ───────────────────────
 
-    printf '# CF Guard — allow only Cloudflare IPs — auto-generated\ngeo $realip_remote_addr $cloudflare_ip {\n    default 0;\n' > "$tmp"
-
-    local ok=0
-    for t in v4 v6; do
-        local result
-        result=$(curl -fsSL --connect-timeout 10 "https://www.cloudflare.com/ips-$t" 2>/dev/null) || continue
-        while IFS= read -r ip; do
-            [ -z "$ip" ] && continue
-            echo "    $ip 1;" >> "$tmp"
-            ok=1
-        done < <(echo "$result" | grep -E '^[0-9a-fA-F:.]+(/[0-9]+)?$')
-    done
-
-    [ "$ok" -eq 0 ] && { rm -f "$tmp"; echo "${red}$(msg cf_ips_fail)${reset}"; return 1; }
-    echo "}" >> "$tmp"
-
-    mkdir -p /etc/nginx/conf.d
-    mv -f "$tmp" /etc/nginx/conf.d/cf_guard.conf
-    echo "${green}$(msg cf_ips_ok)${reset}"
-}
-
-toggleCfGuard() {
-    if [ -f /etc/nginx/conf.d/cf_guard.conf ]; then
-        echo -e "${yellow}$(msg cfguard_disable_confirm) $(msg yes_no)${reset}"
-        read -r confirm
-        if [[ "$confirm" == "y" ]]; then
-            rm -f /etc/nginx/conf.d/cf_guard.conf
-            sed -i '/cloudflare_ip.*!=.*1/d' "$nginxPath" 2>/dev/null || true
-            nginx -t && systemctl reload nginx
-            echo "${green}$(msg cfguard_disabled)${reset}"
-        fi
-    else
-        _fetchCfGuardIPs || return 1
-        local wsPath
-        wsPath=$(jq -r ".inbounds[0].streamSettings.wsSettings.path" "$configPath" 2>/dev/null)
-        if [ -n "$wsPath" ] && [ "$wsPath" != "null" ]; then
-            if ! grep -q "cloudflare_ip" "$nginxPath" 2>/dev/null; then
-                python3 - "$nginxPath" "$wsPath" << 'PYEOF'
-import sys, re
-path, wspath = sys.argv[1], sys.argv[2]
-with open(path, 'r') as f: content = f.read()
-cf_check = '    if ($cloudflare_ip != 1) { return 444; }\n\n'
-pattern = r'(\s+location ' + re.escape(wspath) + r'\s*\{)'
-new_content = re.sub(pattern, cf_check + r'\1', content, count=1)
-with open(path, 'w') as f: f.write(new_content)
-PYEOF
-            fi
-        fi
-        nginx -t || { echo "${red}$(msg nginx_syntax_err)${reset}"; nginx -t; return 1; }
-        systemctl reload nginx
-        echo "${green}$(msg cfguard_enabled)${reset}"
-    fi
-}
-
-
-openPort80() {
-    ufw status | grep -q inactive && return
-    ufw allow from any to any port 80 proto tcp comment 'ACME temp'
-}
-
-closePort80() {
-    ufw status | grep -q inactive && return
-    ufw status numbered | grep 'ACME temp' | awk -F"[][]" '{print $2}' | sort -rn | while read -r n; do
-        echo "y" | ufw delete "$n"
-    done
-}
-
-configCert() {
-    if [[ -z "${userDomain:-}" ]]; then
-        read -rp "$(msg ssl_enter_domain)" userDomain
-    fi
-    [ -z "$userDomain" ] && { echo "${red}$(msg ssl_domain_empty)${reset}"; return 1; }
-
-    echo -e "\n${cyan}$(msg ssl_method)${reset}"
-    echo "$(msg ssl_method_1)"
-    echo "$(msg ssl_method_2)"
-    read -rp "$(msg ssl_your_choice)" cert_method
-
-    installPackage "socat" || true
-
-
-    if [ ! -f ~/.acme.sh/acme.sh ]; then
-        curl -fsSL https://get.acme.sh | sh -s email="acme@${userDomain}"
-    fi
-
-    # Проверяем что acme.sh установился
-    if [ ! -f ~/.acme.sh/acme.sh ]; then
-        echo "${red}$(msg acme_install_fail)${reset}"; return 1
-    fi
-
-    ~/.acme.sh/acme.sh --upgrade --auto-upgrade
-    ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-
-    if [ "$cert_method" == "1" ]; then
-        [ -f "$cf_key_file" ] && source "$cf_key_file"
-        if [[ -z "${CF_Email:-}" || -z "${CF_Key:-}" ]]; then
-            read -rp "$(msg ssl_cf_email)" CF_Email
-            read -rp "$(msg ssl_cf_key)" CF_Key
-            printf "export CF_Email='%s'\nexport CF_Key='%s'\n" "$CF_Email" "$CF_Key" > "$cf_key_file"
-            chmod 600 "$cf_key_file"
-        fi
-        export CF_Email CF_Key
-        ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$userDomain" --force
-    else
-        openPort80
-        ~/.acme.sh/acme.sh --issue --standalone -d "$userDomain" \
-            --pre-hook "/usr/local/bin/vwn open-80" \
-            --post-hook "/usr/local/bin/vwn close-80" \
-            --force
-        closePort80
-    fi
-
-    mkdir -p /etc/nginx/cert
-    ~/.acme.sh/acme.sh --install-cert -d "$userDomain" \
-        --key-file /etc/nginx/cert/cert.key \
-        --fullchain-file /etc/nginx/cert/cert.pem \
-        --reloadcmd "systemctl reload nginx"
-
-    echo "${green}$(msg ssl_success) $userDomain${reset}"
-}
-
-# Добавляет location /sub/ и обновляет sub_map.conf с флагом страны
-applyNginxSub() {
-    [ ! -f "$nginxPath" ] && return 1
-
-    # Обновляем/создаём sub_map.conf с актуальным кодом страны
-    local server_ip country_code
-    server_ip=$(getServerIP 2>/dev/null || curl -s --connect-timeout 5 ifconfig.me)
-    country_code=$(_getCountryCode "$server_ip")
-    cat > /etc/nginx/conf.d/sub_map.conf << MAPEOF
-map \$uri \$sub_label {
-    ~^/sub/(?<label>[A-Za-z0-9_-]+)_[A-Za-z0-9]+\\.txt\$  "${country_code} VLESS | \$label";
-    default                                                    "${country_code} VLESS";
-}
-MAPEOF
-
-    # Добавляем location /sub/ в xray.conf если его ещё нет
-    if ! grep -q 'location ~ \^/sub/' "$nginxPath"; then
-        python3 - "$nginxPath" << 'PYEOF'
-import sys, re
-path = sys.argv[1]
-with open(path) as f: c = f.read()
-block = (
-    "\n    location ~ ^/sub/[A-Za-z0-9_-]+_[A-Za-z0-9]+\\.html$ {\n"
-    "        root /usr/local/etc/xray;\n"
-    "        try_files $uri =404;\n"
-    "        types { text/html html; }\n"
-    "        add_header Cache-Control 'no-cache, no-store, must-revalidate';\n"
-    "    }\n"
-    "\n    location ~ ^/sub/[A-Za-z0-9_-]+_[A-Za-z0-9]+\\.txt$ {\n"
-    "        root /usr/local/etc/xray;\n"
-    "        try_files $uri =404;\n"
-    "        default_type text/plain;\n"
-    '        add_header Content-Disposition "attachment; filename=\\"$sub_label.txt\\"";\n'
-    '        add_header profile-title "$sub_label";\n'
-    "        add_header Cache-Control 'no-cache, no-store, must-revalidate';\n"
-    "    }\n"
-)
-c = re.sub(r'(\n    location / \{)', block + r'\1', c, count=1)
-with open(path, 'w') as f: f.write(c)
-PYEOF
-    fi
-
-    nginx -t && systemctl reload nginx
-}
-# ============================================================
-# BASIC AUTH — защита /sub/ подписок паролем
-# ============================================================
-
-# Управление basic auth на /sub/ — вызывается из меню manageWs().
-manageSubAuth() {
-    echo ""
-    echo "${cyan}=== $(msg sub_auth_manage) ===${reset}"
-
-    # Текущий статус — есть ли auth_basic в конфиге
-    local auth_active=false
-    grep -q "auth_basic" "$nginxPath" 2>/dev/null && auth_active=true
-
-    local cur_user cur_pass
-    cur_user=$(vwn_conf_get SUB_AUTH_USER)
-    cur_pass=$(vwn_conf_get SUB_AUTH_PASS)
-
-    if $auth_active; then
-        echo "$(msg sub_auth_status): ${green}$(msg sub_auth_on)${reset}"
-        [ -n "$cur_user" ] && echo "$(msg sub_auth_current): ${green}${cur_user}${reset} / ${green}${cur_pass}${reset}"
-    else
-        echo "$(msg sub_auth_status): ${red}$(msg sub_auth_off)${reset}"
-    fi
-    echo "${yellow}$(msg sub_auth_warn)${reset}"
-    echo ""
-
-    if $auth_active; then
-        echo -e "  ${green}1.${reset} $(msg sub_auth_change_pass)"
-        echo -e "  ${green}2.${reset} $(msg sub_auth_disable)"
-        echo -e "  ${green}0.${reset} $(msg back)"
-        read -rp "$(msg choose) " sa_choice
-        case "$sa_choice" in
-            1) _subAuthSetCredentials && nginx -t && systemctl reload nginx ;;
-            2) _subAuthDisable ;;
-            0) return ;;
-            *) echo "${red}$(msg invalid)${reset}" ;;
-        esac
-    else
-        echo -e "  ${green}1.${reset} $(msg sub_auth_enable)"
-        echo -e "  ${green}0.${reset} $(msg back)"
-        read -rp "$(msg choose) " sa_choice
-        case "$sa_choice" in
-            1) _subAuthEnable ;;
-            0) return ;;
-            *) echo "${red}$(msg invalid)${reset}" ;;
-        esac
-    fi
-}
-
-# Включает basic auth: создаёт .htpasswd и добавляет директивы в nginx конфиг
-_subAuthEnable() {
-    _subAuthSetCredentials || return 1
-
-    if ! grep -q "auth_basic" "$nginxPath" 2>/dev/null; then
-        python3 - "$nginxPath" << 'AUTHPYEOF'
-import sys, re
-path = sys.argv[1]
-with open(path) as f: c = f.read()
-auth = (
-    '        auth_basic           "Restricted";\n'
-    '        auth_basic_user_file /etc/nginx/conf.d/.htpasswd;\n'
-)
-c = re.sub(
-    r'(location ~ \^/sub/[^\n]+\n(?:(?!location|\}).+\n)*)\s*\}',
-    lambda m: m.group(1) + auth + '    }',
-    c
-)
-with open(path, 'w') as f: f.write(c)
-AUTHPYEOF
-    fi
-
-    nginx -t && systemctl reload nginx
-    echo "${green}$(msg sub_auth_enabled): ${cyan}$(vwn_conf_get SUB_AUTH_USER)${reset} / ${cyan}$(vwn_conf_get SUB_AUTH_PASS)${reset}"
-    echo "${yellow}$(msg sub_auth_note)${reset}"
-}
-
-# Отключает basic auth: убирает директивы из nginx конфига и удаляет .htpasswd
-_subAuthDisable() {
-    echo "${yellow}$(msg sub_auth_disable_confirm) $(msg yes_no)${reset}"
-    read -r confirm
-    [[ "$confirm" != "y" ]] && return
-    sed -i '/auth_basic/d' "$nginxPath" 2>/dev/null || true
-    rm -f /etc/nginx/conf.d/.htpasswd
-    vwn_conf_del SUB_AUTH_USER
-    vwn_conf_del SUB_AUTH_PASS
-    nginx -t && systemctl reload nginx
-    echo "${green}$(msg sub_auth_disabled)${reset}"
-}
-
-# Запрашивает логин/пароль и записывает .htpasswd
-_subAuthSetCredentials() {
-    local cur_user
-    cur_user=$(vwn_conf_get SUB_AUTH_USER)
-    read -rp "$(msg sub_auth_new_user) [${cur_user:-vwn}]: " new_user
-    new_user="${new_user:-${cur_user:-vwn}}"
-    read -rp "$(msg sub_auth_new_pass) ($(msg leave_empty_random)): " new_pass
-    [ -z "$new_pass" ] && new_pass=$(openssl rand -base64 12 | tr -d '+/=' | head -c 16)
-
-    local hashed
-    hashed=$(python3 -c "
-import crypt, sys
-u, p = sys.argv[1], sys.argv[2]
-print(u + ':' + crypt.crypt(p, crypt.mksalt(crypt.METHOD_SHA512)))
-" "$new_user" "$new_pass" 2>/dev/null)
-
-    if [ -n "$hashed" ]; then
-        echo "$hashed" > /etc/nginx/conf.d/.htpasswd
-        chmod 640 /etc/nginx/conf.d/.htpasswd
-        chown root:www-data /etc/nginx/conf.d/.htpasswd 2>/dev/null || true
-    elif command -v htpasswd &>/dev/null; then
-        htpasswd -cb /etc/nginx/conf.d/.htpasswd "$new_user" "$new_pass"
-    else
-        installPackage "apache2-utils" &>/dev/null || true
-        htpasswd -cb /etc/nginx/conf.d/.htpasswd "$new_user" "$new_pass" || return 1
-    fi
-
-    vwn_conf_set SUB_AUTH_USER "$new_user"
-    vwn_conf_set SUB_AUTH_PASS "$new_pass"
-    echo "${green}$(msg sub_auth_updated): ${cyan}${new_user}${reset} / ${cyan}${new_pass}${reset}"
-}
-
-
-# ============================================================
-# STREAM SNI — Reality + Nginx оба на порту 443
-# ============================================================
-
-# Включает SNI-мультиплексирование.
-# nginx переезжает на внутренний порт, Reality — тоже на внутренний порт,
-# снаружи всё слушается на 443 через stream-блок nginx.
-#
-# Использование: setupStreamSNI [nginx_port] [reality_port]
-# По умолчанию:  setupStreamSNI 7443 10443
-# Записывает /etc/nginx/nginx.conf со stream{}-блоком для SNI.
-# Вызывается только из setupStreamSNI().
 _writeStreamNginxConf() {
-    local domain="$1"
-    local nginx_port="$2"
-    local reality_port="$3"
+    local wsDomain="$1" nginxPort="$2" realityPort="$3"
 
-    # ── Строим map из STREAM_DOMAINS + текущего WS домена ────────────────────
-    # Формат STREAM_DOMAINS: domain1:port1,domain2:port2,...
+    # Сохраняем STREAM_DOMAINS
     local stream_domains
     stream_domains=$(vwn_conf_get STREAM_DOMAINS 2>/dev/null || true)
-
-    # Убеждаемся что WS домен присутствует в списке
-    local ws_entry="${domain}:${nginx_port}"
     if [ -z "$stream_domains" ]; then
-        stream_domains="$ws_entry"
-        vwn_conf_set STREAM_DOMAINS "$stream_domains"
-    elif ! echo "$stream_domains" | grep -q "^${domain}:"; then
-        stream_domains="${ws_entry},${stream_domains}"
-        vwn_conf_set STREAM_DOMAINS "$stream_domains"
+        stream_domains="${wsDomain}:${nginxPort}"
+    elif ! echo "$stream_domains" | grep -q "^${wsDomain}:"; then
+        stream_domains="${wsDomain}:${nginxPort},${stream_domains}"
     fi
+    vwn_conf_set STREAM_DOMAINS "$stream_domains"
+    vwn_conf_set STREAM_DEFAULT "$reality_port"
 
-    local default_port="${reality_port}"
-    vwn_conf_set STREAM_DEFAULT "$default_port"
+    # nginx.conf — полный конфиг со stream{} блоком из шаблона
+    render_config "$VWN_CONFIG_DIR/nginx_stream.conf" /etc/nginx/nginx.conf \
+        WS_DOMAIN "$wsDomain" REALITY_PORT "$realityPort"
 
-    # Генерируем строки map из STREAM_DOMAINS
-    local map_lines=""
-    IFS=',' read -ra _entries <<< "$stream_domains"
-    for _entry in "${_entries[@]}"; do
-        local _d _p
-        _d=$(echo "$_entry" | cut -d: -f1)
-        _p=$(echo "$_entry" | cut -d: -f2)
-        [ -z "$_d" ] || [ -z "$_p" ] && continue
-        map_lines="${map_lines}        ${_d}   127.0.0.1:${_p};\n"
-    done
+    # xray.conf — WS server block для Stream режима (с SSL)
+    local proxyUrl wsPath proxy_host
+    proxyUrl=$(grep -oP "(?<=proxy_pass )[^;]+" "$nginxPath" 2>/dev/null | grep -v "127.0.0.1" | head -1)
+    [ -z "$proxyUrl" ] && proxyUrl=$(vwn_conf_get STUB_URL 2>/dev/null)
+    [ -z "$proxyUrl" ] && proxyUrl="https://www.bing.com/"
+    proxy_host=$(echo "$proxyUrl" | sed 's|https://||;s|http://||;s|/.*||')
+    wsPath=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // ""' "$configPath" 2>/dev/null)
 
-    cat > /etc/nginx/nginx.conf << NGINXSTREAM
-user www-data;
-worker_processes auto;
-worker_rlimit_nofile 65535;
-error_log /var/log/nginx/error.log warn;
-pid /run/nginx.pid;
+    render_config "$VWN_CONFIG_DIR/nginx_stream_ws.conf" "$nginxPath" \
+        WS_DOMAIN "$wsDomain" XRAY_PORT "16500" WS_PATH "$wsPath" \
+        PROXY_URL "$proxyUrl" PROXY_HOST "$proxy_host"
 
-events {
-    worker_connections 4096;
-    multi_accept on;
-    use epoll;
-}
-
-# ── Stream: SNI-маршрутизация на порту 443 ──────────────────────────────────
-stream {
-    map \$ssl_preread_server_name \$upstream_backend {
-$(printf '%b' "$map_lines")
-        default     127.0.0.1:${default_port};
-    }
-
-    # TCP оптимизации — совпадают с http блоком
-    tcp_nodelay on;
-
-    server {
-        listen 443;
-        listen [::]:443;
-        ssl_preread on;
-        proxy_pass \$upstream_backend;
-        proxy_connect_timeout 30s;
-        proxy_timeout         3600s;
-        proxy_socket_keepalive on;
-    }
-}
-
-http {
-    include /etc/nginx/mime.types;
-    default_type application/octet-stream;
-    sendfile on;
-    tcp_nodelay on;
-    keepalive_timeout 75s;
-    keepalive_requests 10000;
-
-    server_tokens off;
-    gzip on;
-    gzip_vary on;
-    gzip_proxied off;
-    gzip_comp_level 6;
-    gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss;
-    include /etc/nginx/conf.d/*.conf;
-}
-NGINXSTREAM
+    vwn_conf_set NGINX_MODE "stream"
+    _writeSubMapConf
 }
 
 # Добавляет домен:порт в stream map и перегенерирует nginx.conf.
-# Использование: addDomainToStream domain port
 addDomainToStream() {
     local new_domain="$1" new_port="$2"
     [ -z "$new_domain" ] || [ -z "$new_port" ] && return 1
 
-    local stream_domains default_port ws_domain nginx_port
+    local stream_domains reality_port
     stream_domains=$(vwn_conf_get STREAM_DOMAINS 2>/dev/null || true)
-    default_port=$(vwn_conf_get STREAM_DEFAULT 2>/dev/null || echo "10443")
+    reality_port=$(vwn_conf_get REALITY_INTERNAL_PORT 2>/dev/null || echo "10443")
 
     # Убираем старую запись для этого домена если есть
     local new_entry="${new_domain}:${new_port}"
@@ -650,23 +138,23 @@ addDomainToStream() {
     stream_domains="${filtered:+${filtered},}${new_entry}"
     vwn_conf_set STREAM_DOMAINS "$stream_domains"
 
-    # Читаем WS домен и nginx_port для вызова _writeStreamNginxConf
+    local ws_domain nginx_port
     ws_domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // empty' "$configPath" 2>/dev/null)
     nginx_port=$(vwn_conf_get NGINX_HTTPS_PORT 2>/dev/null || echo "7443")
     [ -z "$ws_domain" ] && ws_domain=$(vwn_conf_get DOMAIN 2>/dev/null || echo "")
 
-    _writeStreamNginxConf "$ws_domain" "$nginx_port" "$default_port"
+    # Перегенерируем только stream map в nginx.conf
+    _writeStreamMap "$ws_domain" "$nginx_port" "$reality_port"
 }
 
 # Удаляет домен из stream map и перегенерирует nginx.conf.
-# Использование: removeDomainFromStream domain
 removeDomainFromStream() {
     local rem_domain="$1"
     [ -z "$rem_domain" ] && return 1
 
-    local stream_domains default_port ws_domain nginx_port
+    local stream_domains reality_port
     stream_domains=$(vwn_conf_get STREAM_DOMAINS 2>/dev/null || true)
-    default_port=$(vwn_conf_get STREAM_DEFAULT 2>/dev/null || echo "10443")
+    reality_port=$(vwn_conf_get REALITY_INTERNAL_PORT 2>/dev/null || echo "10443")
 
     local filtered=""
     IFS=',' read -ra _entries <<< "$stream_domains"
@@ -678,11 +166,50 @@ removeDomainFromStream() {
     done
     vwn_conf_set STREAM_DOMAINS "$filtered"
 
+    local ws_domain nginx_port
     ws_domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // empty' "$configPath" 2>/dev/null)
     nginx_port=$(vwn_conf_get NGINX_HTTPS_PORT 2>/dev/null || echo "7443")
     [ -z "$ws_domain" ] && ws_domain=$(vwn_conf_get DOMAIN 2>/dev/null || echo "")
 
-    _writeStreamNginxConf "$ws_domain" "$nginx_port" "$default_port"
+    _writeStreamMap "$ws_domain" "$nginx_port" "$reality_port"
+}
+
+# Внутренняя функция — пишет только stream map блок в nginx.conf
+_writeStreamMap() {
+    local wsDomain="$1" nginxPort="$2" realityPort="$3"
+
+    local stream_domains
+    stream_domains=$(vwn_conf_get STREAM_DOMAINS 2>/dev/null || true)
+
+    # Генерируем строки map из STREAM_DOMAINS
+    local map_lines=""
+    IFS=',' read -ra _entries <<< "$stream_domains"
+    for _entry in "${_entries[@]}"; do
+        local _d _p
+        _d=$(echo "$_entry" | cut -d: -f1)
+        _p=$(echo "$_entry" | cut -d: -f2)
+        [ -z "$_d" ] || [ -z "$_p" ] && continue
+        map_lines="${map_lines}        ${_d}   127.0.0.1:${_p};\n"
+    done
+
+    # Обновляем только stream map в существующем nginx.conf
+    local new_map_block
+    new_map_block=$(printf '%b' "$map_lines")
+
+    # Используем python для точной замены map блока
+    python3 -c "
+import sys
+content = open('/etc/nginx/nginx.conf').read()
+# Находим и заменяем map блок
+import re
+new_map = '''$(printf '%b' "$map_lines")        default     127.0.0.1:${realityPort};'''
+content = re.sub(
+    r'(map \\\$ssl_preread_server_name \\\$upstream_backend \{)\n(.*?)(\n    \})',
+    lambda m: m.group(1) + '\n' + new_map + m.group(3),
+    content, flags=re.DOTALL
+)
+open('/etc/nginx/nginx.conf', 'w').write(content)
+" 2>/dev/null || true
 }
 
 setupStreamSNI() {
@@ -711,16 +238,26 @@ setupStreamSNI() {
         return 1
     fi
 
-    # 4. SSL сертификат существует (нужен для nginx HTTPS на внутреннем порту)
+    # 4. SSL сертификат существует
     if [ ! -f /etc/nginx/cert/cert.pem ] || [ ! -f /etc/nginx/cert/cert.key ]; then
         echo "${red}$(msg stream_sni_no_ssl)${reset}"
         echo "${yellow}$(msg stream_sni_ssl_hint)${reset}"
         return 1
     fi
 
-    # 5. Reality конфиг существует (иначе смысла нет)
+    # 5. Reality конфиг существует
     if [ ! -f "$realityConfigPath" ]; then
         echo "${red}$(msg stream_sni_no_reality)${reset}"
+        return 1
+    fi
+
+    # 5.5. Vision НЕ совместим со Stream SNI
+    if systemctl is-active --quiet xray-vision 2>/dev/null; then
+        echo "${red}ERROR: Vision не поддерживает работу через Stream SNI.${reset}"
+        echo "${yellow}Vision работает напрямую на порту 443 и не может быть маршрутизирован через Stream.${reset}"
+        echo "${yellow}Варианты:${reset}"
+        echo "${yellow}  1. Удалить Vision (manageVision → Remove), затем включить Stream SNI${reset}"
+        echo "${yellow}  2. Не использовать Stream SNI — Reality будет на своём порту (напр. 8443)${reset}"
         return 1
     fi
 
@@ -728,13 +265,11 @@ setupStreamSNI() {
     if ! nginx -V 2>&1 | grep -q "with-stream"; then
         echo "${red}$(msg stream_module_missing)${reset}"
         echo "${yellow}$(msg stream_module_hint)${reset}"
-        # Предлагаем автоустановку nginx-full (только apt)
         if command -v apt &>/dev/null; then
             echo "${cyan}$(msg stream_module_autoinstall)${reset}"
             read -rp "$(msg yes_no) " _ans
             if [[ "$_ans" == "y" ]]; then
-                apt-get install -y nginx-full 2>/dev/null                     && echo "${green}nginx-full installed${reset}"                     || { echo "${red}$(msg stream_module_install_fail)${reset}"; return 1; }
-                # Повторная проверка
+                apt-get install -y nginx-full 2>/dev/null && echo "${green}nginx-full installed${reset}" || { echo "${red}$(msg stream_module_install_fail)${reset}"; return 1; }
                 if ! nginx -V 2>&1 | grep -q "with-stream"; then
                     echo "${red}$(msg stream_module_missing)${reset}"
                     return 1
@@ -747,7 +282,7 @@ setupStreamSNI() {
         fi
     fi
 
-    # 7. Порты не заняты другими процессами (кроме nginx/xray)
+    # 7. Порты не заняты другими процессами
     for _p in "$nginx_port" "$reality_port"; do
         local _proc
         _proc=$(ss -tlnp "sport = :${_p}" 2>/dev/null | awk 'NR>1{print $NF}' | grep -v nginx | grep -v xray || true)
@@ -785,10 +320,13 @@ setupStreamSNI() {
     echo -e "  nginx   → 127.0.0.1:${nginx_port}"
     echo -e "  reality → 127.0.0.1:${reality_port}"
 
-    # Save the original external Reality port for disable rollback.
+    # Save the original external Reality port for disable rollback
     if [ -f "$realityConfigPath" ] && ! $_stream_was_active; then
         local reality_orig_port
-        reality_orig_port=$(jq -r '.inbounds[0].port // empty' "$realityConfigPath" 2>/dev/null)
+        reality_orig_port=$(vwn_conf_get REALITY_PORT 2>/dev/null || true)
+        if ! [[ "$reality_orig_port" =~ ^[0-9]+$ ]]; then
+            reality_orig_port=$(jq -r '.inbounds[0].port // empty' "$realityConfigPath" 2>/dev/null)
+        fi
         if [[ "$reality_orig_port" =~ ^[0-9]+$ ]]; then
             vwn_conf_set REALITY_ORIG_PORT "$reality_orig_port"
         fi
@@ -797,16 +335,7 @@ setupStreamSNI() {
     vwn_conf_set NGINX_HTTPS_PORT      "$nginx_port"
     vwn_conf_set REALITY_INTERNAL_PORT "$reality_port"
 
-    # Перегенерируем xray.conf (http server) на новый внутренний порт — ДО записи stream-блока
-    local xray_port proxy_url ws_path
-    xray_port=$(jq -r '.inbounds[0].port // empty' "$configPath" 2>/dev/null)
-    proxy_url=$(grep -oP "(?<=proxy_pass )[^;]+" "$nginxPath" 2>/dev/null | tail -1)
-    ws_path=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // empty' "$configPath" 2>/dev/null)
-
-    NGINX_HTTPS_PORT="$nginx_port" \
-        writeNginxConfig "$xray_port" "$domain" "$proxy_url" "$ws_path"
-
-    # Пишем nginx.conf со stream-блоком — ПОСЛЕ writeNginxConfig, иначе stream затрётся
+    # Пишем nginx.conf со stream-блоком из шаблона
     _writeStreamNginxConf "$domain" "$nginx_port" "$reality_port"
 
     # Переключаем Reality на 127.0.0.1:reality_port
@@ -816,24 +345,21 @@ setupStreamSNI() {
         jq --argjson p "$reality_port" \
            '.inbounds[0].port = $p | .inbounds[0].listen = "127.0.0.1"' \
            "$realityConfigPath" > "$tmp" && mv "$tmp" "$realityConfigPath"
-        # Восстанавливаем владельца — xray-reality сервис работает под пользователем xray
         chown xray:xray "$realityConfigPath" 2>/dev/null || true
         chmod 640 "$realityConfigPath" 2>/dev/null || true
         echo "${green}$(msg reality_port_updated): 127.0.0.1:${reality_port}${reset}"
         systemctl restart xray-reality 2>/dev/null || true
     fi
 
-    # UFW: 443 уже открыт при стандартной установке, но убеждаемся
+    # UFW
     ufw allow 443/tcp comment 'HTTPS+Reality SNI' &>/dev/null || true
     ufw allow 443/udp comment 'HTTPS+Reality SNI' &>/dev/null || true
 
     nginx -t || { echo "${red}$(msg nginx_syntax_err)${reset}"; return 1; }
-    # stop+start обязателен: reuseport требует полного освобождения сокета
     systemctl stop nginx
     sleep 1
     systemctl start nginx
 
-    # Ждём пока nginx поднимет порт (до 15 секунд)
     local i=0
     while [ $i -lt 15 ]; do
         ss -tlnp 2>/dev/null | grep -q ":443" && break
@@ -848,48 +374,71 @@ setupStreamSNI() {
     fi
 
     echo "${green}$(msg stream_sni_done)${reset}"
-
-    # Перегенерируем подписки: Reality теперь снаружи на 443
     rebuildAllSubFiles 2>/dev/null || true
 }
 
-# Отключает stream SNI — возвращает nginx на прямой listen 443.
-# Внутренняя функция — выполняет откат без подтверждения
-# Вызывается из disableStreamSNI (интерактив) и removeReality (автомат)
+# Отключает stream SNI
 _doDisableStreamSNI() {
     local domain xray_port proxy_url ws_path reality_restore_port
     domain=$(vwn_conf_get DOMAIN)
     xray_port=$(jq -r '.inbounds[0].port // empty' "$configPath" 2>/dev/null)
     proxy_url=$(grep -o 'proxy_pass [^;]*' "$nginxPath" 2>/dev/null | tail -1 | awk '{print $2}')
     ws_path=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // empty' "$configPath" 2>/dev/null)
+
+    # ── 1. Определяем порт восстановления Reality ────────────────────────────
+    # Приоритет: REALITY_ORIG_PORT > REALITY_PORT > reality.json > 8443
     reality_restore_port=$(vwn_conf_get REALITY_ORIG_PORT 2>/dev/null || true)
+    if ! [[ "$reality_restore_port" =~ ^[0-9]+$ ]]; then
+        reality_restore_port=$(vwn_conf_get REALITY_PORT 2>/dev/null || true)
+    fi
+    if ! [[ "$reality_restore_port" =~ ^[0-9]+$ ]]; then
+        reality_restore_port=$(jq -r '.inbounds[0].port // empty' "$realityConfigPath" 2>/dev/null)
+    fi
+    if ! [[ "$reality_restore_port" =~ ^[0-9]+$ ]]; then
+        reality_restore_port=8443
+    fi
 
-    NGINX_HTTPS_PORT=443 \
-        writeNginxConfig "$xray_port" "$domain" "$proxy_url" "$ws_path"
+    # ── 2. Восстанавливаем nginx без stream блока (base режим) ───────────────
+    writeNginxConfigBase "$xray_port" "$domain" "$proxy_url" "$ws_path"
 
+    # ── 3. Чистим vwn.conf от stream параметров ──────────────────────────────
     vwn_conf_del NGINX_HTTPS_PORT
     vwn_conf_del REALITY_INTERNAL_PORT
     vwn_conf_del REALITY_ORIG_PORT
+    vwn_conf_del STREAM_DOMAINS
+    vwn_conf_del STREAM_DEFAULT
 
-    # Возвращаем Reality на 0.0.0.0 и его оригинальный порт
-    # При setupStreamSNI Reality был переведён на 127.0.0.1:internal_port
+    # ── 4. Возвращаем Reality на 0.0.0.0 и его оригинальный порт ─────────────
     if [ -f "$realityConfigPath" ]; then
-        if ! [[ "$reality_restore_port" =~ ^[0-9]+$ ]]; then
-            reality_restore_port=$(jq -r '.inbounds[0].port // empty' "$realityConfigPath" 2>/dev/null)
-        fi
-        if ! [[ "$reality_restore_port" =~ ^[0-9]+$ ]]; then
-            reality_restore_port=8443
-        fi
         jq --argjson p "$reality_restore_port" '.inbounds[0].listen = "0.0.0.0" | .inbounds[0].port = $p' \
             "$realityConfigPath" > "${realityConfigPath}.tmp" \
             && mv "${realityConfigPath}.tmp" "$realityConfigPath"
+        chown xray:xray "$realityConfigPath" 2>/dev/null || true
+        chmod 640 "$realityConfigPath" 2>/dev/null || true
         systemctl restart xray-reality 2>/dev/null || true
+        echo -e "${green}Reality возвращён на порт $reality_restore_port.${reset}"
     fi
 
+    # ── 5. UFW ───────────────────────────────────────────────────────────────
+    if [[ "$reality_restore_port" =~ ^[0-9]+$ ]]; then
+        ufw allow "$reality_restore_port"/tcp comment 'Xray Reality' &>/dev/null || true
+        ufw status numbered 2>/dev/null | grep 'HTTPS+Reality SNI' \
+            | awk -F"[][]" '{print $2}' | sort -rn | while read -r n; do
+            echo "y" | ufw delete "$n" &>/dev/null || true
+        done
+        echo -e "${green}UFW обновлён: порт $reality_restore_port открыт.${reset}"
+    fi
+
+    # ── 6. Обновляем reality_client.txt ──────────────────────────────────────
+    if [ -f /usr/local/etc/xray/reality_client.txt ]; then
+        sed -i "s/^Port:.*/Port:       $reality_restore_port/" /usr/local/etc/xray/reality_client.txt
+    fi
+
+    # ── 7. Перезагружаем nginx ───────────────────────────────────────────────
     nginx -t && systemctl reload nginx
     echo "${green}$(msg stream_sni_disabled)${reset}"
 
-    # Перегенерируем подписки: Reality снова на своём прямом порту
+    # ── 8. Перегенерируем подписки ───────────────────────────────────────────
     rebuildAllSubFiles 2>/dev/null || true
 }
 
@@ -898,6 +447,239 @@ disableStreamSNI() {
     read -r confirm
     [[ "$confirm" != "y" ]] && return
     _doDisableStreamSNI
+}
+
+# ── Утилиты ──────────────────────────────────────────────────────────────────
+
+_writeSubMapConf() {
+    local server_ip country_code
+    server_ip=$(getServerIP 2>/dev/null || curl -s --connect-timeout 5 ifconfig.me)
+    country_code=$(_getCountryCode "$server_ip")
+    render_config "$VWN_CONFIG_DIR/sub_map.conf" /etc/nginx/conf.d/sub_map.conf \
+        COUNTRY "$country_code"
+}
+
+setupRealIpRestore() {
+    echo -e "${cyan}$(msg cf_ips_setup)${reset}"
+    local tmp
+    tmp=$(mktemp) || return 1
+    trap 'rm -f "$tmp"' RETURN
+
+    printf '# Cloudflare real IP restore — auto-generated\n' > "$tmp"
+
+    local ok=0
+    for t in v4 v6; do
+        local result
+        result=$(curl -fsSL --connect-timeout 10 "https://www.cloudflare.com/ips-$t" 2>/dev/null) || continue
+        while IFS= read -r ip; do
+            [ -z "$ip" ] && continue
+            echo "set_real_ip_from $ip;" >> "$tmp"
+            ok=1
+        done < <(echo "$result" | grep -E '^[0-9a-fA-F:.]+(/[0-9]+)?$')
+    done
+
+    [ "$ok" -eq 0 ] && { echo "${red}$(msg cf_ips_fail)${reset}"; return 1; }
+
+    printf 'real_ip_header CF-Connecting-IP;\nreal_ip_recursive on;\n' >> "$tmp"
+
+    mkdir -p /etc/nginx/conf.d
+    mv -f "$tmp" /etc/nginx/conf.d/real_ip_restore.conf
+    echo "${green}$(msg cf_ips_ok)${reset}"
+}
+
+_manageSubAuth() {
+    echo ""
+    echo "${cyan}=== $(msg sub_auth_manage) ===${reset}"
+    local auth_active=false
+    grep -q "auth_basic" "$nginxPath" 2>/dev/null && auth_active=true
+    local cur_user cur_pass
+    cur_user=$(vwn_conf_get SUB_AUTH_USER)
+    cur_pass=$(vwn_conf_get SUB_AUTH_PASS)
+    if $auth_active; then
+        echo "$(msg sub_auth_status): ${green}$(msg sub_auth_on)${reset}"
+        [ -n "$cur_user" ] && echo "$(msg sub_auth_current): ${green}${cur_user}${reset} / ${green}${cur_pass}${reset}"
+    else
+        echo "$(msg sub_auth_status): ${red}$(msg sub_auth_off)${reset}"
+    fi
+    echo "${yellow}$(msg sub_auth_warn)${reset}"
+    echo ""
+    if $auth_active; then
+        echo -e "  ${green}1.${reset} $(msg sub_auth_change_pass)"
+        echo -e "  ${green}2.${reset} $(msg sub_auth_disable)"
+        echo -e "  ${green}0.${reset} $(msg back)"
+        read -rp "$(msg choose) " sa_choice
+        case "$sa_choice" in
+            1) _subAuthSetCredentials && nginx -t && systemctl reload nginx ;;
+            2) _subAuthDisable ;;
+            0) return ;;
+            *) echo "${red}$(msg invalid)${reset}" ;;
+        esac
+    else
+        echo -e "  ${green}1.${reset} $(msg sub_auth_enable)"
+        echo -e "  ${green}0.${reset} $(msg back)"
+        read -rp "$(msg choose) " sa_choice
+        case "$sa_choice" in
+            1) _subAuthEnable ;;
+            0) return ;;
+            *) echo "${red}$(msg invalid)${reset}" ;;
+        esac
+    fi
+}
+
+_subAuthEnable() {
+    _subAuthSetCredentials || return 1
+    if ! grep -q "auth_basic" "$nginxPath" 2>/dev/null; then
+        sed -i '/location ~ \^\/sub\//,/}/ { /}/i\        auth_basic           "Restricted";\n        auth_basic_user_file /etc/nginx/conf.d/.htpasswd;
+}' "$nginxPath" 2>/dev/null || true
+    fi
+    nginx -t && systemctl reload nginx
+    echo "${green}$(msg sub_auth_enabled): ${cyan}$(vwn_conf_get SUB_AUTH_USER)${reset} / ${cyan}$(vwn_conf_get SUB_AUTH_PASS)${reset}"
+}
+
+_subAuthDisable() {
+    echo "${yellow}$(msg sub_auth_disable_confirm) $(msg yes_no)${reset}"
+    read -r confirm
+    [[ "$confirm" != "y" ]] && return
+    sed -i '/auth_basic/d' "$nginxPath" 2>/dev/null || true
+    rm -f /etc/nginx/conf.d/.htpasswd
+    vwn_conf_del SUB_AUTH_USER
+    vwn_conf_del SUB_AUTH_PASS
+    nginx -t && systemctl reload nginx
+    echo "${green}$(msg sub_auth_disabled)${reset}"
+}
+
+_subAuthSetCredentials() {
+    local cur_user
+    cur_user=$(vwn_conf_get SUB_AUTH_USER)
+    read -rp "$(msg sub_auth_new_user) [${cur_user:-vwn}]: " new_user
+    new_user="${new_user:-${cur_user:-vwn}}"
+    read -rp "$(msg sub_auth_new_pass) ($(msg leave_empty_random)): " new_pass
+    [ -z "$new_pass" ] && new_pass=$(openssl rand -base64 12 | tr -d '+/=' | head -c 16)
+    local hashed
+    hashed=$(python3 -c "
+import crypt, sys
+u, p = sys.argv[1], sys.argv[2]
+print(u + ':' + crypt.crypt(p, crypt.mksalt(crypt.METHOD_SHA512)))
+" "$new_user" "$new_pass" 2>/dev/null)
+    if [ -n "$hashed" ]; then
+        echo "$hashed" > /etc/nginx/conf.d/.htpasswd
+        chmod 640 /etc/nginx/conf.d/.htpasswd
+        chown root:www-data /etc/nginx/conf.d/.htpasswd 2>/dev/null || true
+    fi
+    vwn_conf_set SUB_AUTH_USER "$new_user"
+    vwn_conf_set SUB_AUTH_PASS "$new_pass"
+    echo "${green}$(msg sub_auth_updated): ${cyan}${new_user}${reset} / ${cyan}${new_pass}${reset}"
+}
+
+_fetchCfGuardIPs() {
+    local tmp
+    tmp=$(mktemp) || return 1
+    printf '# CF Guard — allow only Cloudflare IPs — auto-generated\ngeo $realip_remote_addr $cloudflare_ip {\n    default 0;\n' > "$tmp"
+    local ok=0
+    for t in v4 v6; do
+        local result
+        result=$(curl -fsSL --connect-timeout 10 "https://www.cloudflare.com/ips-$t" 2>/dev/null) || continue
+        while IFS= read -r ip; do
+            [ -z "$ip" ] && continue
+            echo "    $ip 1;" >> "$tmp"
+            ok=1
+        done < <(echo "$result" | grep -E '^[0-9a-fA-F:.]+(/[0-9]+)?$')
+    done
+    [ "$ok" -eq 0 ] && { rm -f "$tmp"; echo "${red}$(msg cf_ips_fail)${reset}"; return 1; }
+    echo "}" >> "$tmp"
+    mkdir -p /etc/nginx/conf.d
+    mv -f "$tmp" /etc/nginx/conf.d/cf_guard.conf
+    echo "${green}$(msg cf_ips_ok)${reset}"
+}
+
+toggleCfGuard() {
+    if [ -f /etc/nginx/conf.d/cf_guard.conf ]; then
+        echo -e "${yellow}$(msg cfguard_disable_confirm) $(msg yes_no)${reset}"
+        read -r confirm
+        if [[ "$confirm" == "y" ]]; then
+            rm -f /etc/nginx/conf.d/cf_guard.conf
+            sed -i '/cloudflare_ip.*!=.*1/d' "$nginxPath" 2>/dev/null || true
+            nginx -t && systemctl reload nginx
+            echo "${green}$(msg cfguard_disabled)${reset}"
+        fi
+    else
+        _fetchCfGuardIPs || return 1
+        local wsPath
+        wsPath=$(jq -r ".inbounds[0].streamSettings.wsSettings.path" "$configPath" 2>/dev/null)
+        if [ -n "$wsPath" ] && [ "$wsPath" != "null" ]; then
+            if ! grep -q "cloudflare_ip" "$nginxPath" 2>/dev/null; then
+                sed -i "s/\(\s*location ${wsPath//\//\\/} {)/    if (\$cloudflare_ip != 1) { return 444; }\n\n\1/" "$nginxPath" 2>/dev/null || true
+            fi
+        fi
+        nginx -t || { echo "${red}$(msg nginx_syntax_err)${reset}"; return 1; }
+        systemctl reload nginx
+        echo "${green}$(msg cfguard_enabled)${reset}"
+    fi
+}
+
+openPort80() {
+    ufw status | grep -q inactive && return
+    ufw allow from any to any port 80 proto tcp comment 'ACME temp'
+}
+
+closePort80() {
+    ufw status | grep -q inactive && return
+    ufw status numbered | grep 'ACME temp' | awk -F"[][]" '{print $2}' | sort -rn | while read -r n; do
+        echo "y" | ufw delete "$n"
+    done
+}
+
+configCert() {
+    if [[ -z "${userDomain:-}" ]]; then
+        read -rp "$(msg ssl_enter_domain)" userDomain
+    fi
+    [ -z "$userDomain" ] && { echo "${red}$(msg ssl_domain_empty)${reset}"; return 1; }
+    echo -e "\n${cyan}$(msg ssl_method)${reset}"
+    echo "$(msg ssl_method_1)"
+    echo "$(msg ssl_method_2)"
+    read -rp "$(msg ssl_your_choice)" cert_method
+    installPackage "socat" || true
+    if [ ! -f ~/.acme.sh/acme.sh ]; then
+        curl -fsSL https://get.acme.sh | sh -s email="acme@${userDomain}"
+    fi
+    if [ ! -f ~/.acme.sh/acme.sh ]; then
+        echo "${red}$(msg acme_install_fail)${reset}"; return 1
+    fi
+    ~/.acme.sh/acme.sh --upgrade --auto-upgrade
+    ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+    if [ "$cert_method" == "1" ]; then
+        [ -f "$cf_key_file" ] && source "$cf_key_file"
+        if [[ -z "${CF_Email:-}" || -z "${CF_Key:-}" ]]; then
+            read -rp "$(msg ssl_cf_email)" CF_Email
+            read -rp "$(msg ssl_cf_key)" CF_Key
+            printf "export CF_Email='%s'\nexport CF_Key='%s'\n" "$CF_Email" "$CF_Key" > "$cf_key_file"
+            chmod 600 "$cf_key_file"
+        fi
+        export CF_Email CF_Key
+        ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$userDomain" --force
+    else
+        openPort80
+        ~/.acme.sh/acme.sh --issue --standalone -d "$userDomain" \
+            --pre-hook "/usr/local/bin/vwn open-80" \
+            --post-hook "/usr/local/bin/vwn close-80" \
+            --force
+        closePort80
+    fi
+    mkdir -p /etc/nginx/cert
+    ~/.acme.sh/acme.sh --install-cert -d "$userDomain" \
+        --key-file /etc/nginx/cert/cert.key \
+        --fullchain-file /etc/nginx/cert/cert.pem \
+        --reloadcmd "systemctl reload nginx"
+    echo "${green}$(msg ssl_success) $userDomain${reset}"
+}
+
+applyNginxSub() {
+    [ ! -f "$nginxPath" ] && return 1
+    _writeSubMapConf
+    if ! grep -q 'location ~ \^/sub/' "$nginxPath"; then
+        sed -i '/location \/ {/i\    location ~ ^/sub/[A-Za-z0-9_-]+_[A-Za-z0-9]+\\.html$ {\n        root /usr/local/etc/xray;\n        try_files $uri =404;\n        types { text/html html; }\n        add_header Cache-Control '\''no-cache, no-store, must-revalidate'\'';\n    }\n\n    location ~ ^/sub/[A-Za-z0-9_-]+_[A-Za-z0-9]+\\.txt$ {\n        root /usr/local/etc/xray;\n        try_files $uri =404;\n        default_type text/plain;\n        add_header Content-Disposition "attachment; filename=\\"$sub_label.txt\\"";\n        add_header profile-title "$sub_label";\n        add_header Cache-Control '\''no-cache, no-store, must-revalidate'\'';\n    }\n' "$nginxPath" 2>/dev/null || true
+    fi
+    nginx -t && systemctl reload nginx
 }
 
 manageStreamSNI() {
@@ -950,7 +732,6 @@ manageStreamSNI() {
             0) break ;;
             *) echo -e "${red}$(msg invalid)${reset}" ;;
         esac
-
         [ "$_sni_choice" = "0" ] && continue
         echo -e "\n${cyan}$(msg press_enter)${reset}"
         read -r

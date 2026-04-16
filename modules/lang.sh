@@ -139,8 +139,10 @@ _initLang() {
     MSG[install_type_title]=$(   [ "$VWN_LANG" = en ] && echo "Select installation type:" || echo "Выберите тип установки:")
     MSG[install_type_1]=$(       [ "$VWN_LANG" = en ] && echo "1) VLESS + WS + TLS + Nginx + WARP + CDN" || echo "1) VLESS + WS + TLS + Nginx + WARP + CDN")
     MSG[install_type_2]=$(       [ "$VWN_LANG" = en ] && echo "2) VLESS + Reality + WARP" || echo "2) VLESS + Reality + WARP")
+    MSG[install_type_3]=$(       [ "$VWN_LANG" = en ] && echo "3) VLESS + Vision + TLS (direct 443)" || echo "3) VLESS + Vision + TLS (напрямую на 443)")
     MSG[install_type_ws_title]=$([ "$VWN_LANG" = en ] && echo "=== Installing VLESS+WS+TLS+WARP+CDN ===" || echo "=== Установка VLESS+WS+TLS+WARP+CDN ===")
     MSG[install_type_reality_title]=$([ "$VWN_LANG" = en ] && echo "=== Installing VLESS+Reality+WARP ===" || echo "=== Установка VLESS+Reality+WARP ===")
+    MSG[install_type_vision_title]=$([ "$VWN_LANG" = en ] && echo "=== Installing VLESS+Vision+TLS (direct 443) ===" || echo "=== Установка VLESS+Vision+TLS (напрямую 443) ===")
 
     # ── MENU ──────────────────────────────────────────────────────
     MSG[menu_title]=$(        [ "$VWN_LANG" = en ] && echo "XRAY VLESS + WARP + CDN + REALITY" || echo "XRAY VLESS + WARP + CDN + REALITY")

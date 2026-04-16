@@ -204,11 +204,13 @@ install() {
     echo ""
     echo -e "\t${green}$(msg install_type_1)${reset}"
     echo -e "\t${green}$(msg install_type_2)${reset}"
+    echo -e "\t${green}$(msg install_type_3)${reset}"
     echo ""
     read -rp "$(msg choose)" install_type_choice
     case "${install_type_choice:-1}" in
         1) installWsTls ;;
         2) installRealityOnly ;;
+        3) installVision ;;
         *) echo "${red}$(msg invalid)${reset}"; return 1 ;;
     esac
 }
