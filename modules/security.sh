@@ -3,6 +3,25 @@
 # security.sh — UFW, BBR, Fail2Ban, WebJail, SSH
 # =================================================================
 
+# Автоматически определяет доступный бэкенд фаервола для Fail2Ban
+# Возвращает подходящий banaction: nftables-multiport / iptables-multiport
+detectFirewallBackend() {
+    # Сначала проверяем nftables (современный стандарт)
+    if command -v nft &>/dev/null && nft list tables 2>/dev/null | grep -q '^inet '; then
+        echo "nftables-multiport"
+        return
+    fi
+    
+    # Фоллбек на iptables если он доступен
+    if command -v iptables &>/dev/null; then
+        echo "iptables-multiport"
+        return
+    fi
+    
+    # Если ничего не найдено — пусть fail2ban сам решает по умолчанию
+    echo ""
+}
+
 changeSshPort() {
     read -rp "$(msg ssh_new_port)" new_ssh_port
     if ! [[ "$new_ssh_port" =~ ^[0-9]+$ ]] || [ "$new_ssh_port" -lt 1 ] || [ "$new_ssh_port" -gt 65535 ]; then
@@ -43,9 +62,9 @@ changeSshPort() {
     if systemctl is-active --quiet fail2ban 2>/dev/null; then
         echo -e "${cyan}$(msg ssh_f2b_update)${reset}"
 
-        # Проверяем что iptables доступен
-        if ! command -v iptables &>/dev/null; then
-            echo "${yellow}WARNING: iptables not found, fail2ban may not work properly${reset}"
+        # Проверяем доступность бэкенда фаервола
+        if ! command -v iptables &>/dev/null && ! command -v nft &>/dev/null; then
+            echo "${yellow}WARNING: No firewall backend found, fail2ban may not work properly${reset}"
         fi
 
         # Определяем backend и logpath как в setupFail2Ban
@@ -64,14 +83,19 @@ changeSshPort() {
             cf_ips=$(curl -fsSL --connect-timeout 5 "https://www.cloudflare.com/ips-v4" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g')
         fi
 
+        # Определяем актуальный бэкенд
+        local ban_action
+        ban_action=$(detectFirewallBackend)
+
         # Перезаписываем jail.local с сохранением [nginx-probe] если есть
-        python3 - "$new_ssh_port" "$sshd_backend" "$sshd_logpath" "$cf_ips" << 'PEOF'
+        python3 - "$new_ssh_port" "$sshd_backend" "$sshd_logpath" "$cf_ips" "$ban_action" << 'PEOF'
 import sys, re
 
 new_port    = sys.argv[1]
 backend     = sys.argv[2]
 logpath_str = sys.argv[3]
 cf_ips      = sys.argv[4]
+ban_action  = sys.argv[5]
 
 jail_path = "/etc/fail2ban/jail.local"
 try:
@@ -97,8 +121,8 @@ new_sshd = (
 # Заменяем [DEFAULT] секцию — добавляем banaction и ignoreip
 default_replacement = (
     "[DEFAULT]\n"
-    "# Принудительно используем iptables (nftables может отсутствовать)\n"
-    "banaction = iptables-multiport\n"
+    "# Автоматически определённый бэкенд фаервола\n"
+    "banaction = " + ban_action + "\n"
     "bantime  = 2h\n"
     "findtime = 10m\n"
     "maxretry = 5\n"
@@ -144,11 +168,9 @@ setupFail2Ban() {
     echo -e "${cyan}$(msg f2b_setup)${reset}"
     [ -z "${PACKAGE_MANAGEMENT_INSTALL:-}" ] && identifyOS
 
-    # Проверяем что iptables доступен (fail2ban требует backend для банов)
-    if ! command -v iptables &>/dev/null; then
-        echo "${red}ERROR: iptables not found. Install iptables first.${reset}"
-        return 1
-    fi
+    # Определяем доступный бэкенд фаервола
+    local ban_action
+    ban_action=$(detectFirewallBackend)
 
     ${PACKAGE_MANAGEMENT_INSTALL} "fail2ban" &>/dev/null
 
@@ -174,8 +196,8 @@ setupFail2Ban() {
 
     cat > /etc/fail2ban/jail.local << EOF
 [DEFAULT]
-# Принудительно используем iptables (nftables может отсутствовать)
-banaction = iptables-multiport
+# Автоматически определённый бэкенд фаервола
+banaction = ${ban_action}
 bantime  = 2h
 findtime = 10m
 maxretry = 5
@@ -224,13 +246,19 @@ removeFail2Ban() {
     systemctl stop fail2ban 2>/dev/null || true
     systemctl disable fail2ban 2>/dev/null || true
 
-    # Удаляем все iptables правила fail2ban
+    # Очищаем правила fail2ban из всех доступных бэкендов
     if command -v iptables &>/dev/null; then
         echo "  Clearing iptables f2b rules..."
         for chain in $(iptables -L -n 2>/dev/null | grep "f2b" | awk '{print $2}' | sort -u); do
             iptables -F "$chain" 2>/dev/null || true
             iptables -X "$chain" 2>/dev/null || true
         done
+    fi
+
+    # Очищаем nftables правила если они есть
+    if command -v nft &>/dev/null; then
+        echo "  Clearing nftables f2b rules..."
+        nft list ruleset 2>/dev/null | grep -q 'f2b-' && nft flush ruleset inet f2b 2>/dev/null || true
     fi
 
     # Удаляем конфиги
@@ -265,12 +293,17 @@ reinstallFail2Ban() {
     rm -f /etc/fail2ban/filter.d/nginx-probe.conf
     rm -rf /var/lib/fail2ban 2>/dev/null || true
 
-    # Очищаем iptables правила
+    # Очищаем правила fail2ban из всех доступных бэкендов
     if command -v iptables &>/dev/null; then
         for chain in $(iptables -L -n 2>/dev/null | grep "f2b" | awk '{print $2}' | sort -u); do
             iptables -F "$chain" 2>/dev/null || true
             iptables -X "$chain" 2>/dev/null || true
         done
+    fi
+
+    # Очищаем nftables правила если они есть
+    if command -v nft &>/dev/null; then
+        nft list ruleset 2>/dev/null | grep -q 'f2b-' && nft flush ruleset inet f2b 2>/dev/null || true
     fi
 
     # Пересоздаём с нуля
@@ -311,12 +344,12 @@ rebuildFail2BanConfigs() {
         cf_ips=$(curl -fsSL --connect-timeout 5 "https://www.cloudflare.com/ips-v4" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g')
     fi
 
-    # Используем сохранённый banaction или iptables
-    local ban_action="${old_banaction:-iptables-multiport}"
+    # Используем сохранённый banaction или определяем автоматически
+    local ban_action="${old_banaction:-$(detectFirewallBackend)}"
 
     cat > /etc/fail2ban/jail.local << EOF
 [DEFAULT]
-# Принудительно используем iptables (nftables может отсутствовать)
+# Автоматически определённый бэкенд фаервола
 banaction = ${ban_action}
 bantime  = 2h
 findtime = 10m
