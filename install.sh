@@ -105,6 +105,9 @@ fi
 
 # Глобальная очистка при любом выходе
 cleanup() {
+    # ✅ Восстановление терминала при любом выходе — исправляет сломанный вывод после официального скрипта Xray
+    stty sane 2>/dev/null || true
+    
     rm -f "$LOCK_FILE"
     find /usr/local/etc/xray /etc/nginx -name "*.tmp" -delete 2>/dev/null
     vwn close-80 2>/dev/null || true
@@ -119,6 +122,59 @@ VWN_BIN="/usr/local/bin/vwn"
 # Определяем реальный путь скрипта для любого способа запуска
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GITHUB_RAW="https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main"
+
+# ✅ Универсальная функция загрузки с fallback
+curl_fallback() {
+    for url in "$@"; do
+        if [[ "$url" == "-"* ]]; then break; fi
+        if curl -fsSL --connect-timeout 7 "$url" "$@"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# ✅ Автоматический фикс apt зеркал если основной тупит
+fix_apt_mirrors() {
+    command -v apt &>/dev/null || return 0
+
+    # Проверяем работает ли стандартный репозиторий
+    if apt update -qq 2>/dev/null; then
+        return 0
+    fi
+
+    echo -e "${yellow}⚠️  Основной репозиторий не отвечает, пробуем резервные зеркала...${reset}"
+
+    # Бэкап оригинала
+    cp -a /etc/apt/sources.list /etc/apt/sources.list.vwn_backup 2>/dev/null
+
+    local mirrors=(
+        "http://ftp.ru.debian.org/debian/"
+        "http://mirror.rol.ru/debian/"
+        "http://debian.mirohost.net/debian/"
+        "http://debian-mirror.ru/debian/"
+        "http://ftp.debian.org/debian/"
+    )
+
+    for mirror in "${mirrors[@]}"; do
+        echo -n "  пробуем $mirror... "
+
+        # Подменяем временно
+        sed "s|http://.*debian.org/debian/|$mirror|g" /etc/apt/sources.list > /etc/apt/sources.list.tmp
+        mv /etc/apt/sources.list.tmp /etc/apt/sources.list
+
+        if apt update -qq 2>/dev/null; then
+            echo -e "${green}OK${reset}"
+            return 0
+        else
+            echo -e "${red}FAIL${reset}"
+        fi
+    done
+
+    # Если все упали — возвращаем как было
+    mv /etc/apt/sources.list.vwn_backup /etc/apt/sources.list 2>/dev/null
+    echo -e "${red}Все зеркала недоступны, оставляем стандартный${reset}"
+}
 
 # Цвета (с fallback когда tput нет)
 _c() { tput "$@" 2>/dev/null || true; }
@@ -452,6 +508,7 @@ install_deps() {
     echo -e "${cyan}$(msg install_deps)${reset}"
     
     prepareApt
+    fix_apt_mirrors
     
     if command -v apt &>/dev/null; then
         ${PACKAGE_MANAGEMENT_UPDATE} -qq 2>/dev/null || true

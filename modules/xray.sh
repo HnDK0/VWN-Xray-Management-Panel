@@ -149,7 +149,13 @@ _getConfigName() {
 
 installXray() {
     command -v xray &>/dev/null && { echo "info: xray already installed."; return; }
+    
+    # Предварительно ставим unzip чтобы убрать ложную ошибку в официальном скрипте
+    installPackage "unzip"
+    
+    # Запускаем официальный установщик
     bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+    
     create_xray_user
     fix_xray_service
     setup_xray_logs

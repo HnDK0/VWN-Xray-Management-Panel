@@ -6,6 +6,10 @@
 installWarp() {
     command -v warp-cli &>/dev/null && { echo "info: warp-cli already installed."; return; }
     [ -z "${PACKAGE_MANAGEMENT_INSTALL:-}" ] && identifyOS
+    
+    # Сбросить блокировки и исправить состояние apt перед установкой
+    prepareApt
+    
     if command -v apt &>/dev/null; then
         curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg \
             | gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp.gpg
