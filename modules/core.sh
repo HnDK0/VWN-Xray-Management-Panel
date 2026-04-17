@@ -113,12 +113,16 @@ setupSystemDNS() {
     if systemctl is-active --quiet systemd-resolved; then
         echo "info: setting DNS via systemd-resolved..."
 
-        # ✅ Совместимость: list-interfaces → list (работает на всех версиях systemd)
-        if resolvectl list-interfaces >/dev/null 2>&1; then
+        # ✅ Совместимость: работает на всех версиях systemd (старые + новые)
+        if resolvectl list >/dev/null 2>&1; then
+            # Старая версия systemd (< 255)
+            mapfile -t ifaces < <(resolvectl list | grep -E '^[0-9]+' | awk '{print $2}')
+        elif resolvectl list-interfaces >/dev/null 2>&1; then
+            # Новая версия systemd (>= 255)
             mapfile -t ifaces < <(resolvectl list-interfaces | grep -E '^[0-9]+' | awk '{print $2}')
         else
-            # Старая версия systemd (до 255)
-            mapfile -t ifaces < <(resolvectl list | grep -E '^[0-9]+' | awk '{print $2}')
+            echo "warning: resolvectl command failed, fallback to direct resolv.conf mode"
+            ifaces=()
         fi
 
         for iface in "${ifaces[@]}"; do
@@ -146,6 +150,9 @@ setupSystemDNS() {
         echo "info: replacing systemd-resolved symlink with real file"
         rm -f "$resolv_conf"
     fi
+
+    # Снимаем защиту immutable если она установлена
+    chattr -i "$resolv_conf" 2>/dev/null
 
     # Записываем DNS серверы
     echo "info: writing /etc/resolv.conf"
