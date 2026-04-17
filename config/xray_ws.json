@@ -1,7 +1,7 @@
 {
     "log": {
         "loglevel": "error",
-        "access": "/var/log/xray/access.log",
+        "access": "none",
         "error": "/var/log/xray/error.log"
     },
     "dns": {
@@ -15,30 +15,26 @@
     },
     "inbounds": [{
         "port": __XRAY_PORT__,
-        "listen": "0.0.0.0",
+        "listen": "127.0.0.1",
         "protocol": "vless",
         "settings": {
             "clients": [
-                {"id": "__UUID__", "email": "default"}
+                {"id": "__UUID__"}
             ],
             "decryption": "none"
         },
         "streamSettings": {
             "network": "ws",
-            "security": "tls",
-            "tlsSettings": {
-                "certificates": [
-                    {
-                        "certificateFile": "/etc/nginx/cert/cert.pem",
-                        "keyFile": "/etc/nginx/cert/cert.key"
-                    }
-                ]
-            },
+            "security": "none",
             "wsSettings": {
                 "path": "__WS_PATH__",
-                "headers": {
-                    "Host": "__DOMAIN__"
-                }
+                "host": "__DOMAIN__"
+            },
+            "sockopt": {
+                "tcpKeepAliveIdle": 60,
+                "tcpKeepAliveInterval": 10,
+                "tcpKeepAliveRetry": 3,
+                "tcpFastOpen": true
             }
         },
         "sniffing": {
@@ -109,7 +105,8 @@
                 "handshake": 10,
                 "connIdle": 600,
                 "uplinkOnly": 5,
-                "downlinkOnly": 10
+                "downlinkOnly": 10,
+                "bufferSize": 512
             }
         }
     }

@@ -59,7 +59,7 @@ configWarp() {
 }
 
 applyWarpDomains() {
-    [ ! -f "$warpDomainsFile" ] && printf 'openai.com\nchatgpt.com\noaistatic.com\noaiusercontent.com\nauth0.openai.com\n' > "$warpDomainsFile"
+    [ ! -f "$warpDomainsFile" ] && printf 'test.com\n' > "$warpDomainsFile"
     local domains_json
     domains_json=$(domainsToJson "$warpDomainsFile")
 

@@ -447,7 +447,7 @@ All tunnels support **Global / Split / OFF** modes. Applied to WS, Reality, and 
 
 ### WARP (item 6)
 
-**Split** (default domains): `openai.com, chatgpt.com, oaistatic.com, oaiusercontent.com, auth0.openai.com`
+**Split** (default domains): `test.com`
 
 **Global** — all traffic via WARP. **OFF** — removed from routing. Applied to WS, Reality, and Vision configs.
 
@@ -1172,7 +1172,7 @@ stream {
 
 ### WARP (пункт 6)
 
-**Split** (домены по умолчанию): `openai.com, chatgpt.com, oaistatic.com, oaiusercontent.com, auth0.openai.com`
+**Split** (домены по умолчанию): `test.com`
 
 **Global** — весь трафик через WARP. **OFF** — отключён от роутинга. Применяется к конфигам WS, Reality и Vision.
 

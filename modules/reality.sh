@@ -57,113 +57,30 @@ writeRealityConfig() {
     [ -z "$new_uuid" ] && new_uuid=$(cat /proc/sys/kernel/random/uuid)
 
     mkdir -p /usr/local/etc/xray
+    local BASEDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-    cat > "$realityConfigPath" << EOF
-{
-    "log": {
-        "access": "none",
-        "error": "/var/log/xray/reality-error.log",
-        "loglevel": "error"
-    },
-    "dns": {
-        "servers": [
-            {
-                "address": "https://9.9.9.9/dns-query",
-                "port": 443
-            }
-        ],
-        "queryStrategy": "UseIPv4"
-    },
-    "inbounds": [{
-        "port": $realityPort,
-        "listen": "0.0.0.0",
-        "protocol": "vless",
-        "settings": {
-            "clients": [{"id": "$new_uuid", "flow": "xtls-rprx-vision"}],
-            "decryption": "none"
-        },
-        "streamSettings": {
-            "network": "tcp",
-            "security": "reality",
-            "realitySettings": {
-                "show": false,
-                "dest": "$dest",
-                "serverNames": ["$destHost"],
-                "privateKey": "$privKey",
-                "shortIds": ["$shortId"]
-            }
-        },
-        "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "routeOnly": true}
-    }],
-    "outbounds": [
-        {
-            "tag": "dns-out",
-            "protocol": "dns"
-        },
-        {
-            "tag": "free",
-            "protocol": "freedom",
-            "settings": {"domainStrategy": "UseIPv4"}
-        },
-        {
-            "tag": "warp",
-            "protocol": "socks",
-            "settings": {"servers": [{"address": "127.0.0.1", "port": 40000}]}
-        },
-        {
-            "tag": "block",
-            "protocol": "blackhole"
-        }
-    ],
-    "routing": {
-        "domainStrategy": "AsIs",
-        "rules": [
-            {
-                "type": "field",
-                "ip": ["geoip:private"],
-                "outboundTag": "block"
-            },
-            {
-                "type": "field",
-                "port": "25, 587, 465, 2525",
-                "network": "tcp",
-                "outboundTag": "block"
-            },
-            {
-                "type": "field",
-                "protocol": ["bittorrent"],
-                "outboundTag": "block"
-            },
-            {
-                "type": "field",
-                "domain": [
-                    "domain:openai.com",
-                    "domain:chatgpt.com",
-                    "domain:oaistatic.com",
-                    "domain:oaiusercontent.com",
-                    "domain:auth0.openai.com"
-                ],
-                "outboundTag": "warp"
-            },
-            {
-                "type": "field",
-                "port": "0-65535",
-                "outboundTag": "free"
-            }
-        ]
-    },
-    "policy": {
-        "levels": {
-            "0": {
-                "handshake": 30,
-                "connIdle": 600,
-                "uplinkOnly": 5,
-                "downlinkOnly": 10
-            }
-        }
-    }
-}
-EOF
+    # Проверка существования шаблона
+    if [ ! -f "$BASEDIR/config/xray_reality.json" ]; then
+        echo "error: xray_reality.json template not found" >&2
+        return 1
+    fi
+
+    # Генерируем конфиг из шаблона через jq
+    jq \
+        --arg port "$realityPort" \
+        --arg dest "$dest" \
+        --arg host "$destHost" \
+        --arg privKey "$privKey" \
+        --arg shortId "$shortId" \
+        --arg uuid "$new_uuid" \
+        '
+            .inbounds[0].port = ($port | tonumber)
+            | .inbounds[0].streamSettings.realitySettings.dest = $dest
+            | .inbounds[0].streamSettings.realitySettings.serverNames[0] = $host
+            | .inbounds[0].streamSettings.realitySettings.privateKey = $privKey
+            | .inbounds[0].streamSettings.realitySettings.shortIds[0] = $shortId
+            | .inbounds[0].settings.clients[0].id = $uuid
+        ' "$BASEDIR/config/xray_reality.json" > "$realityConfigPath"
 
     cat > /usr/local/etc/xray/reality_client.txt << EOF
 === Reality параметры для клиента ===

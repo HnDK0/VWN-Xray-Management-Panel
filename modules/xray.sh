@@ -161,122 +161,34 @@ writeXrayConfig() {
     local domain="$3"
     local new_uuid
     local USERS_FILE="${USERS_FILE:-/usr/local/etc/xray/users.conf}"
+    local BASEDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
     # Если users.conf уже есть — берём UUID первого пользователя
     if [ -f "$USERS_FILE" ] && [ -s "$USERS_FILE" ]; then
         new_uuid=$(cut -d'|' -f1 "$USERS_FILE" | head -1)
     fi
     [ -z "$new_uuid" ] && new_uuid=$(cat /proc/sys/kernel/random/uuid)
+
     mkdir -p /usr/local/etc/xray /var/log/xray
 
-    cat > "$configPath" << EOF
-{
-    "log": {
-        "access": "none",
-        "error": "/var/log/xray/error.log",
-        "loglevel": "error"
-    },
-    "dns": {
-        "servers": [
-            {
-                "address": "https://9.9.9.9/dns-query",
-                "port": 443
-            }
-        ],
-        "queryStrategy": "UseIPv4"
-    },
-    "inbounds": [{
-        "port": $xrayPort,
-        "listen": "127.0.0.1",
-        "protocol": "vless",
-        "settings": {
-            "clients": [{"id": "$new_uuid"}],
-            "decryption": "none"
-        },
-        "streamSettings": {
-            "network": "ws",
-            "wsSettings": {
-                "path": "$wsPath",
-                "host": "$domain"
-            },
-            "sockopt": {
-                "tcpKeepAliveIdle": 60,
-                "tcpKeepAliveInterval": 10,
-                "tcpKeepAliveRetry": 3,
-                "tcpFastOpen": true
-            }
-        },
-        "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "routeOnly": true}
-    }],
-    "outbounds": [
-        {
-            "tag": "dns-out",
-            "protocol": "dns"
-        },
-        {
-            "tag": "free",
-            "protocol": "freedom",
-            "settings": {"domainStrategy": "UseIPv4"}
-        },
-        {
-            "tag": "warp",
-            "protocol": "socks",
-            "settings": {"servers": [{"address": "127.0.0.1", "port": 40000}]}
-        },
-        {
-            "tag": "block",
-            "protocol": "blackhole"
-        }
-    ],
-    "routing": {
-        "domainStrategy": "AsIs",
-        "rules": [
-            {
-                "type": "field",
-                "ip": ["geoip:private"],
-                "outboundTag": "block"
-            },
-            {
-                "type": "field",
-                "port": "25, 587, 465, 2525",
-                "network": "tcp",
-                "outboundTag": "block"
-            },
-            {
-                "type": "field",
-                "protocol": ["bittorrent"],
-                "outboundTag": "block"
-            },
-            {
-                "type": "field",
-                "domain": [
-                    "domain:openai.com",
-                    "domain:chatgpt.com",
-                    "domain:oaistatic.com",
-                    "domain:oaiusercontent.com",
-                    "domain:auth0.openai.com"
-                ],
-                "outboundTag": "warp"
-            },
-            {
-                "type": "field",
-                "port": "0-65535",
-                "outboundTag": "free"
-            }
-        ]
-    },
-    "policy": {
-        "levels": {
-            "0": {
-                "handshake": 10,
-                "connIdle": 600,
-                "uplinkOnly": 5,
-                "downlinkOnly": 10,
-                "bufferSize": 512
-            }
-        }
-    }
-}
-EOF
+    # Проверка существования шаблона
+    if [ ! -f "$BASEDIR/config/xray_ws.json" ]; then
+        echo "error: xray_ws.json template not found" >&2
+        return 1
+    fi
+
+    # Генерируем конфиг из шаблона через jq
+    jq \
+        --arg port "$xrayPort" \
+        --arg path "$wsPath" \
+        --arg domain "$domain" \
+        --arg uuid "$new_uuid" \
+        '
+            .inbounds[0].port = ($port | tonumber)
+            | .inbounds[0].streamSettings.wsSettings.path = $path
+            | .inbounds[0].streamSettings.wsSettings.host = $domain
+            | .inbounds[0].settings.clients[0].id = $uuid
+        ' "$BASEDIR/config/xray_ws.json" > "$configPath"
 }
 
 getConfigInfo() {
