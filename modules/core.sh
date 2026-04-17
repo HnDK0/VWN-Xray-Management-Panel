@@ -389,11 +389,12 @@ setupSwap() {
 
     echo -e "${cyan}$(msg swap_creating) 1024MB...${reset}"
     
-    # Только dd! fallocate никогда не используется для swap
-    if ! dd if=/dev/zero of=$swapfile bs=1M count=1024 status=none; then
-        echo "${yellow}Not enough disk space, swap skipped${reset}"
-        rm -f $swapfile
-        return 0
+    # ✅ Мгновенное выделение места через fallocate (приоритетный метод)
+    # Не записывает ничего на диск, просто помечает блоки как занятые
+    if ! fallocate -l 1024M $swapfile 2>/dev/null; then
+        # Fallback на dd только если fallocate не поддерживается ФС
+        echo "info: fallocate not supported, using dd fallback"
+        dd if=/dev/zero of=$swapfile bs=1M count=1024 status=progress
     fi
 
     # ✅ Самая важная строка: ждём пока udev закончит обработку файла
@@ -416,6 +417,12 @@ setupSwap() {
         rm -f $swapfile
         return 1
     fi
+
+    # Оптимизация: не даем системе слишком сильно полагаться на своп
+    sysctl -w vm.swappiness=10 >/dev/null 2>&1
+    
+    # Принудительно завершаем все операции записи перед продолжением
+    sync
 
     # Проверяем что swap действительно поднялся
     sleep 1
