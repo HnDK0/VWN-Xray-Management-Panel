@@ -608,6 +608,31 @@ configCert() {
         read -rp "$(msg ssl_enter_domain)" userDomain
     fi
     [ -z "$userDomain" ] && { echo "${red}$(msg ssl_domain_empty)${reset}"; return 1; }
+    
+    # ✅ Проверка существующего сертификата
+    if [ -f /etc/nginx/cert/cert.pem ]; then
+        local expire_date expire_epoch now_epoch days_left domain_in_cert
+        
+        # Срок действия
+        expire_date=$(openssl x509 -enddate -noout -in /etc/nginx/cert/cert.pem 2>/dev/null | cut -d= -f2)
+        expire_epoch=$(date -d "$expire_date" +%s 2>/dev/null)
+        now_epoch=$(date +%s)
+        days_left=$(( (expire_epoch - now_epoch) / 86400 ))
+        
+        # Домен в сертификате
+        domain_in_cert=$(openssl x509 -noout -text -in /etc/nginx/cert/cert.pem 2>/dev/null | grep -oP '(?<=DNS:)[^,\s]+' | head -1)
+        
+        # Если сертификат валиден и для нужного домена
+        if [ -n "$expire_epoch" ] && [ "$days_left" -gt 15 ] && [ "$domain_in_cert" = "$userDomain" ]; then
+            echo -e "${green}✅ $(msg diag_ssl_ok)${reset}"
+            echo -e "  Домен: ${cyan}$userDomain${reset}"
+            echo -e "  Осталось дней действия: ${green}$days_left${reset}"
+            echo ""
+            read -rp "$(msg ssl_reissue_confirm) $(msg yes_no) " reissue
+            [[ "$reissue" != "y" ]] && { echo "$(msg cancel)"; return 0; }
+        fi
+    fi
+    
     echo -e "\n${cyan}$(msg ssl_method)${reset}"
     echo "$(msg ssl_method_1)"
     echo "$(msg ssl_method_2)"
@@ -630,13 +655,12 @@ configCert() {
             chmod 600 "$cf_key_file"
         fi
         # Передаем ключи только локально в окружение запуска процесса acme.sh, не оставляем в среде скрипта
-        CF_Email="$CF_Email" CF_Key="$CF_Key" ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$userDomain" --force
+        CF_Email="$CF_Email" CF_Key="$CF_Key" ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$userDomain"
     else
         openPort80
         ~/.acme.sh/acme.sh --issue --standalone -d "$userDomain" \
             --pre-hook "/usr/local/bin/vwn open-80" \
-            --post-hook "/usr/local/bin/vwn close-80" \
-            --force
+            --post-hook "/usr/local/bin/vwn close-80"
         closePort80
     fi
     mkdir -p /etc/nginx/cert
