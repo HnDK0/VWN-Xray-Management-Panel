@@ -410,6 +410,10 @@ rebuildAllSubFiles() {
         [ -z "$uuid" ] && continue
         buildUserSubFile "$uuid" "$label" "$token" && count=$((count+1))
     done < "$USERS_FILE"
+
+    # Перезапускаем сервисы ОДИН раз в самом конце а не на каждого пользователя
+    systemctl try-restart xray xray-reality xray-vision 2>/dev/null || true
+
     echo "${green}$(msg done) ($count)${reset}"
 }
 

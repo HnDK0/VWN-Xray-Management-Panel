@@ -307,6 +307,67 @@ modifyVisionUUID() {
     echo "  New UUID: ${green}${new_uuid}${reset}"
 }
 
+# ── Смена домена (общего) с перевыпуском сертификата ─────────────
+modifyVisionDomain() {
+    if [ ! -f "$visionConfigPath" ]; then
+        echo "${red}$(msg vision_not_installed)${reset}"
+        return 1
+    fi
+
+    local current_domain
+    current_domain=$(vwn_conf_get DOMAIN 2>/dev/null || true)
+    echo -e "${cyan}Текущий домен:${reset} ${green}${current_domain:-?}${reset}"
+    read -rp "$(msg enter_new_domain): " new_domain
+    [ -z "$new_domain" ] && return
+
+    if ! _validateDomain "$new_domain" &>/dev/null; then
+        echo "${red}$(msg invalid): '$new_domain'${reset}"
+        return 1
+    fi
+
+    # 1. Обновляем домен в vwn.conf
+    vwn_conf_set DOMAIN "$new_domain"
+
+    # 2. Перевыпускаем SSL сертификат (общий для WS и Vision)
+    echo -e "${cyan}Перевыпуск SSL сертификата для домена ${new_domain}...${reset}"
+    userDomain="$new_domain"
+    configCert || { echo "${red}Ошибка выпуска сертификата${reset}"; return 1; }
+
+    # 3. Обновляем WS config.json (если установлен)
+    if [ -f "$configPath" ]; then
+        jq ".inbounds[0].streamSettings.wsSettings.host = \"$new_domain\"" \
+            "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
+        echo "${green}WS config обновлён.${reset}"
+    fi
+
+    # 4. Обновляем Vision config.json
+    local vision_uuid
+    vision_uuid=$(vwn_conf_get VISION_UUID 2>/dev/null || \
+        jq -r '.inbounds[0].settings.clients[0].id // ""' "$visionConfigPath" 2>/dev/null)
+    if [ -n "$vision_uuid" ]; then
+        writeVisionConfig "$vision_uuid"
+        echo "${green}Vision config обновлён.${reset}"
+    fi
+
+    # 5. Пересобираем nginx в режиме Vision
+    local proxy_url
+    proxy_url=$(vwn_conf_get STUB_URL 2>/dev/null || echo "https://www.bing.com/")
+    writeNginxConfigVision "$proxy_url" "$new_domain"
+    echo "${green}Nginx config (Vision mode) обновлён.${reset}"
+
+    # 6. Перезапускаем сервисы
+    systemctl restart nginx xray xray-vision 2>/dev/null || true
+    if ! systemctl is-active --quiet xray-vision; then
+        echo "${red}xray-vision не запустился. Проверьте journalctl -u xray-vision${reset}"
+        return 1
+    fi
+
+    # 7. Обновляем подписки
+    rebuildAllSubFiles 2>/dev/null || true
+
+    echo "${green}Домен успешно изменён на ${new_domain}${reset}"
+}
+
 # ── Удаление ──────────────────────────────────────────────────────
 
 removeVision() {
@@ -407,6 +468,7 @@ manageVision() {
         echo -e "${green}4.${reset} $(msg vision_modify_uuid)"
         echo -e "${green}5.${reset} $(msg vision_remove)"
         echo -e "${green}6.${reset} $(msg menu_rebuild_vision)"
+        echo -e "${green}7.${reset} Change domain (re-issue certificate)"
         echo -e "${green}0.${reset} $(msg back)"
         echo ""
         read -rp "$(msg choose)" choice
@@ -417,6 +479,7 @@ manageVision() {
             4) modifyVisionUUID ;;
             5) removeVision ;;
             6) rebuildVisionConfigs ;;
+            7) modifyVisionDomain ;;
             0) break ;;
         esac
         [ "$choice" = "0" ] && continue

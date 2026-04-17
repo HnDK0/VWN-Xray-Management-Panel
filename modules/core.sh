@@ -5,6 +5,43 @@
 
 VWN_CONFIG_DIR="/usr/local/lib/vwn/config"
 
+# Безопасно изменяет JSON файл через jq
+# Использование: edit_json файл.json jq_filter [аргументы...]
+# Делает бэкап, проверяет результат, откатывает при ошибке
+edit_json() {
+    local file="$1" filter="$2"; shift 2
+    [ ! -f "$file" ] && return 1
+
+    local tmp=$(mktemp)
+    trap 'rm -f "$tmp"' RETURN
+
+    if jq "$filter" "$@" "$file" > "$tmp"; then
+        if jq . "$tmp" &>/dev/null; then
+            cat "$tmp" > "$file"
+            return 0
+        fi
+    fi
+
+    echo "WARN: edit_json failed for $file, no changes applied" >&2
+    return 1
+}
+
+# Безопасно экранирует любую строку для использования в sed замене
+# Использование: sed -i "s/ПАТТЕРН/$(sed_escape "$СТРОКА")/" файл
+sed_escape() {
+    printf '%s\n' "$1" | sed '
+        s/[\/&]/\\&/g;
+        s/\./\\&/g;
+        s/\*/\\&/g;
+        s/\^/\\&/g;
+        s/\$/\\&/g;
+        s/\[/\\&/g;
+        s/\]/\\&/g;
+        s/(/\\&/g;
+        s/)/\\&/g;
+    '
+}
+
 # Рендерит шаблон конфиг с подстановкой переменных
 # render_config шаблон.json выходной.json
 render_config() {
@@ -73,8 +110,11 @@ setupSystemDNS() {
     # Проверяем systemd-resolved
     if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
         echo "info: setting DNS via systemd-resolved..."
-        resolvectl dns "$(resolvectl status | grep -E '^[0-9]+:' | head -1 | grep -oP '\w+$')" $dns_servers 2>/dev/null || true
-        resolvectl default-route "$(resolvectl status | grep -E '^[0-9]+:' | head -1 | grep -oP '\w+$')" false 2>/dev/null || true
+        # Получаем все активные интерфейсы и применяем ко всем
+        resolvectl list-interfaces 2>/dev/null | grep -E '^[0-9]+' | awk '{print $2}' | while read -r iface; do
+            resolvectl dns "$iface" $dns_servers 2>/dev/null || true
+            resolvectl default-route "$iface" false 2>/dev/null || true
+        done
     fi
 
     # Фиксируем /etc/resolv.conf
@@ -251,8 +291,32 @@ setupAlias() {
     ln -sf "$VWN_LIB/../bin/vwn" /usr/local/bin/vwn 2>/dev/null || true
 }
 
+# Загрузка всех модулей системы
+loadAllModules() {
+    local modules=(lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision menu)
+    
+    for module in "${modules[@]}"; do
+        if [ -f "$VWN_LIB/${module}.sh" ]; then
+            # shellcheck source=/dev/null
+            source "$VWN_LIB/${module}.sh"
+        else
+            echo "ERROR: Module ${module}.sh not found in $VWN_LIB"
+            echo "Reinstall: bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh)"
+            exit 1
+        fi
+    done
+}
+
 setupSwap() {
-    # Если swap уже есть — не трогаем
+    local swapfile="/swapfile"
+    
+    # Проверяем что swap файл уже существует и монтирован
+    if [ -f "$swapfile" ] && swapon --show | grep -q "^$swapfile"; then
+        echo "info: Swap file already exists and active, skipping."
+        return 0
+    fi
+
+    # Если swap уже есть в системе — не трогаем
     local swap_total
     swap_total=$(free -m | awk '/^Swap:/{print $2}')
     if [ "${swap_total:-0}" -gt 256 ]; then
@@ -269,10 +333,18 @@ setupSwap() {
     else swap_mb=1024
     fi
 
+    # Проверяем свободное место на диске (требуем размер swap + 512МБ запас)
+    local free_space
+    free_space=$(df -m / | awk 'NR==2 {print $4}')
+    if [ "$free_space" -lt $((swap_mb + 512)) ]; then
+        echo "${yellow}Not enough free disk space for ${swap_mb}MB swap. Required: $((swap_mb + 512))MB, Available: ${free_space}MB${reset}"
+        echo "${yellow}Skipping swap creation.${reset}"
+        return 1
+    fi
+
     echo -e "${cyan}$(msg swap_creating) ${swap_mb}MB...${reset}"
 
     # Создаём swap-файл
-    local swapfile="/swapfile"
     if fallocate -l "${swap_mb}M" "$swapfile" 2>/dev/null || \
        dd if=/dev/zero of="$swapfile" bs=1M count="$swap_mb" status=none; then
         chmod 600 "$swapfile"
@@ -288,6 +360,7 @@ setupSwap() {
         echo "${green}$(msg swap_created) ${swap_mb}MB${reset}"
     else
         echo "${yellow}$(msg swap_fail)${reset}"
+        rm -f "$swapfile"
     fi
 }
 
@@ -318,34 +391,35 @@ getServerIP() {
         "https://api.ipify.org"
         "https://ipv4.icanhazip.com"
         "https://checkip.amazonaws.com"
-        "https://api4.my-ip.io/ip"
-        "https://ipv4.wtfismyip.com/text"
     )
 
-    local tmpdir
-    tmpdir=$(mktemp -d)
-    trap 'rm -rf "$tmpdir"' RETURN
+    local tmpdir=$(mktemp -d)
+    local pids=()
+    trap 'rm -rf "$tmpdir"; kill "${pids[@]}" 2>/dev/null' RETURN INT TERM
 
-    # Запускаем все curl параллельно
-    local i=0
-    for url in "${urls[@]}"; do
-        curl -s --connect-timeout 5 "$url" > "${tmpdir}/${i}" 2>/dev/null &
-        i=$((i + 1))
+    local pids=()
+    for i in "${!urls[@]}"; do
+        (curl -s --max-time 3 "${urls[$i]}" > "$tmpdir/$i" 2>/dev/null) &
+        pids+=($!)
     done
-    wait
 
-    # Берём первый валидный публичный IP
-    for f in "${tmpdir}"/*; do
-        local ip
-        ip=$(cat "$f" 2>/dev/null | tr -d '[:space:]')
-        if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            if ! [[ "$ip" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
-                echo "$ip"; return
+    local attempts=0
+    while [ $attempts -lt 15 ]; do
+        for f in "$tmpdir"/*; do
+            [ -s "$f" ] || continue
+            local ip=$(cat "$f" 2>/dev/null | tr -d '[:space:]')
+            if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && ! [[ "$ip" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
+                kill "${pids[@]}" 2>/dev/null || true
+                echo "$ip"
+                return 0
             fi
-        fi
+        done
+        sleep 0.2
+        attempts=$((attempts + 1))
     done
 
-    # Fallback: локальный маршрут — может вернуть приватный IP
+    # Fallback: локальный маршрут
+    kill "${pids[@]}" 2>/dev/null || true
     local ip
     ip=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')
     echo "${ip:-UNKNOWN}"

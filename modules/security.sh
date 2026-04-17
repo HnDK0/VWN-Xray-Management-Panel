@@ -9,6 +9,12 @@ changeSshPort() {
         echo "${red}$(msg invalid_port)${reset}"; return 1
     fi
 
+    # Проверяем что порт свободен
+    if ss -tlnp 2>/dev/null | grep -q ":${new_ssh_port} "; then
+        echo "${red}ERROR: Port $new_ssh_port is already in use!${reset}"
+        return 1
+    fi
+
     local old_ssh_port
     old_ssh_port=$(grep -E "^Port " /etc/ssh/sshd_config | awk '{print $2}' | head -1)
     old_ssh_port="${old_ssh_port:-22}"
@@ -16,6 +22,20 @@ changeSshPort() {
     ufw allow "$new_ssh_port"/tcp comment 'SSH'
     sed -i "s/^#\?Port [0-9]*/Port $new_ssh_port/" /etc/ssh/sshd_config
     systemctl restart sshd 2>/dev/null || systemctl restart ssh
+    
+    # Проверяем что sshd запустился успешно
+    sleep 2
+    if ! systemctl is-active --quiet sshd 2>/dev/null && ! systemctl is-active --quiet ssh 2>/dev/null; then
+        echo "${red}ERROR: sshd failed to start on new port! Rolling back...${reset}"
+        # Откат на старый порт
+        sed -i "s/^#\?Port [0-9]*/Port $old_ssh_port/" /etc/ssh/sshd_config
+        systemctl restart sshd 2>/dev/null || systemctl restart ssh
+        # Закрываем новый порт в фаерволе
+        ufw delete allow "$new_ssh_port"/tcp &>/dev/null
+        echo "${yellow}Rolled back to old port $old_ssh_port${reset}"
+        return 1
+    fi
+
     echo "${green}$(msg ssh_changed) $new_ssh_port.${reset}"
     echo "${yellow}$(msg ssh_close_old)${reset}"
 

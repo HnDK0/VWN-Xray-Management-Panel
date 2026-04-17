@@ -1,6 +1,6 @@
 #!/bin/bash
 # =================================================================
-# menu.sh — Главное меню и функция установки
+# menu.sh — Главное меню и функции установки
 # =================================================================
 
 prepareSoftware() {
@@ -330,8 +330,9 @@ manageWs() {
 
 menu() {
     set +e
-    # Первичная очистка экрана
-    clear
+    # Обработка Ctrl+C - возврат в меню вместо выхода из скрипта
+    trap 'echo; echo -e "${yellow}Отмена${reset}"; read -rp "Нажмите Enter чтобы продолжить... "; return' INT
+
     while true; do
         local s_nginx s_ws s_reality s_vision s_warp s_ssl s_bbr s_f2b s_jail s_cfguard s_relay s_psiphon s_tor s_connect
         clear
@@ -378,14 +379,14 @@ menu() {
         echo -e "${cyan}================================================================${reset}"
         printf "   ${red}VWN — Xray Management Panel${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
         echo -e "${cyan}================================================================${reset}"
-        echo -e "  ${cyan}── $(msg menu_sep_proto_short) ──────────────────────────────────────────${reset}"
+        echo -e "  ${cyan}── $(msg menu_sep_proto_short) ───────────────────────────────────────────────${reset}"
         echo -e "  $(printf "%-9s" "WS:")$s_ws_c,  Nginx: $s_nginx_c"
         echo -e "  $(printf "%-9s" "Reality:")$s_reality_c,  SSL: $s_ssl"
         echo -e "  $(printf "%-9s" "Vision:")$s_vision_c,  CF Guard: $s_cfguard"
         [ -n "$s_connect" ] && echo -e "  CDN: ${green}${s_connect}${reset}"
-        echo -e "  ${cyan}── $(msg menu_sep_tun_short) ───────────────────────────────────────────${reset}"
+        echo -e "  ${cyan}── $(msg menu_sep_tun_short) ───────────────────────────────────────────────${reset}"
         echo -e "  WARP: $s_warp,  Relay: $s_relay,  Psiphon: $s_psiphon,  Tor: $s_tor"
-        echo -e "  ${cyan}── $(msg menu_sep_sec_short) ────────────────────────────────────────────${reset}"
+        echo -e "  ${cyan}── $(msg menu_sep_sec_short) ─────────────────────────────────────────────────${reset}"
         echo -e "  BBR: $s_bbr,  F2B: $s_f2b,  Jail: $s_jail,  IPv6: $(getIPv6Status),  CPU Guard: $(getCpuGuardStatus),  Adblock: $s_adblock,  Privacy: $s_privacy"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
 

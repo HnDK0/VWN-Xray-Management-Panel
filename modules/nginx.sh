@@ -181,35 +181,9 @@ _writeStreamMap() {
     local stream_domains
     stream_domains=$(vwn_conf_get STREAM_DOMAINS 2>/dev/null || true)
 
-    # Генерируем строки map из STREAM_DOMAINS
-    local map_lines=""
-    IFS=',' read -ra _entries <<< "$stream_domains"
-    for _entry in "${_entries[@]}"; do
-        local _d _p
-        _d=$(echo "$_entry" | cut -d: -f1)
-        _p=$(echo "$_entry" | cut -d: -f2)
-        [ -z "$_d" ] || [ -z "$_p" ] && continue
-        map_lines="${map_lines}        ${_d}   127.0.0.1:${_p};\n"
-    done
-
-    # Обновляем только stream map в существующем nginx.conf
-    local new_map_block
-    new_map_block=$(printf '%b' "$map_lines")
-
-    # Используем python для точной замены map блока
-    python3 -c "
-import sys
-content = open('/etc/nginx/nginx.conf').read()
-# Находим и заменяем map блок
-import re
-new_map = '''$(printf '%b' "$map_lines")        default     127.0.0.1:${realityPort};'''
-content = re.sub(
-    r'(map \\\$ssl_preread_server_name \\\$upstream_backend \{)\n(.*?)(\n    \})',
-    lambda m: m.group(1) + '\n' + new_map + m.group(3),
-    content, flags=re.DOTALL
-)
-open('/etc/nginx/nginx.conf', 'w').write(content)
-" 2>/dev/null || true
+    # Создаём полный контент nginx.conf заново из шаблона вместо опасной замены регексом
+    render_config "$VWN_CONFIG_DIR/nginx_stream.conf" /etc/nginx/nginx.conf \
+        WS_DOMAIN "$wsDomain" REALITY_PORT "$realityPort" STREAM_DOMAINS "$stream_domains"
 }
 
 setupStreamSNI() {
@@ -655,8 +629,8 @@ configCert() {
             printf "export CF_Email='%s'\nexport CF_Key='%s'\n" "$CF_Email" "$CF_Key" > "$cf_key_file"
             chmod 600 "$cf_key_file"
         fi
-        export CF_Email CF_Key
-        ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$userDomain" --force
+        # Передаем ключи только локально в окружение запуска процесса acme.sh, не оставляем в среде скрипта
+        CF_Email="$CF_Email" CF_Key="$CF_Key" ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$userDomain" --force
     else
         openPort80
         ~/.acme.sh/acme.sh --issue --standalone -d "$userDomain" \

@@ -47,7 +47,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
   --stub https://microsoft.com/ \
   --cert-method cf --cf-email me@example.com --cf-key YOUR_CF_KEY \
   --reality --reality-dest www.apple.com:443 --reality-port 8443 \
-  --vision --vision-domain dir.example.com --vision-cert-method cf \
+   --vision \
   --bbr --fail2ban
 ```
 
@@ -87,8 +87,6 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
 | `--ssh-port PORT` | — | Change SSH port (1–65535). Applied **before** Fail2Ban |
 | `--stream` | off | Activate Stream SNI — serve WS + Reality on port 443 via SNI multiplexing. **Mutually exclusive with `--vision`** |
 | `--vision` | off | Install VLESS+TLS+Vision (direct on port 443, requires WS+TLS) |
-| `--vision-domain DOMAIN` | — | Direct domain for Vision. **Required** with `--vision`. No Cloudflare proxy! |
-| `--vision-cert-method cf\|standalone` | `standalone` | SSL method for the Vision domain |
 | `--ipv6` | off | Enable IPv6 system-wide |
 | `--cpu-guard` | off | Enable CPU Guard (priority for xray/nginx) |
 | `--bbr` | off | Enable BBR TCP congestion control |
@@ -105,7 +103,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
 > `standalone` — temporarily opens port 80 for Let's Encrypt HTTP-01 challenge. The domain must already point to the server.
 > `cf` — uses Cloudflare DNS API, port 80 not needed. Recommended when the domain is behind Cloudflare.
 
-> **Vision domain:** must be a **direct** A-record pointing to the server IP. Cloudflare orange-cloud proxy must be **disabled** for this domain — Vision uses raw TLS, not HTTP, so Cloudflare cannot proxy it.
+> **Vision:** uses the same domain and SSL certificate as WS. The domain must have a **direct** A-record pointing to the server IP when Vision is active. Cloudflare orange-cloud proxy must be **disabled** — Vision uses raw TLS, not HTTP, so Cloudflare cannot proxy it.
 
 ## Requirements
 
@@ -354,7 +352,7 @@ Client → domain:443 → Xray-Vision (direct TLS termination)
 - Vision runs **directly on port 443** — no Stream SNI or nginx proxy needed
 - Vision and Stream SNI are **mutually exclusive** — enabling one disables the other
 - Vision domain must have a **direct DNS A-record** — no Cloudflare proxy (orange cloud must be grey)
-- TLS certificate is issued separately for the Vision domain via acme.sh (CF DNS or standalone HTTP-01)
+- TLS certificate is shared with WS — no separate issue needed
 - Non-Vision traffic is forwarded to Nginx on `127.0.0.1:7443` (shared with WS)
 - All routing features (WARP, Relay, Psiphon, Tor, Adblock, Privacy) apply to Vision automatically
 
@@ -772,9 +770,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
   --stub https://microsoft.com/ \
   --cert-method cf --cf-email me@example.com --cf-key YOUR_CF_KEY \
   --reality --reality-dest www.apple.com:443 --reality-port 8443 \
-  --stream \
-  --vision --vision-domain dir.example.com --vision-cert-method cf \
-  --bbr --fail2ban
+  --vision \
+  --bbr --fail2ban --jail --adblock
 ```
 
 ### Только Reality (без WS, без Nginx, домен не нужен)
@@ -812,9 +809,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
 | `--skip-ws` | выкл. | Пропустить WS (только Reality) |
 | `--ssh-port PORT` | — | Сменить порт SSH (1–65535). Применяется **до** Fail2Ban |
 | `--stream` | выкл. | Активировать Stream SNI — WS + Reality на порту 443 |
-| `--vision` | выкл. | Установить VLESS+TLS+Vision (требует WS+TLS + Stream SNI) |
-| `--vision-domain DOMAIN` | — | Прямой домен для Vision. **Обязателен** с `--vision`. Без CF-прокси! |
-| `--vision-cert-method cf\|standalone` | `standalone` | Метод SSL для домена Vision |
+| `--vision` | выкл. | Установить VLESS+TLS+Vision (требует WS+TLS) |
 | `--ipv6` | выкл. | Включить IPv6 |
 | `--cpu-guard` | выкл. | Включить CPU Guard (приоритет xray/nginx) |
 | `--bbr` | выкл. | Включить BBR TCP |
@@ -831,7 +826,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
 > `standalone` — временно открывает порт 80 для HTTP-01. Домен должен уже указывать на сервер.
 > `cf` — использует Cloudflare DNS API, порт 80 не нужен. Рекомендуется при домене за Cloudflare.
 
-> **Домен Vision** должен иметь **прямую A-запись** на IP сервера. Оранжевое облако Cloudflare должно быть **серым** — Vision использует raw TLS, Cloudflare не может проксировать такой трафик.
+> **Vision:** использует тот же домен и SSL сертификат что и WS. Домен должен иметь **прямую A-запись** на IP сервера при активном Vision. Оранжевое облако Cloudflare должно быть **серым** — Vision использует raw TLS, Cloudflare не может проксировать такой трафик.
 
 ## Требования
 

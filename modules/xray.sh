@@ -464,10 +464,8 @@ modifyXrayUUID() {
         # Нет users.conf — меняем только в конфигах напрямую
         local new_uuid
         new_uuid=$(cat /proc/sys/kernel/random/uuid)
-        [ -f "$configPath" ] && jq ".inbounds[0].settings.clients[0].id = \"$new_uuid\"" \
-            "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
-        [ -f "$realityConfigPath" ] && jq ".inbounds[0].settings.clients[0].id = \"$new_uuid\"" \
-            "$realityConfigPath" > "${realityConfigPath}.tmp" && mv "${realityConfigPath}.tmp" "$realityConfigPath"
+        [ -f "$configPath" ] && edit_json "$configPath" ".inbounds[0].settings.clients[0].id = \"$new_uuid\""
+        [ -f "$realityConfigPath" ] && edit_json "$realityConfigPath" ".inbounds[0].settings.clients[0].id = \"$new_uuid\""
         systemctl restart xray xray-reality 2>/dev/null || true
         echo "${green}$(msg new_uuid): $new_uuid${reset}"
     fi
@@ -481,8 +479,7 @@ modifyXrayPort() {
     if ! _validatePort "$xrayPort" &>/dev/null; then
         echo "${red}$(msg invalid_port)${reset}"; return 1
     fi
-    jq ".inbounds[0].port = $xrayPort" \
-        "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
+    edit_json "$configPath" ".inbounds[0].port = $xrayPort"
     sed -i "s|127.0.0.1:${oldPort}|127.0.0.1:${xrayPort}|g" "$nginxPath"
     systemctl restart xray nginx
     echo "${green}$(msg port_changed) $xrayPort${reset}"
@@ -558,7 +555,16 @@ modifyDomain() {
         "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
     userDomain="$new_domain"
     configCert
-    systemctl restart nginx xray
+
+    # Если Vision активен, пересобираем nginx в режиме Vision
+    if systemctl is-active --quiet xray-vision 2>/dev/null; then
+        local proxy_url
+        proxy_url=$(vwn_conf_get STUB_URL 2>/dev/null || echo "https://www.bing.com/")
+        writeNginxConfigVision "$proxy_url" "$new_domain"
+        systemctl restart nginx xray xray-vision
+    else
+        systemctl restart nginx xray
+    fi
 }
 
 CONNECT_HOST_FILE="/usr/local/etc/xray/connect_host"

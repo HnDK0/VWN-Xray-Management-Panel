@@ -4,7 +4,7 @@
 #
 # Использование:
 #   bash install.sh                        — интерактивная установка
-#   bash install.sh --update               — обновить модули (конфиги не трогает)
+#   bash install.sh --update               — обновить модули и шаблоны конфигов
 #   bash install.sh --auto [ОПЦИИ]         — полностью автоматическая установка
 #
 # Опции --auto (все необязательны, есть умолчания):
@@ -50,7 +50,23 @@
 #     --reality --reality-dest microsoft.com:443 --reality-port 8443
 # =================================================================
 
-set -e
+LOCK_FILE="/tmp/vwn.lock"
+
+# Атомарная блокировка параллельного запуска
+set -o noclobber
+if ! echo $$ > "$LOCK_FILE" 2>/dev/null; then
+    if kill -0 "$(cat "$LOCK_FILE")" 2>/dev/null; then
+        echo "ОШИБКА: Другой экземпляр скрипта уже запущен"
+        echo "Если это не так — удалите файл: $LOCK_FILE"
+        exit 1
+    fi
+    # Старый процесс мёртв — перезаписываем блокировку
+    echo $$ > "$LOCK_FILE"
+fi
+set +o noclobber
+trap 'rm -f "$LOCK_FILE"' EXIT INT TERM HUP
+
+set -eo pipefail
 
 VWN_LIB="/usr/local/lib/vwn"
 VWN_BIN="/usr/local/bin/vwn"
@@ -87,8 +103,6 @@ OPT_BBR=false
 OPT_FAIL2BAN=false
 OPT_NO_WARP=false
 OPT_VISION=false
-OPT_VISION_DOMAIN=""
-OPT_VISION_CERT_METHOD=""
 OPT_STREAM=false
 
 # ── Новые опциональные компоненты ──
@@ -157,8 +171,6 @@ _parse_args() {
             --no-warp)        OPT_NO_WARP=true ;;
             --stream)         OPT_STREAM=true ;;
             --vision)         OPT_VISION=true ;;
-            --vision-domain)  OPT_VISION_DOMAIN="$2";       shift ;;
-            --vision-cert-method) OPT_VISION_CERT_METHOD="$2"; shift ;;
             --ssh-port)       OPT_SSH_PORT="$2";            shift ;;
             --jail)           OPT_JAIL=true ;;
             --ipv6)           OPT_IPV6=true ;;
@@ -184,7 +196,7 @@ VWN — Installer  (Xray VLESS + WARP + CDN + Reality)
 
 MODES:
   bash install.sh                        Interactive install (default)
-  bash install.sh --update               Update modules only (keep configs)
+  bash install.sh --update               Update modules and config templates
   bash install.sh --auto [OPTIONS]       Fully unattended install
 
 OPTIONS for --auto:
@@ -213,8 +225,6 @@ OPTIONS for --auto:
   --no-warp                  Skip Cloudflare WARP setup
   --stream                   Activate Stream SNI (mutually exclusive with --vision)
   --vision                   Install Vision (VLESS+TLS+Vision, direct on 443)
-  --vision-domain DOMAIN     Domain for Vision (no Cloudflare proxy!)
-  --vision-cert-method cf|standalone  SSL method for Vision domain
 
 EXAMPLES:
   # Simple: WS+CDN, standalone SSL
@@ -261,10 +271,6 @@ _validate_auto_params() {
     fi
 
     if $OPT_VISION; then
-        if [ -z "$OPT_VISION_DOMAIN" ]; then
-            echo "${red}ERROR: --vision-domain is required with --vision${reset}"
-            exit 1
-        fi
         if $OPT_SKIP_WS; then
             echo "${red}ERROR: --vision requires WS+TLS (cannot use --skip-ws with --vision)${reset}"
             exit 1
@@ -276,7 +282,7 @@ _validate_auto_params() {
         fi
     fi
 
-    if ! [[ "$OPT_PORT" =~ ^[0-9]+$ ]] || [ "$OPT_PORT" -lt 443 ] || [ "$OPT_PORT" -gt 65535 ]; then
+    if ! [[ "$OPT_PORT" =~ ^[0-9]+$ ]] || [ "$OPT_PORT" -lt 1024 ] || [ "$OPT_PORT" -gt 65535 ]; then
         echo "${red}Invalid --port: $OPT_PORT (must be 1024-65535)${reset}"
         exit 1
     fi
@@ -330,7 +336,7 @@ _print_auto_params() {
     $OPT_SKIP_WS                || echo -e "  Xray port   : $OPT_PORT"
     $OPT_SKIP_WS                || echo -e "  SSL method  : $OPT_CERT_METHOD"
     $OPT_REALITY                && echo -e "  Reality     : ${green}$OPT_REALITY_DEST  port=$OPT_REALITY_PORT${reset}"
-    $OPT_VISION                 && echo -e "  Vision      : ${green}$OPT_VISION_DOMAIN${reset}"
+    $OPT_VISION                 && echo -e "  Vision      : ${green}$OPT_DOMAIN${reset}"
     $OPT_STREAM && ! $OPT_VISION && echo -e "  Stream SNI  : ${green}enabled${reset}"
     [ -n "$OPT_SSH_PORT" ]      && echo -e "  SSH port    : ${green}$OPT_SSH_PORT${reset}"
     $OPT_IPV6                   && echo -e "  IPv6        : ${green}enabled${reset}"
@@ -417,10 +423,11 @@ download_modules() {
         # Сохраняем хеш старого файла (если есть)
         [ -f "$mod_file" ] && old_hash=$(md5sum "$mod_file" 2>/dev/null | awk '{print $1}')
 
-        echo -n "  ${module}.sh... "
-        if curl -fsSL --connect-timeout 15 \
-            "${GITHUB_RAW}/modules/${module}.sh" \
-            -o "${mod_file}" 2>/dev/null; then
+    echo -n "  ${module}.sh... "
+    if curl -fsSL --connect-timeout 15 \
+        "${GITHUB_RAW}/modules/${module}.sh" \
+        -o "${mod_file}.tmp" 2>/dev/null; then
+        mv "${mod_file}.tmp" "${mod_file}"
 
             new_hash=$(md5sum "$mod_file" 2>/dev/null | awk '{print $1}')
             chmod 644 "$mod_file"
@@ -458,7 +465,8 @@ download_modules() {
         echo -n "  ${cfg}... "
         if curl -fsSL --connect-timeout 15 \
             "${GITHUB_RAW}/config/${cfg}" \
-            -o "$cfg_file" 2>/dev/null; then
+            -o "${cfg_file}.tmp" 2>/dev/null; then
+            mv "${cfg_file}.tmp" "${cfg_file}"
             new_hash=$(md5sum "$cfg_file" 2>/dev/null | awk '{print $1}')
             chmod 644 "$cfg_file"
             if [ "$old_hash" = "$new_hash" ]; then
@@ -477,7 +485,7 @@ install_vwn_binary() {
     echo -e "${cyan}$(msg install_vwn)${reset}"
     curl -fsSL --connect-timeout 15 \
         "${GITHUB_RAW}/vwn" \
-        -o "$VWN_BIN" 2>/dev/null || {
+        -o "${VWN_BIN}.tmp" 2>/dev/null && mv "${VWN_BIN}.tmp" "${VWN_BIN}" || {
         # Fallback: создаём загрузчик локально
         cat > "$VWN_BIN" << 'VWNEOF'
 #!/bin/bash
@@ -555,13 +563,14 @@ _auto_ssl() {
     if [ "$OPT_CERT_METHOD" = "cf" ]; then
         # DNS-01 через Cloudflare API — не требует открытого 80 порта
         printf "export CF_Email='%s'\nexport CF_Key='%s'\n" "$OPT_CF_EMAIL" "$OPT_CF_KEY" \
-            > /root/.cloudflare_api
-        chmod 600 /root/.cloudflare_api
+            > /root/.cloudflare_api.tmp
+        chmod 600 /root/.cloudflare_api.tmp
+        mv /root/.cloudflare_api.tmp /root/.cloudflare_api
 
         export CF_Email="$OPT_CF_EMAIL"
         export CF_Key="$OPT_CF_KEY"
 
-        ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$domain" --force
+        ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$domain" --force >/dev/null 2>&1
     else
         # HTTP-01 standalone — на время выпуска открываем порт 80
         ufw allow 80/tcp comment 'ACME temp' &>/dev/null || true
@@ -693,23 +702,16 @@ _auto_install_vision() {
         }
     fi
 
-    # Метод SSL: если не задан — берём тот же что для WS
-    local cert_method="${OPT_VISION_CERT_METHOD:-${OPT_CERT_METHOD:-standalone}}"
+    echo -e "${cyan}Installing Vision for domain: $OPT_DOMAIN${reset}"
+    echo -e "${cyan}Using existing WS certificate${reset}"
 
-    echo -e "${cyan}Installing Vision for domain: $OPT_VISION_DOMAIN${reset}"
-    echo -e "${cyan}SSL method: $cert_method${reset}"
+    # Вызываем installVision
+    installVision --auto || {
+        echo "${red}Vision installation failed.${reset}"
+        return 1
+    }
 
-    # Вызываем installVision с предустановленными параметрами
-    VISION_AUTO_DOMAIN="$OPT_VISION_DOMAIN" \
-    VISION_AUTO_CERT_METHOD="$cert_method" \
-    VISION_AUTO_CF_EMAIL="${OPT_CF_EMAIL:-}" \
-    VISION_AUTO_CF_KEY="${OPT_CF_KEY:-}" \
-        installVision --auto || {
-            echo "${red}Vision installation failed.${reset}"
-            return 1
-        }
-
-    echo -e "${green}Vision done. Domain: $OPT_VISION_DOMAIN${reset}"
+    echo -e "${green}Vision done. Domain: $OPT_DOMAIN${reset}"
 }
 
 # =================================================================
@@ -999,8 +1001,8 @@ _run_auto() {
 
     if $OPT_VISION; then
         echo -e "  ${cyan}Vision:${reset}"
-        echo -e "    Domain : ${green}$OPT_VISION_DOMAIN${reset}"
-        echo -e "    Port   : ${green}$(vwn_conf_get vision_port 2>/dev/null || echo '20xxx')${reset}"
+        echo -e "    Domain : ${green}$OPT_DOMAIN${reset}"
+        echo -e "    Port   : ${green}443 (direct)${reset}"
     fi
 
     if [ -n "$OPT_SSH_PORT" ]; then
