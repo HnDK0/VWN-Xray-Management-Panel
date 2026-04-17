@@ -422,16 +422,19 @@ _installJq() {
 
 install_deps() {
     echo -e "${cyan}$(msg install_deps)${reset}"
+    
+    prepareApt
+    
     if command -v apt &>/dev/null; then
-        apt-get update -qq
+        ${PACKAGE_MANAGEMENT_UPDATE} -qq 2>/dev/null || true
         # jq из репозитория — fallback если скачать не удастся
-        apt-get install -y --no-install-recommends curl jq bash coreutils cron 2>/dev/null || true
+        yes '' | ${PACKAGE_MANAGEMENT_INSTALL} curl jq bash coreutils cron 2>/dev/null || true
         systemctl enable --now cron 2>/dev/null || true
     elif command -v dnf &>/dev/null; then
-        dnf install -y curl jq bash cronie 2>/dev/null || true
+        yes '' | ${PACKAGE_MANAGEMENT_INSTALL} curl jq bash cronie 2>/dev/null || true
         systemctl enable --now crond 2>/dev/null || true
     elif command -v yum &>/dev/null; then
-        yum install -y curl jq bash cronie 2>/dev/null || true
+        yes '' | ${PACKAGE_MANAGEMENT_INSTALL} curl jq bash cronie 2>/dev/null || true
         systemctl enable --now crond 2>/dev/null || true
     fi
     # Устанавливаем фиксированную версию jq поверх системной

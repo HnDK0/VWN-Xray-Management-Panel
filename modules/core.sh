@@ -268,23 +268,40 @@ isRoot() {
     fi
 }
 
+prepareApt() {
+    # Убиваем все зависшие процессы пакетного менеджера
+    killall -9 apt apt-get dpkg dpkg-deb unattended-upgrades 2>/dev/null || true
+    
+    # Принудительно снимаем блокировки файлов
+    fuser -kk /var/lib/dpkg/lock* /var/cache/apt/archives/lock /var/lib/apt/lists/lock* 2>/dev/null || true
+    sleep 0.5
+    
+    # Удаляем файлы блокировок
+    rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/cache/apt/archives/lock /var/lib/apt/lists/lock*
+    
+    # Исправляем сломанное состояние dpkg
+    export DEBIAN_FRONTEND=noninteractive
+    dpkg --configure -a --force-confold --force-confdef 2>/dev/null || true
+}
+
 identifyOS() {
     if [[ "$(uname)" != 'Linux' ]]; then
         echo "error: This operating system is not supported."
         exit 1
     fi
     if command -v apt &>/dev/null; then
-        PACKAGE_MANAGEMENT_INSTALL='apt -y --no-install-recommends install'
+        PACKAGE_MANAGEMENT_INSTALL='timeout 300 apt-get -y --no-install-recommends -o Dpkg::Lock::Timeout=60 -o Acquire::http::Timeout=30 -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install'
         PACKAGE_MANAGEMENT_REMOVE='apt purge -y'
-        PACKAGE_MANAGEMENT_UPDATE='apt update'
+        PACKAGE_MANAGEMENT_UPDATE='timeout 120 apt-get update -o Acquire::http::Timeout=30'
     elif command -v dnf &>/dev/null; then
-        PACKAGE_MANAGEMENT_INSTALL='dnf -y install'
+        PACKAGE_MANAGEMENT_INSTALL='timeout 300 dnf -y install --setopt=install_weak_deps=False'
         PACKAGE_MANAGEMENT_REMOVE='dnf remove -y'
-        PACKAGE_MANAGEMENT_UPDATE='dnf update'
+        PACKAGE_MANAGEMENT_UPDATE='timeout 120 dnf update'
+        ${PACKAGE_MANAGEMENT_INSTALL} 'epel-release' &>/dev/null
     elif command -v yum &>/dev/null; then
-        PACKAGE_MANAGEMENT_INSTALL='yum -y install'
+        PACKAGE_MANAGEMENT_INSTALL='timeout 300 yum -y install --setopt=install_weak_deps=False'
         PACKAGE_MANAGEMENT_REMOVE='yum remove -y'
-        PACKAGE_MANAGEMENT_UPDATE='yum update'
+        PACKAGE_MANAGEMENT_UPDATE='timeout 120 yum update'
         ${PACKAGE_MANAGEMENT_INSTALL} 'epel-release' &>/dev/null
     else
         echo "error: Package manager not supported."
@@ -294,18 +311,23 @@ identifyOS() {
 
 installPackage() {
     local pkg="$1"
-    if ${PACKAGE_MANAGEMENT_INSTALL} "$pkg" &>/dev/null; then
+    
+    prepareApt
+    
+    if yes '' | ${PACKAGE_MANAGEMENT_INSTALL} "$pkg" &>/dev/null; then
         echo "info: $pkg installed."
+        return 0
+    fi
+    
+    echo "warn: Fixing state for $pkg..."
+    ${PACKAGE_MANAGEMENT_UPDATE} &>/dev/null || true
+    
+    if yes '' | ${PACKAGE_MANAGEMENT_INSTALL} "$pkg"; then
+        echo "info: $pkg installed after fix."
+        return 0
     else
-        echo "warn: Fixing dependencies for $pkg..."
-        dpkg --configure -a 2>/dev/null || true
-        ${PACKAGE_MANAGEMENT_UPDATE} &>/dev/null || true
-        if ${PACKAGE_MANAGEMENT_INSTALL} "$pkg"; then
-            echo "info: $pkg installed after fix."
-        else
-            echo "${red}error: Installation of $pkg failed.${reset}"
-            return 1
-        fi
+        echo "${red}error: Installation of $pkg failed.${reset}"
+        return 1
     fi
 }
 
