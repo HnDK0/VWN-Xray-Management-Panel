@@ -99,34 +99,8 @@ set -eo pipefail
 VWN_LIB="/usr/local/lib/vwn"
 VWN_BIN="/usr/local/bin/vwn"
 
-# Загружаем модули ядра в правильном порядке зависимостей
-for module in \
-    modules/core.sh \
-    modules/lang.sh \
-    modules/logs.sh \
-    modules/diag.sh \
-    modules/nginx.sh \
-    modules/xray.sh \
-    modules/warp.sh \
-    modules/reality.sh \
-    modules/vision.sh \
-    modules/xhttp.sh \
-    modules/security.sh \
-    modules/privacy.sh \
-    modules/adblock.sh \
-    modules/users.sh \
-    modules/psiphon.sh \
-    modules/tor.sh \
-    modules/relay.sh \
-    modules/backup.sh \
-    modules/menu.sh
-do
-    if [ -f "$module" ]; then
-        source "$module"
-    else
-        echo "⚠️  Внимание: модуль $module не найден"
-    fi
-done
+# Определяем реальный путь скрипта для любого способа запуска
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GITHUB_RAW="https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main"
 
 # Цвета (с fallback когда tput нет)
@@ -447,6 +421,14 @@ _installJq() {
     else
         echo "${red}FAIL (will use system jq)${reset}"
     fi
+}
+
+# Fallback prepareApt — работает до загрузки модулей
+prepareApt() {
+    fuser -kk /var/lib/dpkg/lock* 2>/dev/null || true
+    sleep 0.5
+    rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/cache/apt/archives/lock 2>/dev/null
+    dpkg --configure -a 2>/dev/null || true
 }
 
 install_deps() {
