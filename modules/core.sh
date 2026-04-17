@@ -312,21 +312,23 @@ identifyOS() {
 installPackage() {
     local pkg="$1"
     
+    echo -n "  ${pkg}... "
     prepareApt
     
-    if yes '' | ${PACKAGE_MANAGEMENT_INSTALL} "$pkg" &>/dev/null; then
-        echo "info: $pkg installed."
+    if timeout 60 yes '' | ${PACKAGE_MANAGEMENT_INSTALL} "$pkg" >/dev/null; then
+        echo "${green}OK${reset}"
         return 0
     fi
     
-    echo "warn: Fixing state for $pkg..."
-    ${PACKAGE_MANAGEMENT_UPDATE} &>/dev/null || true
+    echo "${yellow}RETRY${reset}"
+    echo "  info: Fixing apt state for $pkg..."
+    timeout 120 ${PACKAGE_MANAGEMENT_UPDATE} >/dev/null || true
     
-    if yes '' | ${PACKAGE_MANAGEMENT_INSTALL} "$pkg"; then
-        echo "info: $pkg installed after fix."
+    if timeout 120 yes '' | ${PACKAGE_MANAGEMENT_INSTALL} "$pkg"; then
+        echo "  info: $pkg installed after fix."
         return 0
     else
-        echo "${red}error: Installation of $pkg failed.${reset}"
+        echo "${red}FAIL${reset}"
         return 1
     fi
 }
