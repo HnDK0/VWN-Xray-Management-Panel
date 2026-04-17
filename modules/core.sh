@@ -334,59 +334,56 @@ loadAllModules() {
 
 setupSwap() {
     local swapfile="/swapfile"
-    
-    # Проверяем что swap файл уже существует и монтирован
-    if [ -f "$swapfile" ] && swapon --show | grep -q "^$swapfile"; then
-        echo "info: Swap file already exists and active, skipping."
-        return 0
-    fi
 
-    # Если swap уже есть в системе — не трогаем
-    local swap_total
-    swap_total=$(free -m | awk '/^Swap:/{print $2}')
+    # Отключаем и удаляем старый swap если есть
+    swapoff $swapfile >/dev/null 2>&1 || true
+    rm -f $swapfile
+    sed -i '/\/swapfile/d' /etc/fstab
+
+    # Отключаем systemd-swap если он установлен
+    systemctl mask systemd-swap 2>/dev/null || true
+    systemctl stop systemd-swap 2>/dev/null || true
+
+    # Если уже есть другой активный swap больше 256МБ — выходим
+    local swap_total=$(free -m | awk '/^Swap:/{print $2}')
     if [ "${swap_total:-0}" -gt 256 ]; then
-        echo "info: Swap already exists (${swap_total}MB), skipping."
+        echo "info: Swap already active ${swap_total}MB, skipped"
         return 0
     fi
 
-    # Определяем размер swap в зависимости от RAM
-    local ram_mb swap_mb
-    ram_mb=$(free -m | awk '/^Mem:/{print $2}')
-    if   [ "$ram_mb" -le 512 ];  then swap_mb=1024
-    elif [ "$ram_mb" -le 1024 ]; then swap_mb=1024
-    elif [ "$ram_mb" -le 2048 ]; then swap_mb=2048
-    else swap_mb=1024
+    echo -e "${cyan}$(msg swap_creating) 1024MB...${reset}"
+    
+    # Только dd! fallocate никогда не используется для swap
+    if ! dd if=/dev/zero of=$swapfile bs=1M count=1024 status=none; then
+        echo "${yellow}Not enough disk space, swap skipped${reset}"
+        rm -f $swapfile
+        return 0
     fi
 
-    # Проверяем свободное место на диске (требуем размер swap + 512МБ запас)
-    local free_space
-    free_space=$(df -m / | awk 'NR==2 {print $4}')
-    if [ "$free_space" -lt $((swap_mb + 512)) ]; then
-        echo "${yellow}Not enough free disk space for ${swap_mb}MB swap. Required: $((swap_mb + 512))MB, Available: ${free_space}MB${reset}"
-        echo "${yellow}Skipping swap creation.${reset}"
+    # ✅ Самая важная строка: ждём пока udev закончит обработку файла
+    # Без этого зависает на 90 секунд на каждом втором сервере
+    udevadm settle >/dev/null 2>&1 || true
+
+    # Только после этого можно продолжать
+    chmod 600 $swapfile
+    mkswap $swapfile >/dev/null
+
+    # -n флаг отключает вызов udev внутри swapon полностью
+    swapon -n $swapfile
+
+    # Проверяем что swap действительно поднялся
+    sleep 1
+    if ! swapon --show | grep -q "^$swapfile"; then
+        echo "${yellow}Swap activation failed, skipped${reset}"
+        rm -f $swapfile
         return 1
     fi
 
-    echo -e "${cyan}$(msg swap_creating) ${swap_mb}MB...${reset}"
+    # Добавляем в fstab
+    echo "$swapfile none swap sw 0 0" >> /etc/fstab
 
-    # Создаём swap-файл
-    if fallocate -l "${swap_mb}M" "$swapfile" 2>/dev/null || \
-       dd if=/dev/zero of="$swapfile" bs=1M count="$swap_mb" status=none; then
-        chmod 600 "$swapfile"
-        mkswap "$swapfile" &>/dev/null
-        swapon "$swapfile"
-        # Прописываем в fstab чтобы swap выжил после перезагрузки
-        if ! grep -q "$swapfile" /etc/fstab; then
-            echo "$swapfile none swap sw 0 0" >> /etc/fstab
-        fi
-        # Настраиваем swappiness — не злоупотреблять swap
-        sysctl -w vm.swappiness=10 &>/dev/null
-        grep -q "vm.swappiness" /etc/sysctl.conf || echo "vm.swappiness=10" >> /etc/sysctl.conf
-        echo "${green}$(msg swap_created) ${swap_mb}MB${reset}"
-    else
-        echo "${yellow}$(msg swap_fail)${reset}"
-        rm -f "$swapfile"
-    fi
+    echo "${green}$(msg swap_created) 1024MB${reset}"
+    return 0
 }
 
 findFreePort() {
