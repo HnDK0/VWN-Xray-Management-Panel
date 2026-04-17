@@ -66,13 +66,6 @@ if [ "$FREE_SPACE" -lt 1536 ]; then
     exit 1
 fi
 
-# Общий таймаут на всю установку 15 минут
-[ -z "$VWN_INSTALL_PARENT" ] && {
-    export VWN_INSTALL_PARENT=1
-    timeout 900 bash "$0" "$@"
-    exit $?
-}
-
 # Атомарная блокировка параллельного запуска через flock
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
@@ -85,6 +78,13 @@ if ! flock -n 9; then
     flock 9
 fi
 echo $$ > "$LOCK_FILE"
+
+# Общий таймаут на всю установку 15 минут
+[ -z "$VWN_INSTALL_PARENT" ] && {
+    export VWN_INSTALL_PARENT=1
+    timeout --foreground 900 bash "$0" "$@"
+    exit $?
+}
 
 # Глобальная очистка при любом выходе
 cleanup() {

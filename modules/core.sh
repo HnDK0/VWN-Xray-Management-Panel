@@ -113,8 +113,13 @@ setupSystemDNS() {
     if systemctl is-active --quiet systemd-resolved; then
         echo "info: setting DNS via systemd-resolved..."
 
-        # ✅ Исправлен баг обрыва bash: убрали пайп перед циклом
-        mapfile -t ifaces < <(resolvectl list-interfaces | grep -E '^[0-9]+' | awk '{print $2}')
+        # ✅ Совместимость: list-interfaces → list (работает на всех версиях systemd)
+        if resolvectl list-interfaces >/dev/null 2>&1; then
+            mapfile -t ifaces < <(resolvectl list-interfaces | grep -E '^[0-9]+' | awk '{print $2}')
+        else
+            # Старая версия systemd (до 255)
+            mapfile -t ifaces < <(resolvectl list | grep -E '^[0-9]+' | awk '{print $2}')
+        fi
 
         for iface in "${ifaces[@]}"; do
             [ -z "$iface" ] && continue
@@ -368,8 +373,12 @@ setupSwap() {
     chmod 600 $swapfile
     mkswap $swapfile >/dev/null
 
-    # -n флаг отключает вызов udev внутри swapon полностью
-    swapon -n $swapfile
+    # ✅ Совместимость: флаг -n есть только в util-linux 2.40+
+    if swapon --help 2>&1 | grep -q -- '-n'; then
+        swapon -n $swapfile
+    else
+        swapon $swapfile
+    fi
 
     # Проверяем что swap действительно поднялся
     sleep 1
