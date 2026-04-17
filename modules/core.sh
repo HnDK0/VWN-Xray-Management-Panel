@@ -402,9 +402,9 @@ setupSwap() {
     chmod 600 $swapfile
     mkswap $swapfile >/dev/null
 
-    # ✅ Совместимость: флаг -n есть только в util-linux 2.40+
-    if swapon --help 2>&1 | grep -q -- '-n'; then
-        swapon -n $swapfile
+    # ✅ Совместимость: флаг -n/--no-discard есть только в util-linux 2.40+
+    if swapon --help 2>&1 | grep -qE '(-n|--no-discard)'; then
+        swapon --no-discard $swapfile 2>/dev/null || swapon $swapfile
     else
         swapon $swapfile
     fi
