@@ -159,11 +159,14 @@ fix_apt_mirrors() {
     for mirror in "${mirrors[@]}"; do
         echo -n "  пробуем $mirror... "
 
-        # Подменяем временно
-        sed "s|http://.*debian.org/debian/|$mirror|g" /etc/apt/sources.list > /etc/apt/sources.list.tmp
+        # Подменяем временно основной и security репозитории
+        sed -e "s|http://.*debian.org/debian/|$mirror|g" \
+            -e "s|http://security.debian.org/|${mirror}|g" \
+            /etc/apt/sources.list > /etc/apt/sources.list.tmp
         mv /etc/apt/sources.list.tmp /etc/apt/sources.list
 
-        if apt update -qq 2>/dev/null; then
+        # Отключаем ip6 при обновлении на проблемных хостерах
+        if apt -o Acquire::ForceIPv4=true update -qq 2>/dev/null; then
             echo -e "${green}OK${reset}"
             return 0
         else
