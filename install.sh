@@ -52,19 +52,47 @@
 
 LOCK_FILE="/tmp/vwn.lock"
 
-# Атомарная блокировка параллельного запуска
-set -o noclobber
-if ! echo $$ > "$LOCK_FILE" 2>/dev/null; then
+# Очистка блокировок dpkg в самом начале
+fuser -kk /var/lib/dpkg/lock* 2>/dev/null || true
+sleep 1
+rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/cache/apt/archives/lock
+dpkg --configure -a 2>/dev/null || true
+
+# Проверка свободного места
+FREE_SPACE=$(df -m / | awk 'NR==2 {print $4}')
+if [ "$FREE_SPACE" -lt 1536 ]; then
+    echo "${red}ОШИБКА: Недостаточно свободного места на диске${reset}"
+    echo "Требуется минимум 1.5ГБ свободно, доступно: ${FREE_SPACE}МБ"
+    exit 1
+fi
+
+# Общий таймаут на всю установку 15 минут
+[ -z "$VWN_INSTALL_PARENT" ] && {
+    export VWN_INSTALL_PARENT=1
+    timeout 900 bash "$0" "$@"
+    exit $?
+}
+
+# Атомарная блокировка параллельного запуска через flock
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
     if kill -0 "$(cat "$LOCK_FILE")" 2>/dev/null; then
         echo "ОШИБКА: Другой экземпляр скрипта уже запущен"
         echo "Если это не так — удалите файл: $LOCK_FILE"
         exit 1
     fi
-    # Старый процесс мёртв — перезаписываем блокировку
-    echo $$ > "$LOCK_FILE"
+    # Старый процесс мёртв — забираем блокировку
+    flock 9
 fi
-set +o noclobber
-trap 'rm -f "$LOCK_FILE"' EXIT INT TERM HUP
+echo $$ > "$LOCK_FILE"
+
+# Глобальная очистка при любом выходе
+cleanup() {
+    rm -f "$LOCK_FILE"
+    find /usr/local/etc/xray /etc/nginx -name "*.tmp" -delete 2>/dev/null
+    vwn close-80 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM HUP ERR
 
 set -eo pipefail
 
