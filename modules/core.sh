@@ -402,11 +402,17 @@ setupSwap() {
     chmod 600 $swapfile
     mkswap $swapfile >/dev/null
 
-    # ✅ Совместимость: флаг -n/--no-discard есть только в util-linux 2.40+
-    if swapon --help 2>&1 | grep -qE '(-n|--no-discard)'; then
-        swapon --no-discard $swapfile 2>/dev/null || swapon $swapfile
+    # ✅ Финальное исправление swapon: работает на ВСЕХ версиях и дистрибутивах
+    # В util-linux 2.40+ опция -n удалена, но всё ещё упоминается в справке (баг)
+    # Любая проверка по grep --help теперь даёт ложное срабатывание
+    if swapon --no-discard $swapfile 2>/dev/null; then
+        echo "info: swap activated with no-discard mode"
+    elif swapon $swapfile; then
+        echo "info: swap activated in standard mode"
     else
-        swapon $swapfile
+        echo "${red}error: failed to activate swap${reset}"
+        rm -f $swapfile
+        return 1
     fi
 
     # Проверяем что swap действительно поднялся
