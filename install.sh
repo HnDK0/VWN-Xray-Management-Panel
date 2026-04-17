@@ -67,27 +67,34 @@ if [ "$FREE_SPACE" -lt 1536 ]; then
 fi
 
 # Защита от параллельного запуска (работает на ВСЕХ дистрибутивах)
-if [ -f "$LOCK_FILE" ]; then
-    PID=$(cat "$LOCK_FILE" 2>/dev/null)
-    if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-        echo "ОШИБКА: Другой экземпляр скрипта уже запущен"
-        echo "Если это не так — удалите файл: $LOCK_FILE"
-        exit 1
-    else
-        # Старый процесс мёртв, удаляем зависшую блокировку
-        rm -f "$LOCK_FILE"
+[ -z "$VWN_INSTALL_PARENT" ] && {
+    if [ -f "$LOCK_FILE" ]; then
+        PID=$(cat "$LOCK_FILE" 2>/dev/null | tr -cd '0-9')
+        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+            echo ""
+            echo "${red}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
+            echo "${red}ОШИБКА: Другой экземпляр скрипта уже запущен${reset}"
+            echo "${red}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
+            echo ""
+            echo "PID запущенного процесса: ${yellow}$PID${reset}"
+            echo ""
+            echo "Если ты уверен что он завис — убей его командой:"
+            echo "  ${green}kill -9 $PID; rm -f /tmp/vwn.lock${reset}"
+            echo ""
+            exit 1
+        fi
     fi
-fi
 
-# Защита от зависших блокировок старше 5 минут
-if [ -f "$LOCK_FILE" ]; then
-    if test "$(find "$LOCK_FILE" -mmin +5)"; then
-        echo "info: удалена зависшая блокировка старше 5 минут"
-        rm -f "$LOCK_FILE"
+    # Защита от зависших блокировок старше 1 минуты
+    if [ -f "$LOCK_FILE" ]; then
+        if test "$(find "$LOCK_FILE" -mmin +1)"; then
+            echo "info: удалена зависшая блокировка старше 1 минуты"
+            rm -f "$LOCK_FILE"
+        fi
     fi
-fi
 
-echo $$ > "$LOCK_FILE"
+    echo $$ > "$LOCK_FILE"
+}
 
 # Общий таймаут на всю установку 15 минут
 [ -z "$VWN_INSTALL_PARENT" ] && {
