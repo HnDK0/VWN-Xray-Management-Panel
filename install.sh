@@ -985,8 +985,8 @@ _run_auto() {
     echo -e "${cyan}━━━ System packages ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
     identifyOS
     setupSwap
+    # ✅ НЕ делаем повторный apt update! Он уже был вызван в fix_apt_mirrors ранее
     rm -f /var/lib/dpkg/lock* 2>/dev/null && dpkg --configure -a 2>/dev/null || true
-    eval "$PACKAGE_MANAGEMENT_UPDATE" &>/dev/null || true
     for p in tar gpg unzip jq nano ufw socat curl qrencode python3; do
         installPackage "$p" &>/dev/null || true
     done
