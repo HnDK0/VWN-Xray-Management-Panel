@@ -34,6 +34,7 @@ _warp_cmd() {
 }
 
 configWarp() {
+    command -v warp-cli &>/dev/null || return 0
     systemctl enable --now warp-svc
     sleep 3
 

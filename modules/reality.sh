@@ -57,10 +57,9 @@ writeRealityConfig() {
     [ -z "$new_uuid" ] && new_uuid=$(cat /proc/sys/kernel/random/uuid)
 
     mkdir -p /usr/local/etc/xray
-    local BASEDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
     # Проверка существования шаблона
-    if [ ! -f "$BASEDIR/config/xray_reality.json" ]; then
+    if [ ! -f "$VWN_CONFIG_DIR/xray_reality.json" ]; then
         echo "error: xray_reality.json template not found" >&2
         return 1
     fi
@@ -80,7 +79,7 @@ writeRealityConfig() {
             | .inbounds[0].streamSettings.realitySettings.privateKey = $privKey
             | .inbounds[0].streamSettings.realitySettings.shortIds[0] = $shortId
             | .inbounds[0].settings.clients[0].id = $uuid
-        ' "$BASEDIR/config/xray_reality.json" > "$realityConfigPath"
+        ' "$VWN_CONFIG_DIR/xray_reality.json" > "$realityConfigPath"
 
     cat > /usr/local/etc/xray/reality_client.txt << EOF
 === Reality параметры для клиента ===

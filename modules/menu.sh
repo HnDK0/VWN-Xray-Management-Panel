@@ -151,7 +151,7 @@ installWsTls() {
 
     echo -e "\n${green}---${reset}"
     run_task "Создание конфига Xray"   "writeXrayConfig '$xrayPort' '$wsPath' '$userDomain'"
-    run_task "Создание конфига Nginx"  "writeNginxConfig '$xrayPort' '$userDomain' '$proxyUrl' '$wsPath'"
+    run_task "Создание конфига Nginx"  "writeNginxConfigBase '$xrayPort' '$userDomain' '$proxyUrl' '$wsPath'"
     # Записываем домен как адрес подключения — иначе подписки генерируются по IP
     echo "$userDomain" > /usr/local/etc/xray/connect_host
 

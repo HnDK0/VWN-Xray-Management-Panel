@@ -167,7 +167,6 @@ writeXrayConfig() {
     local domain="$3"
     local new_uuid
     local USERS_FILE="${USERS_FILE:-/usr/local/etc/xray/users.conf}"
-    local BASEDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
     # Если users.conf уже есть — берём UUID первого пользователя
     if [ -f "$USERS_FILE" ] && [ -s "$USERS_FILE" ]; then
@@ -178,7 +177,7 @@ writeXrayConfig() {
     mkdir -p /usr/local/etc/xray /var/log/xray
 
     # Проверка существования шаблона
-    if [ ! -f "$BASEDIR/config/xray_ws.json" ]; then
+    if [ ! -f "$VWN_CONFIG_DIR/xray_ws.json" ]; then
         echo "error: xray_ws.json template not found" >&2
         return 1
     fi
@@ -194,7 +193,7 @@ writeXrayConfig() {
             | .inbounds[0].streamSettings.wsSettings.path = $path
             | .inbounds[0].streamSettings.wsSettings.host = $domain
             | .inbounds[0].settings.clients[0].id = $uuid
-        ' "$BASEDIR/config/xray_ws.json" > "$configPath"
+        ' "$VWN_CONFIG_DIR/xray_ws.json" > "$configPath"
 }
 
 getConfigInfo() {

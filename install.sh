@@ -741,7 +741,7 @@ _auto_install_ws() {
     echo "$OPT_DOMAIN" > /usr/local/etc/xray/connect_host
 
     echo -e "${cyan}[2/6] Nginx config...${reset}"
-    writeNginxConfig "$OPT_PORT" "$OPT_DOMAIN" "$OPT_STUB" "$wsPath"
+    writeNginxConfigBase "$OPT_PORT" "$OPT_DOMAIN" "$OPT_STUB" "$wsPath"
     systemctl enable nginx 2>/dev/null || true
 
     if ! $OPT_NO_WARP; then
