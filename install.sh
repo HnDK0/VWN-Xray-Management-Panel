@@ -66,17 +66,27 @@ if [ "$FREE_SPACE" -lt 1536 ]; then
     exit 1
 fi
 
-# Атомарная блокировка параллельного запуска через flock
-exec 9>"$LOCK_FILE"
-if ! flock -n 9; then
-    if kill -0 "$(cat "$LOCK_FILE")" 2>/dev/null; then
+# Защита от параллельного запуска (работает на ВСЕХ дистрибутивах)
+if [ -f "$LOCK_FILE" ]; then
+    PID=$(cat "$LOCK_FILE" 2>/dev/null)
+    if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
         echo "ОШИБКА: Другой экземпляр скрипта уже запущен"
         echo "Если это не так — удалите файл: $LOCK_FILE"
         exit 1
+    else
+        # Старый процесс мёртв, удаляем зависшую блокировку
+        rm -f "$LOCK_FILE"
     fi
-    # Старый процесс мёртв — забираем блокировку
-    flock 9
 fi
+
+# Защита от зависших блокировок старше 5 минут
+if [ -f "$LOCK_FILE" ]; then
+    if test "$(find "$LOCK_FILE" -mmin +5)"; then
+        echo "info: удалена зависшая блокировка старше 5 минут"
+        rm -f "$LOCK_FILE"
+    fi
+fi
+
 echo $$ > "$LOCK_FILE"
 
 # Общий таймаут на всю установку 15 минут
