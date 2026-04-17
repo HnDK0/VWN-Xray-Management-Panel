@@ -98,6 +98,35 @@ set -eo pipefail
 
 VWN_LIB="/usr/local/lib/vwn"
 VWN_BIN="/usr/local/bin/vwn"
+
+# Загружаем модули ядра в правильном порядке зависимостей
+for module in \
+    modules/core.sh \
+    modules/lang.sh \
+    modules/logs.sh \
+    modules/diag.sh \
+    modules/nginx.sh \
+    modules/xray.sh \
+    modules/warp.sh \
+    modules/reality.sh \
+    modules/vision.sh \
+    modules/xhttp.sh \
+    modules/security.sh \
+    modules/privacy.sh \
+    modules/adblock.sh \
+    modules/users.sh \
+    modules/psiphon.sh \
+    modules/tor.sh \
+    modules/relay.sh \
+    modules/backup.sh \
+    modules/menu.sh
+do
+    if [ -f "$module" ]; then
+        source "$module"
+    else
+        echo "⚠️  Внимание: модуль $module не найден"
+    fi
+done
 GITHUB_RAW="https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main"
 
 # Цвета (с fallback когда tput нет)
