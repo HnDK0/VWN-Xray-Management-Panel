@@ -111,7 +111,7 @@ yellow=$(_c setaf 3)$(_c bold)
 cyan=$(_c setaf 6)$(_c bold)
 reset=$(_c sgr0)
 
-MODULES="lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision menu"
+MODULES="lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision xhttp menu"
 VWN_CONFIG="/usr/local/lib/vwn/config"
 
 # ── Флаги режима ───────────────────────────────────────────────────
@@ -500,7 +500,7 @@ download_modules() {
     echo -e "\n${cyan}Downloading config templates...${reset}"
     mkdir -p "$VWN_CONFIG"
     local cfg_updated=0 cfg_unchanged=0
-    for cfg in nginx_main.conf nginx_base.conf nginx_vision.conf nginx_stream.conf nginx_stream_ws.conf nginx_default.conf sub_map.conf xray_ws.json xray_vision.json xray_reality.json xray-vision.service; do
+    for cfg in nginx_main.conf nginx_base.conf nginx_vision.conf nginx_stream.conf nginx_stream_ws.conf nginx_default.conf sub_map.conf xray_ws.json xray_vision.json xray_reality.json xray_xhttp.json xray-vision.service; do
         local cfg_file="${VWN_CONFIG}/${cfg}"
         local old_hash="" new_hash=""
         [ -f "$cfg_file" ] && old_hash=$(md5sum "$cfg_file" 2>/dev/null | awk '{print $1}')
@@ -544,7 +544,7 @@ case "${1:-}" in
         bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh) --update
         exit 0 ;;
 esac
-for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock menu; do
+for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision xhttp menu; do
     [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh" || { echo "ERROR: module $module not found"; exit 1; }
 done
 VWN_CONF="/usr/local/etc/xray/vwn.conf"
