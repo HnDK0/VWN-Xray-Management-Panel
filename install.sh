@@ -1,216 +1,438 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # =================================================================
-# install.sh — Установщик VWN (Xray VLESS + WARP + CDN + Reality)
+# install.sh — VWN Installer v2.0
+# VLESS + WebSocket + TLS + Nginx + WARP + CDN + Reality
 #
-# Использование:
-#   bash install.sh                        — интерактивная установка
-#   bash install.sh --update               — обновить модули и шаблоны конфигов
-#   bash install.sh --auto [ОПЦИИ]         — полностью автоматическая установка
-#
-# Опции --auto (все необязательны, есть умолчания):
-#   --domain      vpn.example.com          CDN-домен для VLESS+WS+TLS       [обязателен без --skip-ws]
-#   --stub        https://example.com/     URL сайта-заглушки               [умолч: https://httpbin.org/]
-#   --port        16500                    Внутренний порт Xray WS           [умолч: 16500]
-#   --lang        ru|en                    Язык интерфейса                   [умолч: ru]
-#   --reality                              Установить Reality параллельно
-#   --reality-dest microsoft.com:443       SNI-назначение Reality            [умолч: microsoft.com:443]
-#   --reality-port 8443                    Порт Reality                      [умолч: 8443]
-#   --cert-method cf|standalone            Метод SSL: cf=Cloudflare DNS,
-#                                           standalone=HTTP-01               [умолч: standalone]
-#   --cf-email    you@example.com          Email Cloudflare (при --cert-method cf)
-#   --cf-key      YOUR_CF_API_KEY          API Key Cloudflare (при --cert-method cf)
-#   --skip-ws                              Пропустить установку WS (только Reality)
-#   --ssh-port    22222                    Сменить порт SSH                  [умолч: не менять]
-#   --ipv6                                 Включить IPv6                     [умолч: выключен]
-#   --cpu-guard                            Включить CPU Guard                [умолч: выключен]
-#   --bbr                                  Включить BBR TCP
-#   --fail2ban                             Установить Fail2Ban
-#   --jail                                 Включить WebJail (nginx-probe)
-#   --adblock                              Включить Adblock
-#   --privacy                              Включить Privacy Mode
-#   --psiphon                              Установить Psiphon
-#   --psiphon-country DE                   Страна Psiphon (DE, NL, US...)
-#   --psiphon-warp                         Psiphon через WARP
-#   --no-warp                              Не настраивать Cloudflare WARP
-#
-# Примеры:
-#   # Минимально — WS через Cloudflare CDN, SSL через standalone HTTP:
-#   bash install.sh --auto --domain vpn.example.com
-#
-#   # WS + Reality, SSL через Cloudflare DNS, с BBR и Fail2Ban:
-#   bash install.sh --auto \
-#     --domain vpn.example.com \
-#     --stub https://microsoft.com/ \
-#     --cert-method cf --cf-email me@me.com --cf-key AbCd1234 \
-#     --reality --reality-dest www.apple.com:443 --reality-port 8443 \
-#     --bbr --fail2ban
-#
-#   # Только Reality без WS:
-#   bash install.sh --auto --skip-ws \
-#     --reality --reality-dest microsoft.com:443 --reality-port 8443
+# РЕЖИМЫ:
+#   bash install.sh                    — интерактивная установка
+#   bash install.sh --update           — обновить модули и шаблоны
+#   bash install.sh --auto [ОПЦИИ]     — автоматическая установка
+#   bash install.sh --help             — справка
 # =================================================================
 
-set -eo pipefail
+set -euo pipefail
+IFS=$'\n\t'
 
-LOCK_FILE="/tmp/vwn.lock"
+# -----------------------------------------------------------------
+# ПУТИ — единственное место где они объявляются
+# -----------------------------------------------------------------
+readonly VWN_VERSION="2.0.0"
+readonly VWN_LIB="/usr/local/lib/vwn"
+readonly VWN_BIN="/usr/local/bin/vwn"
+readonly VWN_CONF="/usr/local/etc/xray/vwn.conf"
+readonly VWN_CONFIG_DIR="${VWN_LIB}/config"
+readonly LOG_FILE="/var/log/vwn_install.log"
+readonly LOCK_FILE="/tmp/vwn_install.lock"
+readonly GITHUB_RAW="https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main"
+readonly MIN_DISK_MB=1536
+readonly INSTALL_TIMEOUT=900   # 15 минут
 
-# Цвета нужны до любых сообщений об ошибках
-_c() { tput "$@" 2>/dev/null || true; }
-red=$(_c setaf 1)$(_c bold)
-green=$(_c setaf 2)$(_c bold)
-yellow=$(_c setaf 3)$(_c bold)
-cyan=$(_c setaf 6)$(_c bold)
-reset=$(_c sgr0)
+readonly MODULES="lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision xhttp menu"
+readonly CONFIGS="nginx_main.conf nginx_base.conf nginx_vision.conf nginx_stream.conf nginx_stream_ws.conf nginx_default.conf sub_map.conf xray_ws.json xray_vision.json xray_reality.json xray_xhttp.json xray-vision.service"
 
-# Очистка блокировок dpkg в самом начале
-fuser -kk /var/lib/dpkg/lock* 2>/dev/null || true
-sleep 1
-rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/cache/apt/archives/lock
-dpkg --configure -a 2>/dev/null || true
+# Временные файлы — автоудаляются через trap
+declare -a _TMPFILES=()
 
-# Проверка свободного места
-FREE_SPACE=$(df -m / | awk 'NR==2 {print $4}')
-if [ "$FREE_SPACE" -lt 1536 ]; then
-    echo "${red}ОШИБКА: Недостаточно свободного места на диске${reset}"
-    echo "Требуется минимум 1.5ГБ свободно, доступно: ${FREE_SPACE}МБ"
-    exit 1
-fi
+# -----------------------------------------------------------------
+# ЗАГРУЗКА lib/ — ДО любых других действий
+# Все lib/*.sh подключаются здесь и дают функции остальному коду
+# -----------------------------------------------------------------
+_INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Защита от параллельного запуска (работает на ВСЕХ дистрибутивах)
-[ -z "$VWN_INSTALL_PARENT" ] && {
-    if [ -f "$LOCK_FILE" ]; then
-        PID=$(cat "$LOCK_FILE" 2>/dev/null | tr -cd '0-9')
-        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-            echo ""
-            echo "${red}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-            echo "${red}ОШИБКА: Другой экземпляр скрипта уже запущен${reset}"
-            echo "${red}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-            echo ""
-            echo "PID запущенного процесса: ${yellow}$PID${reset}"
-            echo ""
-            echo "Если ты уверен что он завис — убей его командой:"
-            echo "  ${green}kill -9 $PID; rm -f /tmp/vwn.lock${reset}"
-            echo ""
-            exit 1
+_source_lib() {
+    local f="${_INSTALL_DIR}/lib/${1}.sh"
+    if [[ -f "$f" ]]; then
+        # shellcheck disable=SC1090
+        source "$f"
+    else
+        # lib/ может отсутствовать при первом запуске с GitHub
+        # Определяем минимальный fallback встроенно
+        true
+    fi
+}
+
+# Подключаем все части библиотеки
+# Порядок важен: colors → logging → ui → checks → system → network
+_source_lib "colors"    # цветовые переменные и _init_colors()
+_source_lib "logging"   # log_info/ok/warn/error, LOG_FILE
+_source_lib "ui"        # step(), section(), msg(), err(), die(), ok(), info(), warn()
+_source_lib "checks"    # check_root, check_disk_space, check_internet, check_repo_access
+_source_lib "system"    # identifyOS, installPackage, setupSwap, fix_apt_mirrors, applySysctl
+_source_lib "network"   # ufw_setup_base, ufw_allow_port, generateRandomPath, setupFail2Ban
+
+# Если lib/ недоступен (первый запуск) — определяем минимальные встроенные функции
+# которые lib/ должна была предоставить
+_bootstrap_minimal() {
+    # Цвета
+    if ! declare -F _init_colors &>/dev/null; then
+        if [[ -t 1 ]] && command -v tput &>/dev/null; then
+            RED=$(tput setaf 1 2>/dev/null || true)$(tput bold 2>/dev/null || true)
+            GREEN=$(tput setaf 2 2>/dev/null || true)$(tput bold 2>/dev/null || true)
+            YELLOW=$(tput setaf 3 2>/dev/null || true)$(tput bold 2>/dev/null || true)
+            CYAN=$(tput setaf 6 2>/dev/null || true)$(tput bold 2>/dev/null || true)
+            RESET=$(tput sgr0 2>/dev/null || true)
+        else
+            RED='' GREEN='' YELLOW='' CYAN='' RESET=''
         fi
+    else
+        _init_colors
     fi
 
-    # Защита от зависших блокировок старше 1 минуты
-    if [ -f "$LOCK_FILE" ]; then
-        if test "$(find "$LOCK_FILE" -mmin +1)"; then
-            echo "info: удалена зависшая блокировка старше 1 минуты"
+    # Логирование (если lib/logging.sh недоступна)
+    if ! declare -F log_info &>/dev/null; then
+        _log_to_file() { echo "[$(date '+%H:%M:%S')] [$1] $2" >> "$LOG_FILE" 2>/dev/null || true; }
+        log_info()  { _log_to_file "INFO " "$*"; }
+        log_ok()    { _log_to_file "OK   " "$*"; }
+        log_warn()  { _log_to_file "WARN " "$*"; }
+        log_error() { _log_to_file "ERROR" "$*"; }
+    fi
+
+    # UI (если lib/ui.sh недоступна)
+    if ! declare -F step &>/dev/null; then
+        info()  { echo -e "${CYAN}$*${RESET}";   log_info "$*"; }
+        ok()    { echo -e "${GREEN}$*${RESET}";  log_ok   "$*"; }
+        warn()  { echo -e "${YELLOW}$*${RESET}"; log_warn "$*"; }
+        err()   { echo -e "${RED}$*${RESET}" >&2; log_error "$*"; }
+        die()   { err "ОШИБКА: $*"; exit 1; }
+
+        step() {
+            local desc="$1"; shift
+            printf "  %-50s" "$desc"
+            log_info "STEP: $desc"
+            local out; out=$("$@" 2>&1) && {
+                echo -e " ${GREEN}[OK]${RESET}"; log_ok "  → OK"
+            } || {
+                local rc=$?; echo -e " ${RED}[FAIL]${RESET}"; log_error "  → FAIL rc=$rc: $out"; return $rc
+            }
+        }
+
+        soft_step() {
+            local desc="$1"; shift
+            printf "  %-50s" "$desc"
+            "$@" &>/dev/null && echo -e " ${GREEN}[OK]${RESET}" || echo -e " ${YELLOW}[SKIP]${RESET}"
+        }
+
+        section() {
+            echo ""; echo -e "${CYAN}━━━ $* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+            log_info "=== SECTION: $* ==="
+        }
+
+        msg() { echo "${1:-}"; }
+    fi
+
+    # identifyOS (если lib/system.sh недоступна)
+    if ! declare -F identifyOS &>/dev/null; then
+        identifyOS() {
+            if command -v apt &>/dev/null; then
+                PACKAGE_MANAGEMENT_UPDATE="apt-get update -qq"
+                PACKAGE_MANAGEMENT_INSTALL="apt-get install -y -q"
+                OS_FAMILY="debian"
+            elif command -v dnf &>/dev/null; then
+                PACKAGE_MANAGEMENT_UPDATE="dnf check-update -q || true"
+                PACKAGE_MANAGEMENT_INSTALL="dnf install -y"
+                OS_FAMILY="rhel"
+            elif command -v yum &>/dev/null; then
+                PACKAGE_MANAGEMENT_UPDATE="yum check-update -q || true"
+                PACKAGE_MANAGEMENT_INSTALL="yum install -y"
+                OS_FAMILY="rhel"
+            else
+                die "Неизвестный пакетный менеджер (нужен apt/dnf/yum)"
+            fi
+            export PACKAGE_MANAGEMENT_UPDATE PACKAGE_MANAGEMENT_INSTALL OS_FAMILY
+        }
+    fi
+}
+_bootstrap_minimal
+
+# -----------------------------------------------------------------
+# ИНИЦИАЛИЗАЦИЯ ЛОГА
+# -----------------------------------------------------------------
+_log_init() {
+    mkdir -p "$(dirname "$LOG_FILE")"
+    {
+        echo "================================================================"
+        echo "VWN Install Log v${VWN_VERSION} — $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "Args: $*"
+        echo "================================================================"
+    } >> "$LOG_FILE" 2>/dev/null || true
+}
+
+# -----------------------------------------------------------------
+# CLEANUP / TRAP
+# -----------------------------------------------------------------
+_cleanup() {
+    local rc=${1:-$?}
+    stty sane 2>/dev/null || true
+    for f in "${_TMPFILES[@]+"${_TMPFILES[@]}"}"; do rm -f "$f" 2>/dev/null || true; done
+    rm -f "$LOCK_FILE" 2>/dev/null || true
+    find /usr/local/etc/xray /etc/nginx -name "*.tmp" -delete 2>/dev/null || true
+    [[ -x "$VWN_BIN" ]] && "$VWN_BIN" close-80 2>/dev/null || true
+    if (( rc != 0 )); then
+        log_error "Завершено с кодом $rc"
+        echo -e "\n${RED}Ошибка (код $rc). Лог: ${LOG_FILE}${RESET}" >&2
+    fi
+}
+trap '_cleanup $?' EXIT
+trap 'log_error "Прерван INT";  exit 130' INT
+trap 'log_error "Прерван TERM"; exit 143' TERM
+
+mktmp() { local f; f=$(mktemp); _TMPFILES+=("$f"); echo "$f"; }
+
+# -----------------------------------------------------------------
+# ЗАЩИТА ОТ ПАРАЛЛЕЛЬНОГО ЗАПУСКА
+# -----------------------------------------------------------------
+_acquire_lock() {
+    if [[ -f "$LOCK_FILE" ]]; then
+        local pid; pid=$(cat "$LOCK_FILE" 2>/dev/null | tr -cd '0-9')
+        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+            die "Другой экземпляр уже запущен (PID $pid).
+Если завис: kill -9 $pid && rm -f $LOCK_FILE"
+        fi
+        if find "$LOCK_FILE" -mmin +1 2>/dev/null | grep -q .; then
+            log_warn "Удаляем зависшую блокировку"
             rm -f "$LOCK_FILE"
         fi
     fi
-
     echo $$ > "$LOCK_FILE"
+    log_info "Lock: PID=$$"
 }
 
-# Общий таймаут на всю установку 15 минут
-[ -z "$VWN_INSTALL_PARENT" ] && {
-    export VWN_INSTALL_PARENT=1
-    timeout --foreground 900 bash "$0" "$@"
-    exit $?
+# -----------------------------------------------------------------
+# PREFLIGHT CHECKS (используют lib/checks.sh или встроенный fallback)
+# -----------------------------------------------------------------
+
+_check_root() {
+    if declare -F check_root &>/dev/null; then
+        check_root
+    else
+        [[ "$EUID" -eq 0 ]] || die "Запустите от root (sudo bash install.sh)"
+        log_ok "Root: OK"
+    fi
 }
 
-# Глобальная очистка при любом выходе
-cleanup() {
-    # Восстановление терминала при любом выходе — исправляет сломанный вывод после официального скрипта Xray
-    stty sane 2>/dev/null || true
-
-    rm -f "$LOCK_FILE"
-    find /usr/local/etc/xray /etc/nginx -name "*.tmp" -delete 2>/dev/null
-    # Вызываем vwn только если он уже установлен
-    [ -x "$VWN_BIN" ] && "$VWN_BIN" close-80 2>/dev/null || true
-}
-trap cleanup EXIT INT TERM HUP ERR
-
-VWN_LIB="/usr/local/lib/vwn"
-VWN_BIN="/usr/local/bin/vwn"
-
-# Определяем реальный путь скрипта для любого способа запуска
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GITHUB_RAW="https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main"
-
-# Автоматический фикс apt зеркал если основной тупит
-_kill_apt() {
-    # Убиваем все висящие процессы apt/dpkg и снимаем локи
-    kill -9 $(lsof /var/lib/dpkg/lock-frontend 2>/dev/null | awk 'NR>1{print $2}') 2>/dev/null || true
-    kill -9 $(lsof /var/lib/dpkg/lock 2>/dev/null | awk 'NR>1{print $2}') 2>/dev/null || true
-    killall -9 apt apt-get dpkg unattended-upgrades 2>/dev/null || true
-    fuser -kk /var/lib/dpkg/lock* /var/cache/apt/archives/lock /var/lib/apt/lists/lock* 2>/dev/null || true
-    sleep 0.5
-    rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/cache/apt/archives/lock /var/lib/apt/lists/lock*
-    dpkg --configure -a --force-confold --force-confdef 2>/dev/null || true
+_check_os() {
+    identifyOS   # из lib/system.sh или встроенная
+    log_ok "OS: $OS_FAMILY"
 }
 
-fix_apt_mirrors() {
-    command -v apt &>/dev/null || return 0
+_check_disk() {
+    if declare -F check_disk_space &>/dev/null; then
+        check_disk_space "$MIN_DISK_MB"
+    else
+        local free_mb; free_mb=$(df -m / | awk 'NR==2{print $4}')
+        (( free_mb >= MIN_DISK_MB )) || die "Мало места: ${free_mb} МБ (нужно ${MIN_DISK_MB})"
+        log_ok "Диск: ${free_mb} МБ"
+    fi
+}
 
-    # Сначала убиваем всё что могло остаться висеть
-    _kill_apt
+_check_internet() {
+    if declare -F check_internet &>/dev/null; then
+        check_internet
+    else
+        curl -fsS --connect-timeout 5 -o /dev/null "https://1.1.1.1" 2>/dev/null \
+            || die "Нет доступа к интернету"
+        log_ok "Интернет: OK"
+    fi
+}
 
-    # Проверяем работает ли стандартный репозиторий (с таймаутом)
-    if timeout 30 apt-get -o Acquire::ForceIPv4=true -o Acquire::http::Timeout=15 \
-            update -qq 2>/dev/null; then
-        return 0
+_check_repo() {
+    if declare -F check_repo_access &>/dev/null; then
+        check_repo_access
+    else
+        curl -fsS --connect-timeout 10 -o /dev/null "${GITHUB_RAW}/install.sh" 2>/dev/null \
+            || warn "GitHub не отвечает, продолжаем..."
+    fi
+}
+
+run_preflight_checks() {
+    section "Проверка окружения"
+    step "Root-права"           _check_root
+    step "Определение ОС"       _check_os
+    step "Свободное место"      _check_disk
+    step "Интернет"             _check_internet
+    soft_step "GitHub-репозиторий" _check_repo
+}
+
+# -----------------------------------------------------------------
+# БАЗОВЫЕ ЗАВИСИМОСТИ (использует lib/system.sh)
+# -----------------------------------------------------------------
+
+install_base_deps() {
+    section "Установка базовых зависимостей"
+
+    # Чистим apt-локи и выбираем рабочее зеркало
+    if declare -F fix_apt_mirrors &>/dev/null; then
+        fix_apt_mirrors
+    else
+        # Встроенный минимальный вариант
+        fuser -kk /var/lib/dpkg/lock* 2>/dev/null || true
+        rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/cache/apt/archives/lock 2>/dev/null
+        dpkg --configure -a 2>/dev/null || true
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq 2>/dev/null || true
     fi
 
-    local _y _r _rst
-    _y=$(tput setaf 3 2>/dev/null || true)
-    _r=$(tput setaf 1 2>/dev/null || true)
-    _g=$(tput setaf 2 2>/dev/null || true)
-    _rst=$(tput sgr0 2>/dev/null || true)
+    if declare -F install_base_packages &>/dev/null; then
+        # lib/system.sh предоставляет эту функцию
+        install_base_packages
+    else
+        # Встроенный fallback
+        export DEBIAN_FRONTEND=noninteractive
+        step "curl jq bash coreutils cron" bash -c "
+            set +o pipefail
+            apt-get install -y -q \
+                -o Dpkg::Lock::Timeout=60 \
+                -o Dpkg::Options::='--force-confdef' \
+                -o Dpkg::Options::='--force-confold' \
+                curl jq bash coreutils cron 2>/dev/null || true
+            set -o pipefail
+        "
+        soft_step "Активация cron" systemctl enable --now cron
+    fi
+}
 
-    echo -e "${_y}⚠️  Основной репозиторий не отвечает, пробуем резервные зеркала...${_rst}"
+# -----------------------------------------------------------------
+# ЗАГРУЗКА ФАЙЛОВ С GITHUB
+# -----------------------------------------------------------------
 
-    # Бэкап оригинала
-    cp -a /etc/apt/sources.list /etc/apt/sources.list.vwn_backup 2>/dev/null
+_download_file() {
+    local url="$1" dest="$2"
+    local tmp; tmp=$(mktmp)
+    if curl -fsSL --connect-timeout 15 --max-time 30 "$url" -o "$tmp" 2>/dev/null; then
+        mv "$tmp" "$dest"
+        chmod 644 "$dest"
+        return 0
+    fi
+    rm -f "$tmp"; return 1
+}
 
-    local mirrors=(
-        "http://ftp.ru.debian.org/debian/"
-        "http://mirror.rol.ru/debian/"
-        "http://debian.mirohost.net/debian/"
-        "http://debian-mirror.ru/debian/"
-        "http://ftp.debian.org/debian/"
-    )
+_file_hash() { md5sum "$1" 2>/dev/null | awk '{print $1}'; }
 
-    for mirror in "${mirrors[@]}"; do
-        echo -n "  пробуем $mirror... "
+download_modules() {
+    section "Загрузка модулей"
+    mkdir -p "$VWN_LIB"
+    local updated=0 unchanged=0 failed=0
 
-        # Подменяем временно основной и security репозитории
-        sed -e "s|http://.*debian.org/debian/|$mirror|g" \
-            -e "s|http://security.debian.org/|${mirror}|g" \
-            /etc/apt/sources.list > /etc/apt/sources.list.tmp
-        mv /etc/apt/sources.list.tmp /etc/apt/sources.list
-
-        _kill_apt
-        # Каждую попытку ограничиваем жёстким таймаутом
-        if timeout 30 apt-get \
-                -o Acquire::ForceIPv4=true \
-                -o Acquire::http::Timeout=15 \
-                update -qq 2>/dev/null; then
-            echo -e "${_g}OK${_rst}"
-            return 0
+    for module in $MODULES; do
+        local dest="${VWN_LIB}/${module}.sh"
+        local old_hash=""; [[ -f "$dest" ]] && old_hash=$(_file_hash "$dest")
+        printf "  %-20s" "${module}.sh"
+        if _download_file "${GITHUB_RAW}/modules/${module}.sh" "$dest"; then
+            local new_hash; new_hash=$(_file_hash "$dest")
+            if [[ "$old_hash" == "$new_hash" ]]; then
+                echo -e " ${YELLOW}[SAME]${RESET}";    (( unchanged++ )) || true
+            else
+                local ts; ts=$(stat -c '%y' "$dest" 2>/dev/null | cut -d. -f1)
+                echo -e " ${GREEN}[UPDATED]${RESET} ${ts}"; (( updated++ )) || true; log_ok "Module updated: $module"
+            fi
         else
-            echo -e "${_r}FAIL${_rst}"
+            echo -e " ${RED}[FAIL]${RESET}"; log_error "Module FAIL: $module"; (( failed++ )) || true
         fi
     done
 
-    # Если все упали — возвращаем как было
-    mv /etc/apt/sources.list.vwn_backup /etc/apt/sources.list 2>/dev/null
-    _kill_apt
-    echo -e "${_r}Все зеркала недоступны, оставляем стандартный${_rst}"
+    echo -e "\n  Обновлено: ${GREEN}${updated}${RESET}  │  Без изменений: ${YELLOW}${unchanged}${RESET}  │  Ошибок: ${RED}${failed}${RESET}"
+    (( failed > 0 )) && warn "Некоторые модули не загружены"
 }
 
-MODULES="lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision xhttp menu"
-VWN_CONFIG="/usr/local/lib/vwn/config"
+download_configs() {
+    section "Загрузка шаблонов конфигурации"
+    mkdir -p "$VWN_CONFIG_DIR"
+    local updated=0 unchanged=0
 
-# ── Флаги режима ───────────────────────────────────────────────────
+    for cfg in $CONFIGS; do
+        local dest="${VWN_CONFIG_DIR}/${cfg}"
+        local old_hash=""; [[ -f "$dest" ]] && old_hash=$(_file_hash "$dest")
+        printf "  %-42s" "$cfg"
+        if _download_file "${GITHUB_RAW}/config/${cfg}" "$dest"; then
+            local new_hash; new_hash=$(_file_hash "$dest")
+            if [[ "$old_hash" == "$new_hash" ]]; then
+                echo -e " ${YELLOW}[SAME]${RESET}";    (( unchanged++ )) || true
+            else
+                echo -e " ${GREEN}[UPDATED]${RESET}";  (( updated++ )) || true
+            fi
+        else
+            echo -e " ${RED}[FAIL]${RESET}"; log_warn "Config FAIL: $cfg"
+        fi
+    done
+    echo -e "  Конфиги: ${GREEN}${updated}${RESET} обновлено, ${YELLOW}${unchanged}${RESET} без изменений"
+}
+
+install_vwn_binary() {
+    section "Установка бинарного файла vwn"
+    if _download_file "${GITHUB_RAW}/vwn" "${VWN_BIN}.tmp"; then
+        mv "${VWN_BIN}.tmp" "$VWN_BIN"; chmod +x "$VWN_BIN"
+        log_ok "vwn binary: GitHub"
+    else
+        log_warn "GitHub недоступен — генерируем fallback vwn"
+        _write_fallback_vwn
+    fi
+    ok "vwn → ${VWN_BIN}"
+}
+
+_write_fallback_vwn() {
+    cat > "$VWN_BIN" << 'VWNEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+VWN_LIB="/usr/local/lib/vwn"
+case "${1:-}" in
+    "open-80")
+        ufw status 2>/dev/null | grep -q inactive && exit 0
+        ufw allow from any to any port 80 proto tcp comment 'ACME temp' &>/dev/null; exit 0 ;;
+    "close-80")
+        ufw status 2>/dev/null | grep -q inactive && exit 0
+        ufw status numbered 2>/dev/null | grep 'ACME temp' \
+            | awk -F'[][]' '{print $2}' | sort -rn \
+            | while read -r n; do echo "y" | ufw delete "$n" &>/dev/null; done; exit 0 ;;
+    "update")
+        bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh) --update
+        exit 0 ;;
+esac
+for mod in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision xhttp menu; do
+    f="$VWN_LIB/${mod}.sh"
+    [[ -f "$f" ]] && source "$f" || { echo "ERROR: module $mod not found"; exit 1; }
+done
+VWN_CONF="/usr/local/etc/xray/vwn.conf"
+if [[ ! -f "$VWN_CONF" ]] || ! grep -q "VWN_LANG=" "$VWN_CONF" 2>/dev/null; then
+    selectLang; _initLang
+fi
+isRoot
+menu "$@"
+VWNEOF
+    chmod +x "$VWN_BIN"
+    log_info "Fallback vwn written"
+}
+
+# -----------------------------------------------------------------
+# ЗАГРУЗКА МОДУЛЕЙ В ТЕКУЩИЙ ПРОЦЕСС
+# -----------------------------------------------------------------
+
+load_modules() {
+    log_info "Loading modules into current process..."
+    for module in $MODULES; do
+        local f="${VWN_LIB}/${module}.sh"
+        if [[ -f "$f" ]]; then
+            # shellcheck disable=SC1090
+            source "$f"
+        else
+            die "Модуль не найден: $f\nПереустановите: bash install.sh"
+        fi
+    done
+    log_ok "All modules loaded"
+}
+
+show_version() {
+    grep 'VWN_VERSION=' "${VWN_LIB}/core.sh" 2>/dev/null \
+        | head -1 | grep -oP '"[^"]+"' | tr -d '"' \
+        || echo "unknown"
+}
+
+# -----------------------------------------------------------------
+# ПАРАМЕТРЫ КОМАНДНОЙ СТРОКИ
+# -----------------------------------------------------------------
+
 UPDATE_ONLY=false
 AUTO_MODE=false
 
-# ── Параметры --auto (умолчания) ──────────────────────────────────
 OPT_DOMAIN=""
 OPT_STUB="https://httpbin.org/"
 OPT_PORT=16500
@@ -227,8 +449,6 @@ OPT_FAIL2BAN=false
 OPT_NO_WARP=false
 OPT_VISION=false
 OPT_STREAM=false
-
-# ── Новые опциональные компоненты ──
 OPT_SSH_PORT=""
 OPT_JAIL=false
 OPT_IPV6=false
@@ -239,73 +459,39 @@ OPT_PSIPHON=false
 OPT_PSIPHON_COUNTRY=""
 OPT_PSIPHON_WARP=false
 
-# =================================================================
-# Fallback msg() — работает ДО загрузки lang.sh
-# =================================================================
-msg() {
-    case "$1" in
-        run_as_root)     echo "Run as root! / Запустите от root!" ;;
-        os_unsupported)  echo "Only apt/dnf/yum systems supported." ;;
-        install_deps)    echo "Installing dependencies..." ;;
-        install_modules) echo "Downloading modules..." ;;
-        install_vwn)     echo "Installing vwn loader..." ;;
-        loading)         echo "Loading" ;;
-        error)           echo "ERROR" ;;
-        module_fail)     echo "Failed to download" ;;
-        install_title)   echo "VWN — Xray VLESS + WARP + CDN + Reality" ;;
-        update_title)    echo "VWN — Updating modules" ;;
-        update_modules)  echo "Updating modules (configs untouched)..." ;;
-        update_done)     echo "Update complete! Version" ;;
-        install_done)    echo "Modules installed in" ;;
-        install_version) echo "Version" ;;
-        launching_menu)  echo "Launching setup menu..." ;;
-        installed_in)    echo "installed in" ;;
-        run_vwn)         echo "Run: vwn" ;;
-        auto_start)      echo "Starting unattended installation..." ;;
-        auto_domain_req) echo "ERROR: --domain is required (unless --skip-ws)" ;;
-        auto_cf_req)     echo "ERROR: --cf-email and --cf-key are required with --cert-method cf" ;;
-        auto_done)       echo "Unattended installation complete!" ;;
-        auto_params)     echo "Installation parameters" ;;
-        *)               echo "$1" ;;
-    esac
-}
-
-# =================================================================
-# Парсинг аргументов
-# =================================================================
-_parse_args() {
-    while [ $# -gt 0 ]; do
+parse_args() {
+    while [[ $# -gt 0 ]]; do
         case "$1" in
-            --update)         UPDATE_ONLY=true ;;
-            --auto)           AUTO_MODE=true ;;
-            --domain)         OPT_DOMAIN="$2";        shift ;;
-            --stub)           OPT_STUB="$2";           shift ;;
-            --port)           OPT_PORT="$2";           shift ;;
-            --lang)           OPT_LANG="$2";           shift ;;
-            --reality)        OPT_REALITY=true ;;
-            --reality-dest)   OPT_REALITY_DEST="$2";  shift ;;
-            --reality-port)   OPT_REALITY_PORT="$2";  shift ;;
-            --cert-method)    OPT_CERT_METHOD="$2";   shift ;;
-            --cf-email)       OPT_CF_EMAIL="$2";       shift ;;
-            --cf-key)         OPT_CF_KEY="$2";         shift ;;
-            --skip-ws)        OPT_SKIP_WS=true ;;
-            --bbr)            OPT_BBR=true ;;
-            --fail2ban)       OPT_FAIL2BAN=true ;;
-            --no-warp)        OPT_NO_WARP=true ;;
-            --stream)         OPT_STREAM=true ;;
-            --vision)         OPT_VISION=true ;;
-            --ssh-port)       OPT_SSH_PORT="$2";            shift ;;
-            --jail)           OPT_JAIL=true ;;
-            --ipv6)           OPT_IPV6=true ;;
-            --no-ipv6)        OPT_IPV6=false ;;
-            --cpu-guard)      OPT_CPU_GUARD=true ;;
-            --adblock)        OPT_ADBLOCK=true ;;
-            --privacy)        OPT_PRIVACY=true ;;
-            --psiphon)        OPT_PSIPHON=true ;;
-            --psiphon-country) OPT_PSIPHON_COUNTRY="$2";    shift ;;
-            --psiphon-warp)   OPT_PSIPHON_WARP=true ;;
-            --help|-h)        _show_help; exit 0 ;;
-            *) echo "${yellow}Unknown argument: $1${reset}" ;;
+            --update)          UPDATE_ONLY=true ;;
+            --auto)            AUTO_MODE=true ;;
+            --domain)          OPT_DOMAIN="${2:?'--domain требует значение'}";          shift ;;
+            --stub)            OPT_STUB="${2:?'--stub требует значение'}";              shift ;;
+            --port)            OPT_PORT="${2:?'--port требует значение'}";              shift ;;
+            --lang)            OPT_LANG="${2:?'--lang требует значение'}";              shift ;;
+            --reality)         OPT_REALITY=true ;;
+            --reality-dest)    OPT_REALITY_DEST="${2:?'--reality-dest требует значение'}"; shift ;;
+            --reality-port)    OPT_REALITY_PORT="${2:?'--reality-port требует значение'}"; shift ;;
+            --cert-method)     OPT_CERT_METHOD="${2:?'--cert-method требует значение'}"; shift ;;
+            --cf-email)        OPT_CF_EMAIL="${2:?'--cf-email требует значение'}";     shift ;;
+            --cf-key)          OPT_CF_KEY="${2:?'--cf-key требует значение'}";         shift ;;
+            --skip-ws)         OPT_SKIP_WS=true ;;
+            --bbr)             OPT_BBR=true ;;
+            --fail2ban)        OPT_FAIL2BAN=true ;;
+            --no-warp)         OPT_NO_WARP=true ;;
+            --stream)          OPT_STREAM=true ;;
+            --vision)          OPT_VISION=true ;;
+            --ssh-port)        OPT_SSH_PORT="${2:?'--ssh-port требует значение'}";     shift ;;
+            --jail)            OPT_JAIL=true ;;
+            --ipv6)            OPT_IPV6=true ;;
+            --no-ipv6)         OPT_IPV6=false ;;
+            --cpu-guard)       OPT_CPU_GUARD=true ;;
+            --adblock)         OPT_ADBLOCK=true ;;
+            --privacy)         OPT_PRIVACY=true ;;
+            --psiphon)         OPT_PSIPHON=true ;;
+            --psiphon-country) OPT_PSIPHON_COUNTRY="${2:?'--psiphon-country требует значение'}"; shift ;;
+            --psiphon-warp)    OPT_PSIPHON_WARP=true ;;
+            --help|-h)         _show_help; exit 0 ;;
+            *)                 warn "Неизвестный аргумент: $1" ;;
         esac
         shift
     done
@@ -314,956 +500,561 @@ _parse_args() {
 _show_help() {
     cat << 'HELPEOF'
 
-VWN — Installer  (Xray VLESS + WARP + CDN + Reality)
-=====================================================
+VWN Installer v2.0  (VLESS + WARP + CDN + Reality)
+===================================================
 
-MODES:
-  bash install.sh                        Interactive install (default)
-  bash install.sh --update               Update modules and config templates
-  bash install.sh --auto [OPTIONS]       Fully unattended install
+РЕЖИМЫ:
+  bash install.sh                         Интерактивная установка
+  bash install.sh --update                Обновить модули и шаблоны
+  bash install.sh --auto [ОПЦИИ]          Автоматическая установка
+  bash install.sh --help                  Эта справка
 
-OPTIONS for --auto:
-  --domain      DOMAIN       CDN domain for VLESS+WS+TLS  [required unless --skip-ws]
-  --stub        URL          Fake-site proxy URL           [default: https://httpbin.org/]
-  --port        PORT         Internal Xray WS port         [default: 16500]
-  --lang        ru|en        UI language                   [default: ru]
-  --reality                  Also install Reality
-  --reality-dest HOST:PORT   Reality SNI target            [default: microsoft.com:443]
-  --reality-port PORT        Reality listen port           [default: 8443]
-  --cert-method cf|standalone SSL method                  [default: standalone]
-  --cf-email    EMAIL        Cloudflare email (for cf method)
-  --cf-key      KEY          Cloudflare API key (for cf method)
-  --skip-ws                  Skip WS install (Reality only)
-  --ssh-port    PORT         Change SSH port (1-65535)
-  --ipv6                     Enable IPv6 (default: disabled)
-  --cpu-guard                Enable CPU Guard (priority for xray/nginx)
-  --bbr                      Enable BBR TCP congestion control
-  --fail2ban                 Install Fail2Ban
-  --jail                     Enable WebJail (nginx-probe, requires --fail2ban)
-  --adblock                  Enable Adblock (geosite:category-ads-all)
-  --privacy                  Enable Privacy Mode (no traffic logs)
-  --psiphon                  Install Psiphon proxy
-  --psiphon-country CODE     Psiphon exit country (DE, NL, US, GB, FR, etc.)
-  --psiphon-warp             Route Psiphon through WARP
-  --no-warp                  Skip Cloudflare WARP setup
-  --stream                   Activate Stream SNI (mutually exclusive with --vision)
-  --vision                   Install Vision (VLESS+TLS+Vision, direct on 443)
+ОПЦИИ (--auto):
+  --domain      ДОМЕН        CDN-домен VLESS+WS+TLS     [обязателен]
+  --stub        URL          URL сайта-заглушки          [httpbin.org]
+  --port        ПОРТ         Внутренний порт Xray        [16500]
+  --lang        ru|en        Язык                        [ru]
+  --reality                  Установить Reality
+  --reality-dest ХОСТ:ПОРТ   SNI для Reality             [microsoft.com:443]
+  --reality-port ПОРТ        Порт Reality                [8443]
+  --cert-method cf|standalone Метод SSL                  [standalone]
+  --cf-email    EMAIL        Email Cloudflare
+  --cf-key      КЛЮЧ         API Key Cloudflare
+  --skip-ws                  Пропустить WS (только Reality)
+  --ssh-port    ПОРТ         Сменить порт SSH
+  --ipv6                     Включить IPv6
+  --cpu-guard                CPU Guard
+  --bbr                      TCP BBR
+  --fail2ban                 Fail2Ban
+  --jail                     WebJail (требует --fail2ban)
+  --adblock                  Блокировка рекламы
+  --privacy                  Режим приватности
+  --psiphon                  Psiphon
+  --psiphon-country КОД      Страна Psiphon (DE, NL, US...)
+  --psiphon-warp             Psiphon через WARP
+  --no-warp                  Без WARP
+  --stream                   Stream SNI
+  --vision                   Vision (прямо на 443)
 
-EXAMPLES:
-  # Simple: WS+CDN, standalone SSL
+ПРИМЕРЫ:
   bash install.sh --auto --domain vpn.example.com
 
-  # Full: WS + Reality, Cloudflare DNS SSL, BBR, Fail2Ban, Jail, Adblock
   bash install.sh --auto \
     --domain vpn.example.com \
-    --stub https://microsoft.com/ \
     --cert-method cf --cf-email me@me.com --cf-key AbCd1234 \
-    --reality --reality-dest www.apple.com:443 --reality-port 8443 \
-    --bbr --fail2ban --jail --adblock
+    --reality --bbr --fail2ban
 
-  # Reality only (no WS, no Nginx/SSL needed)
-  bash install.sh --auto --skip-ws \
-    --reality --reality-dest microsoft.com:443 --reality-port 8443
-
-  # Full stack: WS + Reality + Psiphon + all security features
-  bash install.sh --auto \
-    --domain vpn.example.com \
-    --ssh-port 22222 \
-    --cpu-guard --ipv6 --fail2ban --jail --adblock --privacy \
-    --psiphon --psiphon-country DE \
-    --reality --bbr
-
+ЛОГИ: /var/log/vwn_install.log
 HELPEOF
 }
 
-# =================================================================
-# Валидация параметров --auto
-# =================================================================
-_validate_auto_params() {
-    if ! $OPT_SKIP_WS && [ -z "$OPT_DOMAIN" ]; then
-        echo "${red}$(msg auto_domain_req)${reset}"
-        echo "Use --domain yourdomain.com or add --skip-ws for Reality-only mode"
-        exit 1
-    fi
+# -----------------------------------------------------------------
+# ВАЛИДАЦИЯ ПАРАМЕТРОВ --auto
+# -----------------------------------------------------------------
 
-    if [ "$OPT_CERT_METHOD" = "cf" ]; then
-        if [ -z "$OPT_CF_EMAIL" ] || [ -z "$OPT_CF_KEY" ]; then
-            echo "${red}$(msg auto_cf_req)${reset}"
-            exit 1
-        fi
-    fi
-
-    if $OPT_VISION; then
-        if $OPT_SKIP_WS; then
-            echo "${red}ERROR: --vision requires WS+TLS (cannot use --skip-ws with --vision)${reset}"
-            exit 1
-        fi
-        # Vision и Stream SNI несовместимы
-        if $OPT_STREAM; then
-            echo "${red}ERROR: --vision and --stream are mutually exclusive${reset}"
-            exit 1
-        fi
-    fi
-
-    if ! [[ "$OPT_PORT" =~ ^[0-9]+$ ]] || [ "$OPT_PORT" -lt 1024 ] || [ "$OPT_PORT" -gt 65535 ]; then
-        echo "${red}Invalid --port: $OPT_PORT (must be 1024-65535)${reset}"
-        exit 1
-    fi
-
-    if ! [[ "$OPT_REALITY_PORT" =~ ^[0-9]+$ ]] || [ "$OPT_REALITY_PORT" -lt 443 ] || [ "$OPT_REALITY_PORT" -gt 65535 ]; then
-        echo "${red}Invalid --reality-port: $OPT_REALITY_PORT (must be 443-65535)${reset}"
-        exit 1
-    fi
-
-    if [ "$OPT_CERT_METHOD" != "cf" ] && [ "$OPT_CERT_METHOD" != "standalone" ]; then
-        echo "${red}Invalid --cert-method: $OPT_CERT_METHOD (must be cf or standalone)${reset}"
-        exit 1
-    fi
-
-    # Валидация SSH порта
-    if [ -n "$OPT_SSH_PORT" ]; then
-        if ! [[ "$OPT_SSH_PORT" =~ ^[0-9]+$ ]] || [ "$OPT_SSH_PORT" -lt 1 ] || [ "$OPT_SSH_PORT" -gt 65535 ]; then
-            echo "${red}Invalid --ssh-port: $OPT_SSH_PORT (must be 1-65535)${reset}"
-            exit 1
-        fi
-    fi
-
-    # Валидация страны Psiphon (2-буквенный код)
-    if $OPT_PSIPHON && [ -n "$OPT_PSIPHON_COUNTRY" ]; then
-        if ! [[ "$OPT_PSIPHON_COUNTRY" =~ ^[A-Z]{2}$ ]] && ! [[ "$OPT_PSIPHON_COUNTRY" =~ ^[a-z]{2}$ ]]; then
-            echo "${red}Invalid --psiphon-country: $OPT_PSIPHON_COUNTRY (must be 2-letter country code, e.g. DE, NL, US)${reset}"
-            exit 1
-        fi
-    fi
-
-    # Psiphon WARP требует WARP
-    if $OPT_PSIPHON_WARP && $OPT_NO_WARP; then
-        echo "${red}ERROR: --psiphon-warp requires WARP (cannot use --no-warp)${reset}"
-        exit 1
-    fi
+_validate_port() {
+    local val="$1" min="$2" max="$3" name="$4"
+    [[ "$val" =~ ^[0-9]+$ ]] && (( val >= min && val <= max )) \
+        || die "${name}: '${val}' не в диапазоне ${min}-${max}"
 }
 
-_print_auto_params() {
-    echo -e "${cyan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-    echo -e "   $(msg auto_params):"
-    echo -e "${cyan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-    # Строка Mode — перечисляем все активные компоненты
-    local _mode=""
-    $OPT_SKIP_WS  && _mode="Reality only (WS skipped)" || _mode="WS+TLS+CDN"
-    $OPT_REALITY  && _mode="${_mode} + Reality"
-    $OPT_VISION   && _mode="${_mode} + Vision"
-    $OPT_STREAM && ! $OPT_VISION && _mode="${_mode} + Stream SNI"
-    $OPT_SKIP_WS  && echo -e "  Mode        : ${yellow}${_mode}${reset}"                   || echo -e "  Mode        : ${green}${_mode}${reset}"
-    [ -n "$OPT_DOMAIN" ]        && echo -e "  Domain      : ${green}$OPT_DOMAIN${reset}"
-    $OPT_SKIP_WS                || echo -e "  Stub URL    : $OPT_STUB"
-    $OPT_SKIP_WS                || echo -e "  Xray port   : $OPT_PORT"
-    $OPT_SKIP_WS                || echo -e "  SSL method  : $OPT_CERT_METHOD"
-    $OPT_REALITY                && echo -e "  Reality     : ${green}$OPT_REALITY_DEST  port=$OPT_REALITY_PORT${reset}"
-    $OPT_VISION                 && echo -e "  Vision      : ${green}$OPT_DOMAIN${reset}"
-    $OPT_STREAM && ! $OPT_VISION && echo -e "  Stream SNI  : ${green}enabled${reset}"
-    [ -n "$OPT_SSH_PORT" ]      && echo -e "  SSH port    : ${green}$OPT_SSH_PORT${reset}"
-    $OPT_IPV6                   && echo -e "  IPv6        : ${green}enabled${reset}"
-    $OPT_CPU_GUARD              && echo -e "  CPU Guard   : ${green}enabled${reset}"
-    $OPT_FAIL2BAN               && echo -e "  Fail2Ban    : ${green}enabled${reset}"
-    $OPT_JAIL                   && echo -e "  Jail        : ${green}enabled${reset}"
-    $OPT_ADBLOCK                && echo -e "  Adblock     : ${green}enabled${reset}"
-    $OPT_PRIVACY                && echo -e "  Privacy     : ${green}enabled${reset}"
-    $OPT_PSIPHON                && echo -e "  Psiphon     : ${green}enabled${reset}${OPT_PSIPHON_COUNTRY:+ (country=$OPT_PSIPHON_COUNTRY)}${OPT_PSIPHON_WARP:+ [WARP]}"
-    $OPT_BBR                    && echo -e "  BBR         : ${green}enabled${reset}"
-    $OPT_NO_WARP                && echo -e "  WARP        : ${yellow}skipped${reset}"
-    echo -e "  Language    : $OPT_LANG"
-    echo -e "${cyan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-    echo ""
-}
+validate_auto_params() {
+    ! $OPT_SKIP_WS && [[ -z "$OPT_DOMAIN" ]] \
+        && die "--domain обязателен (или --skip-ws для режима только-Reality)"
 
-# =================================================================
-# Общие функции
-# =================================================================
-check_root() {
-    if [ "$EUID" -ne 0 ]; then
-        echo "${red}$(msg run_as_root)${reset}"
-        exit 1
-    fi
-}
-
-check_os() {
-    if ! command -v apt &>/dev/null && ! command -v dnf &>/dev/null && ! command -v yum &>/dev/null; then
-        echo "${red}$(msg os_unsupported)${reset}"
-        exit 1
-    fi
-}
-
-_installJq() {
-    local JQ_VERSION="1.7.1"
-    local JQ_URL="https://github.com/jqlang/jq/releases/download/jq-${JQ_VERSION}/jq-linux-amd64"
-    local JQ_BIN="/usr/local/bin/jq"
-
-    # Проверяем текущую версию
-    local current_version
-    current_version=$(jq --version 2>/dev/null | grep -oP '[\d.]+' | head -1)
-    if [ "$current_version" = "$JQ_VERSION" ]; then
-        echo "info: jq ${JQ_VERSION} already installed, skipping."
-        return 0
-    fi
-
-    echo -n "  installing jq ${JQ_VERSION}... "
-    if curl -fsSL --connect-timeout 15 "$JQ_URL" -o "$JQ_BIN" 2>/dev/null; then
-        chmod +x "$JQ_BIN"
-        echo "${green}OK${reset}"
-    else
-        echo "${red}FAIL (will use system jq)${reset}"
-    fi
-}
-
-# Fallback prepareApt — работает до загрузки модулей
-prepareApt() {
-    fuser -kk /var/lib/dpkg/lock* 2>/dev/null || true
-    sleep 0.5
-    rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/cache/apt/archives/lock 2>/dev/null
-    dpkg --configure -a 2>/dev/null || true
-}
-
-install_deps() {
-    echo -e "${cyan}$(msg install_deps)${reset}"
-
-    _kill_apt
-    fix_apt_mirrors
-
-    export DEBIAN_FRONTEND=noninteractive
-    if command -v apt &>/dev/null; then
-        # apt update уже сделан внутри fix_apt_mirrors — повторно не нужен
-        # Отключаем pipefail чтобы yes | apt не роняло скрипт при любой ошибке apt
-        set +o pipefail
-        yes '' | apt-get install -y -q \
-            -o Dpkg::Lock::Timeout=60 \
-            -o Dpkg::Options::="--force-confdef" \
-            -o Dpkg::Options::="--force-confold" \
-            curl jq bash coreutils cron 2>/dev/null || true
-        set -o pipefail
-        systemctl enable --now cron 2>/dev/null || true
-    elif command -v dnf &>/dev/null; then
-        yes '' | dnf install -y curl jq bash cronie 2>/dev/null || true
-        systemctl enable --now crond 2>/dev/null || true
-    elif command -v yum &>/dev/null; then
-        yes '' | yum install -y curl jq bash cronie 2>/dev/null || true
-        systemctl enable --now crond 2>/dev/null || true
-    fi
-    # Устанавливаем фиксированную версию jq поверх системной
-    _installJq
-}
-
-download_modules() {
-    echo -e "${cyan}$(msg install_modules)${reset}"
-    mkdir -p "$VWN_LIB"
-
-    local updated=0 unchanged=0 failed=0
-
-    for module in $MODULES; do
-        local mod_file="${VWN_LIB}/${module}.sh"
-        local old_hash="" new_hash=""
-
-        # Сохраняем хеш старого файла (если есть)
-        [ -f "$mod_file" ] && old_hash=$(md5sum "$mod_file" 2>/dev/null | awk '{print $1}')
-
-    echo -n "  ${module}.sh... "
-    if curl -fsSL --connect-timeout 15 \
-        "${GITHUB_RAW}/modules/${module}.sh" \
-        -o "${mod_file}.tmp" 2>/dev/null; then
-        mv "${mod_file}.tmp" "${mod_file}"
-
-            new_hash=$(md5sum "$mod_file" 2>/dev/null | awk '{print $1}')
-            chmod 644 "$mod_file"
-
-            if [ "$old_hash" = "$new_hash" ]; then
-                echo -e "${yellow}SAME${reset}"
-                unchanged=$((unchanged + 1))
-            else
-                local mod_date
-                mod_date=$(stat -c '%y' "$mod_file" 2>/dev/null | cut -d. -f1)
-                echo -e "${green}UPDATED${reset} (${mod_date})"
-                updated=$((updated + 1))
-            fi
-        else
-            echo -e "${red}FAIL${reset}"
-            echo "    $(msg module_fail) ${module}.sh"
-            failed=$((failed + 1))
-        fi
-    done
-
-    # Итог
-    echo ""
-    echo -e "${cyan}────────────────────────────────────────────────────────${reset}"
-    echo -e "  Updated: ${green}${updated}${reset}  |  Same: ${yellow}${unchanged}${reset}  |  Failed: ${red}${failed}${reset}"
-    echo -e "${cyan}────────────────────────────────────────────────────────${reset}"
-
-    # Копируем шаблоны конфигов
-    echo -e "\n${cyan}Downloading config templates...${reset}"
-    mkdir -p "$VWN_CONFIG"
-    local cfg_updated=0 cfg_unchanged=0
-    for cfg in nginx_main.conf nginx_base.conf nginx_vision.conf nginx_stream.conf nginx_stream_ws.conf nginx_default.conf sub_map.conf xray_ws.json xray_vision.json xray_reality.json xray_xhttp.json xray-vision.service; do
-        local cfg_file="${VWN_CONFIG}/${cfg}"
-        local old_hash="" new_hash=""
-        [ -f "$cfg_file" ] && old_hash=$(md5sum "$cfg_file" 2>/dev/null | awk '{print $1}')
-        echo -n "  ${cfg}... "
-        if curl -fsSL --connect-timeout 15 \
-            "${GITHUB_RAW}/config/${cfg}" \
-            -o "${cfg_file}.tmp" 2>/dev/null; then
-            mv "${cfg_file}.tmp" "${cfg_file}"
-            new_hash=$(md5sum "$cfg_file" 2>/dev/null | awk '{print $1}')
-            chmod 644 "$cfg_file"
-            if [ "$old_hash" = "$new_hash" ]; then
-                echo -e "${yellow}SAME${reset}"; cfg_unchanged=$((cfg_unchanged + 1))
-            else
-                echo -e "${green}UPDATED${reset}"; cfg_updated=$((cfg_updated + 1))
-            fi
-        else
-            echo -e "${red}FAIL${reset}"
-        fi
-    done
-    echo -e "  Configs: ${green}${cfg_updated}${reset} updated, ${yellow}${cfg_unchanged}${reset} same"
-}
-
-install_vwn_binary() {
-    echo -e "${cyan}$(msg install_vwn)${reset}"
-    curl -fsSL --connect-timeout 15 \
-        "${GITHUB_RAW}/vwn" \
-        -o "${VWN_BIN}.tmp" 2>/dev/null && mv "${VWN_BIN}.tmp" "${VWN_BIN}" || {
-        # Fallback: создаём загрузчик локально
-        cat > "$VWN_BIN" << 'VWNEOF'
-#!/bin/bash
-VWN_LIB="/usr/local/lib/vwn"
-case "${1:-}" in
-    "open-80")
-        ufw status | grep -q inactive && exit 0
-        ufw allow from any to any port 80 proto tcp comment 'ACME temp' &>/dev/null; exit 0 ;;
-    "close-80")
-        ufw status | grep -q inactive && exit 0
-        ufw status numbered | grep 'ACME temp' | awk -F"[][]" '{print $2}' | sort -rn | while read -r n; do
-            echo "y" | ufw delete "$n" &>/dev/null; done; exit 0 ;;
-    "update")
-        bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh) --update
-        exit 0 ;;
-esac
-for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision xhttp menu; do
-    [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh" || { echo "ERROR: module $module not found"; exit 1; }
-done
-VWN_CONF="/usr/local/etc/xray/vwn.conf"
-if [ ! -f "$VWN_CONF" ] || ! grep -q "VWN_LANG=" "$VWN_CONF" 2>/dev/null; then
-    selectLang
-    _initLang
-fi
-isRoot
-menu "$@"
-VWNEOF
+    [[ "$OPT_CERT_METHOD" == "cf" ]] && {
+        [[ -z "$OPT_CF_EMAIL" ]] && die "--cf-email обязателен при --cert-method cf"
+        [[ -z "$OPT_CF_KEY" ]]   && die "--cf-key обязателен при --cert-method cf"
     }
-    chmod +x "$VWN_BIN"
-    echo "${green}vwn $(msg installed_in) $VWN_BIN${reset}"
+
+    $OPT_VISION && $OPT_SKIP_WS && die "--vision несовместим с --skip-ws"
+    $OPT_VISION && $OPT_STREAM  && die "--vision и --stream взаимоисключающие"
+
+    [[ "$OPT_CERT_METHOD" != "cf" && "$OPT_CERT_METHOD" != "standalone" ]] \
+        && die "--cert-method должен быть 'cf' или 'standalone'"
+
+    _validate_port "$OPT_PORT"         1024  65535 "--port"
+    _validate_port "$OPT_REALITY_PORT"  443  65535 "--reality-port"
+    [[ -n "$OPT_SSH_PORT" ]] && _validate_port "$OPT_SSH_PORT" 1 65535 "--ssh-port"
+
+    if $OPT_PSIPHON && [[ -n "$OPT_PSIPHON_COUNTRY" ]]; then
+        [[ "$OPT_PSIPHON_COUNTRY" =~ ^[A-Za-z]{2}$ ]] \
+            || die "--psiphon-country: 2-буквенный код (DE, NL, US...)"
+        OPT_PSIPHON_COUNTRY="${OPT_PSIPHON_COUNTRY^^}"
+    fi
+
+    $OPT_PSIPHON_WARP && $OPT_NO_WARP \
+        && die "--psiphon-warp несовместим с --no-warp"
+
+    log_ok "Параметры validated"
 }
 
-show_version() {
-    local ver
-    ver=$(grep 'VWN_VERSION=' "$VWN_LIB/core.sh" 2>/dev/null | head -1 | grep -oP '"[^"]+"' | tr -d '"')
-    echo "${ver:-unknown}"
+# -----------------------------------------------------------------
+# ОТОБРАЖЕНИЕ ПАРАМЕТРОВ --auto (использует lib/ui.sh)
+# -----------------------------------------------------------------
+
+print_auto_params() {
+    local mode=""
+    $OPT_SKIP_WS && mode="Reality only" || mode="WS+TLS+CDN"
+    $OPT_REALITY  && mode+=" + Reality"
+    $OPT_VISION   && mode+=" + Vision"
+    $OPT_STREAM && ! $OPT_VISION && mode+=" + Stream SNI"
+
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "   Параметры установки:"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+
+    _p() { printf "  ${CYAN}%-14s${RESET}: ${GREEN}%s${RESET}\n" "$1" "$2"; }
+
+    _p "Режим"       "$mode"
+    [[ -n "$OPT_DOMAIN" ]]        && _p "Домен"          "$OPT_DOMAIN"
+    ! $OPT_SKIP_WS                && _p "Stub URL"        "$OPT_STUB"
+    ! $OPT_SKIP_WS                && _p "Xray port"       "$OPT_PORT"
+    ! $OPT_SKIP_WS                && _p "SSL метод"       "$OPT_CERT_METHOD"
+    $OPT_REALITY                  && _p "Reality"         "$OPT_REALITY_DEST  port=$OPT_REALITY_PORT"
+    $OPT_VISION                   && _p "Vision"          "$OPT_DOMAIN"
+    $OPT_STREAM && ! $OPT_VISION  && _p "Stream SNI"      "enabled"
+    [[ -n "$OPT_SSH_PORT" ]]      && _p "SSH порт"        "$OPT_SSH_PORT"
+    $OPT_IPV6                     && _p "IPv6"            "enabled"
+    $OPT_CPU_GUARD                && _p "CPU Guard"       "enabled"
+    $OPT_FAIL2BAN                 && _p "Fail2Ban"        "enabled"
+    $OPT_JAIL                     && _p "WebJail"         "enabled"
+    $OPT_ADBLOCK                  && _p "Adblock"         "enabled"
+    $OPT_PRIVACY                  && _p "Privacy"         "enabled"
+    $OPT_PSIPHON                  && _p "Psiphon"         "enabled${OPT_PSIPHON_COUNTRY:+ ($OPT_PSIPHON_COUNTRY)}${OPT_PSIPHON_WARP:+ +WARP}"
+    $OPT_BBR                      && _p "BBR"             "enabled"
+    $OPT_NO_WARP                  && _p "WARP"            "SKIPPED"
+    _p "Язык"        "$OPT_LANG"
+
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo ""
 }
 
-_load_modules() {
-    for module in $MODULES; do
-        local f="$VWN_LIB/${module}.sh"
-        if [ -f "$f" ]; then
-            # shellcheck disable=SC1090
-            source "$f"
-        else
-            echo "${red}ERROR: module $module not found at $f${reset}"
-            exit 1
-        fi
-    done
-}
+# -----------------------------------------------------------------
+# УСТАНОВКА КОМПОНЕНТОВ (вызывают функции из загруженных modules/)
+# -----------------------------------------------------------------
 
-# =================================================================
-# Неинтерактивная установка SSL
-# =================================================================
 _auto_ssl() {
     local domain="$1"
+    log_info "SSL: domain=$domain method=$OPT_CERT_METHOD"
 
-    # Ставим socat если нет
-    installPackage "socat" &>/dev/null || true
+    # Функции из modules/nginx.sh
+    soft_step "socat"        installPackage socat
 
-    # Устанавливаем acme.sh если нет
-    if [ ! -f ~/.acme.sh/acme.sh ]; then
-        curl -fsSL https://get.acme.sh | sh -s email="acme@${domain}" --no-profile
+    if [[ ! -f ~/.acme.sh/acme.sh ]]; then
+        step "acme.sh установка" bash -c "
+            curl -fsSL https://get.acme.sh | sh -s email='acme@${domain}' --no-profile
+        "
     fi
+    [[ -f ~/.acme.sh/acme.sh ]] || die "acme.sh не установлен"
 
-    if [ ! -f ~/.acme.sh/acme.sh ]; then
-        echo "${red}acme.sh install failed${reset}"; return 1
-    fi
-
-    ~/.acme.sh/acme.sh --upgrade --auto-upgrade &>/dev/null || true
-    ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt &>/dev/null || true
-
+    soft_step "acme.sh upgrade"  ~/.acme.sh/acme.sh --upgrade --auto-upgrade
+    soft_step "acme.sh CA"       ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
     mkdir -p /etc/nginx/cert
 
-    if [ "$OPT_CERT_METHOD" = "cf" ]; then
-        # DNS-01 через Cloudflare API — не требует открытого 80 порта
-        printf "export CF_Email='%s'\nexport CF_Key='%s'\n" "$OPT_CF_EMAIL" "$OPT_CF_KEY" \
-            > /root/.cloudflare_api.tmp
-        chmod 600 /root/.cloudflare_api.tmp
-        mv /root/.cloudflare_api.tmp /root/.cloudflare_api
-
-        export CF_Email="$OPT_CF_EMAIL"
-        export CF_Key="$OPT_CF_KEY"
-
-        ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$domain" --force >/dev/null 2>&1
+    if [[ "$OPT_CERT_METHOD" == "cf" ]]; then
+        printf 'export CF_Email=%q\nexport CF_Key=%q\n' "$OPT_CF_EMAIL" "$OPT_CF_KEY" \
+            > /root/.cloudflare_api
+        chmod 600 /root/.cloudflare_api
+        export CF_Email="$OPT_CF_EMAIL" CF_Key="$OPT_CF_KEY"
+        step "SSL (Cloudflare DNS-01)" \
+            ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$domain" --force
     else
-        # HTTP-01 standalone — на время выпуска открываем порт 80
-        ufw allow 80/tcp comment 'ACME temp' &>/dev/null || true
-        ~/.acme.sh/acme.sh --issue --standalone -d "$domain" \
-            --pre-hook  "/usr/local/bin/vwn open-80" \
-            --post-hook "/usr/local/bin/vwn close-80" \
-            --force
-        # Убираем временное правило 80
+        # HTTP-01: открываем 80 через vwn binary
+        soft_step "UFW: 80 для ACME" ufw allow 80/tcp comment 'ACME temp'
+        step "SSL (HTTP-01 standalone)" \
+            ~/.acme.sh/acme.sh --issue --standalone -d "$domain" \
+                --pre-hook  "$VWN_BIN open-80" \
+                --post-hook "$VWN_BIN close-80" \
+                --force
         ufw status numbered 2>/dev/null | grep 'ACME temp' \
-            | awk -F"[][]" '{print $2}' | sort -rn | while read -r n; do
-            echo "y" | ufw delete "$n" &>/dev/null || true
-        done
+            | awk -F'[][]' '{print $2}' | sort -rn \
+            | while read -r n; do echo "y" | ufw delete "$n" &>/dev/null || true; done
     fi
 
-    ~/.acme.sh/acme.sh --install-cert -d "$domain" \
-        --key-file       /etc/nginx/cert/cert.key \
-        --fullchain-file /etc/nginx/cert/cert.pem \
-        --reloadcmd      "systemctl restart nginx 2>/dev/null || true"
+    step "Установка сертификата" \
+        ~/.acme.sh/acme.sh --install-cert -d "$domain" \
+            --key-file       /etc/nginx/cert/cert.key \
+            --fullchain-file /etc/nginx/cert/cert.pem \
+            --reloadcmd      "systemctl restart nginx 2>/dev/null || true"
 
-    echo "${green}SSL issued for $domain${reset}"
+    ok "SSL для $domain получен"
 }
 
-# =================================================================
-# Неинтерактивная установка WS+TLS+CDN
-# =================================================================
 _auto_install_ws() {
-    echo -e "\n${cyan}━━━ WS + TLS + Nginx + CDN ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
+    section "WS + TLS + Nginx + CDN"
 
-    # Firewall
-    ufw allow 22/tcp   comment 'SSH'   &>/dev/null || true
-    ufw allow 443/tcp  comment 'HTTPS' &>/dev/null || true
-    ufw allow 443/udp  comment 'HTTPS' &>/dev/null || true
-    echo "y" | ufw enable &>/dev/null || true
+    # UFW (использует lib/network.sh или модуль security.sh)
+    step "UFW: SSH + HTTPS" bash -c "
+        ufw allow 22/tcp   comment 'SSH'   &>/dev/null || true
+        ufw allow 443/tcp  comment 'HTTPS' &>/dev/null || true
+        ufw allow 443/udp  comment 'HTTPS' &>/dev/null || true
+        echo 'y' | ufw enable &>/dev/null  || true
+    "
 
-    # Sysctl
-    applySysctl
+    # Из modules/security.sh (загружены через load_modules)
+    step "Sysctl оптимизация"   applySysctl
+    step "Системный DNS"        setupSystemDNS
 
-    # Системный DNS — предотвращает утечку через DNS хостера
-    setupSystemDNS
+    local ws_path; ws_path=$(generateRandomPath)   # из modules/core.sh
+    log_info "WS path: $ws_path"
 
-    # Генерируем WS path
-    local wsPath
-    wsPath=$(generateRandomPath)
-
-    echo -e "${cyan}[1/6] Xray config...${reset}"
-    writeXrayConfig "$OPT_PORT" "$wsPath" "$OPT_DOMAIN"
-    # Записываем домен как адрес подключения — иначе подписки генерируются по IP
+    step "Xray конфиг"          writeXrayConfig "$OPT_PORT" "$ws_path" "$OPT_DOMAIN"
     mkdir -p /usr/local/etc/xray
     echo "$OPT_DOMAIN" > /usr/local/etc/xray/connect_host
 
-    echo -e "${cyan}[2/6] Nginx config...${reset}"
-    writeNginxConfigBase "$OPT_PORT" "$OPT_DOMAIN" "$OPT_STUB" "$wsPath"
-    systemctl enable nginx 2>/dev/null || true
-    # nginx стартует в шаге 6, после выпуска SSL сертификата
+    step "Nginx конфиг (base)"  writeNginxConfigBase "$OPT_PORT" "$OPT_DOMAIN" "$OPT_STUB" "$ws_path"
+    soft_step "Nginx enable"    systemctl enable nginx
 
     if ! $OPT_NO_WARP; then
-        echo -e "${cyan}[3/6] WARP...${reset}"
-        configWarp || echo "${yellow}WARP setup failed (non-fatal)${reset}"
+        soft_step "WARP настройка"  configWarp
     else
-        echo -e "${yellow}[3/6] WARP skipped (--no-warp)${reset}"
+        info "WARP пропущен (--no-warp)"
     fi
 
-    echo -e "${cyan}[4/6] SSL certificate ($OPT_CERT_METHOD)...${reset}"
-    local _ssl_exit=0
-    _auto_ssl "$OPT_DOMAIN" || _ssl_exit=$?
-    if [ $_ssl_exit -ne 0 ]; then
-        echo -e "${red}SSL failed (exit $_ssl_exit)${reset}"
-        if $AUTO_MODE; then
-            echo -e "${red}Unattended mode: SSL is required. Aborting.${reset}"
-            echo -e "${yellow}Fix DNS/firewall and re-run with the same flags.${reset}"
-            exit 1
-        else
-            echo -e "${yellow}Continue without SSL? nginx will start with a self-signed cert (subscriptions will not work). $(msg yes_no)${reset}"
-            read -r _ssl_continue
-            if [[ "$_ssl_continue" != "y" ]]; then
-                echo -e "${red}Aborting. Fix SSL and re-run.${reset}"
-                exit 1
-            fi
-            systemctl start nginx 2>/dev/null || true
-        fi
-    fi
+    step "SSL ($OPT_CERT_METHOD)" _auto_ssl "$OPT_DOMAIN"
 
-    echo -e "${cyan}[5/6] WARP domains + cron...${reset}"
-    if ! $OPT_NO_WARP; then
-        applyWarpDomains || true
-    fi
-    setupLogrotate
-    setupLogClearCron
-    setupSslCron
+    soft_step "WARP домены"     applyWarpDomains
+    soft_step "Log rotate"      setupLogrotate
+    soft_step "Log cron"        setupLogClearCron
+    soft_step "SSL cron"        setupSslCron
 
-    echo -e "${cyan}[6/6] Starting Xray...${reset}"
-    if systemctl enable xray 2>/dev/null && systemctl restart xray 2>/dev/null; then
-        echo "${green}xray started successfully.${reset}"
-    else
-        echo "${red}WARNING: xray.service failed to start. Check: journalctl -u xray -n 30${reset}"
-    fi
-    if systemctl restart nginx 2>/dev/null; then
-        echo "${green}nginx started successfully.${reset}"
-    else
-        echo "${red}WARNING: nginx failed to start. Check: journalctl -u nginx -n 30${reset}"
-    fi
+    step "Xray enable"          systemctl enable xray
+    soft_step "Xray restart"    systemctl restart xray
+    step "Nginx restart"        systemctl restart nginx
 
-    echo -e "${green}WS+TLS done.${reset}"
+    ok "WS+TLS установлен"
 }
 
-# =================================================================
-# Неинтерактивная установка Reality
-# =================================================================
 _auto_install_reality() {
-    echo -e "\n${cyan}━━━ Reality ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
+    section "Reality"
 
-    # Reality требует рабочий xray для генерации x25519 ключей
-    local xray_bin
+    # Убеждаемся что xray есть
+    local xray_bin=""
     for _b in /usr/local/bin/xray /usr/bin/xray; do
-        [ -x "$_b" ] && xray_bin="$_b" && break
+        [[ -x "$_b" ]] && xray_bin="$_b" && break
     done
-    if [ -z "$xray_bin" ]; then
-        echo "${yellow}Xray не найден, пробуем установить...${reset}"
-        installXray || { echo "${red}Xray install failed. Reality skipped.${reset}"; return 1; }
+    [[ -z "$xray_bin" ]] && step "Установка Xray" installXray
+
+    soft_step "UFW: Reality порт" ufw allow "$OPT_REALITY_PORT"/tcp comment 'Xray Reality'
+    step "Reality конфиг"       writeRealityConfig "$OPT_REALITY_PORT" "$OPT_REALITY_DEST"
+    step "Reality сервис"       setupRealityService
+
+    if ! $OPT_NO_WARP && [[ -f "${warpDomainsFile:-/usr/local/etc/xray/warp_domains.txt}" ]]; then
+        soft_step "WARP домены" applyWarpDomains
     fi
 
-    ufw allow "$OPT_REALITY_PORT"/tcp comment 'Xray Reality' &>/dev/null || true
-
-    writeRealityConfig "$OPT_REALITY_PORT" "$OPT_REALITY_DEST" || { echo "${red}writeRealityConfig failed${reset}"; return 1; }
-    setupRealityService
-
-    if ! $OPT_NO_WARP && [ -f "${warpDomainsFile:-/usr/local/etc/xray/warp_domains.txt}" ]; then
-        applyWarpDomains || true
-    fi
-
-    echo -e "${green}Reality done. Port: $OPT_REALITY_PORT  SNI: $OPT_REALITY_DEST${reset}"
+    ok "Reality: порт=$OPT_REALITY_PORT  SNI=$OPT_REALITY_DEST"
 }
 
-# =================================================================
-# Неинтерактивная установка Vision
-# =================================================================
 _auto_install_vision() {
-    echo -e "\n${cyan}━━━ Vision ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-
-    # Если Stream SNI активен — отключаем автоматически (Vision несовместим с Stream)
+    section "Vision"
+    # Конфликт со Stream SNI — отключаем
     if grep -q "ssl_preread on" /etc/nginx/nginx.conf 2>/dev/null; then
-        echo -e "${yellow}Stream SNI active — disabling for Vision (incompatible)...${reset}"
-        _doDisableStreamSNI || {
-            echo "${red}ERROR: Stream SNI disable failed. Vision cannot be installed.${reset}"
-            return 1
-        }
+        info "Stream SNI активен — отключаем (несовместим с Vision)..."
+        step "Отключение Stream SNI" _doDisableStreamSNI
     fi
-
-    echo -e "${cyan}Installing Vision for domain: $OPT_DOMAIN${reset}"
-    echo -e "${cyan}Using existing WS certificate${reset}"
-
-    # Вызываем installVision
-    installVision --auto || {
-        echo "${red}Vision installation failed.${reset}"
-        return 1
-    }
-
-    echo -e "${green}Vision done. Domain: $OPT_DOMAIN${reset}"
+    step "Vision" installVision --auto
+    ok "Vision: домен=$OPT_DOMAIN"
 }
 
-# =================================================================
-# Helper-функции для неинтерактивной установки
-# =================================================================
-
-# Неинтерактивная смена SSH порта
 _auto_change_ssh_port() {
     local new_port="$1"
-    local old_port
-    old_port=$(grep -E "^Port " /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -1)
+    local old_port; old_port=$(grep -E "^Port " /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -1)
     old_port="${old_port:-22}"
-
-    echo -e "${cyan}Changing SSH port: $old_port → $new_port${reset}"
-    ufw allow "$new_port"/tcp comment 'SSH' &>/dev/null || true
-    sed -i "s/^#\?Port [0-9]*/Port $new_port/" /etc/ssh/sshd_config
-    systemctl restart sshd 2>/dev/null || systemctl restart ssh
-    echo "${green}SSH port changed to $new_port.${reset}"
-
-    # Обновляем fail2ban если установлен
+    info "SSH: $old_port → $new_port"
+    soft_step "UFW: новый SSH порт"  ufw allow "$new_port"/tcp comment 'SSH'
+    step "sshd_config"               sed -i "s/^#\?Port [0-9]*/Port $new_port/" /etc/ssh/sshd_config
+    step "Перезапуск sshd"           bash -c "systemctl restart sshd 2>/dev/null || systemctl restart ssh"
+    # Если fail2ban работает — обновляем порт (используем функцию из modules/security.sh)
     if systemctl is-active --quiet fail2ban 2>/dev/null; then
-        echo -e "${cyan}Updating Fail2Ban SSH port...${reset}"
-        local sshd_backend sshd_logpath
-        if [ -f /var/log/auth.log ]; then
-            sshd_backend="auto"
-            sshd_logpath="logpath  = /var/log/auth.log"
-        else
-            sshd_backend="systemd"
-            sshd_logpath=""
-        fi
-        local cf_ips=""
-        if command -v curl &>/dev/null; then
-            cf_ips=$(curl -fsSL --connect-timeout 5 "https://www.cloudflare.com/ips-v4" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g')
-        fi
-        python3 - "$new_port" "$sshd_backend" "$sshd_logpath" "$cf_ips" << 'PEOF'
-import sys, re
-new_port    = sys.argv[1]
-backend     = sys.argv[2]
-logpath_str = sys.argv[3]
-cf_ips      = sys.argv[4]
-jail_path = "/etc/fail2ban/jail.local"
-try:
-    with open(jail_path) as f:
-        content = f.read()
-except FileNotFoundError:
-    sys.exit(0)
-logpath_line = ("\n" + logpath_str) if logpath_str else ""
-new_sshd = (
-    "[sshd]\n"
-    "enabled  = true\n"
-    "port     = " + new_port + "\n"
-    "filter   = sshd\n"
-    "backend  = " + backend +
-    logpath_line + "\n"
-    "maxretry = 3\n"
-    "bantime  = 24h"
-)
-default_replacement = (
-    "[DEFAULT]\n"
-    "banaction = iptables-multiport\n"
-    "bantime  = 2h\n"
-    "findtime = 10m\n"
-    "maxretry = 5\n"
-    "ignoreip = 127.0.0.1/8 ::1 " + cf_ips + "\n"
-)
-content = re.sub(r'\[DEFAULT\].*?(?=\n\[)', default_replacement, content, flags=re.DOTALL)
-content = re.sub(r'\[sshd\].*?(?=\n\[|\Z)', new_sshd, content, flags=re.DOTALL)
-with open(jail_path, "w") as f:
-    f.write(content)
-PEOF
-        systemctl restart fail2ban
-        echo "${green}Fail2Ban updated SSH port.${reset}"
+        # changeSshPort из security.sh обновляет fail2ban
+        soft_step "Fail2Ban: обновление SSH" bash -c "
+            sed -i 's/^port\s*=.*/port     = $new_port/' /etc/fail2ban/jail.local 2>/dev/null || true
+            systemctl restart fail2ban
+        "
     fi
+    ok "SSH порт изменён на $new_port"
 }
 
-# Неинтерактивная установка Psiphon
 _auto_install_psiphon() {
-    local country="${1:-DE}"
-    local warp_mode="${2:-false}"  # true/false
-
-    echo -e "${cyan}━━━ Psiphon ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-
-    # Скачиваем бинарь
-    installPsiphonBinary || return 1
-
+    section "Psiphon"
+    local country="${OPT_PSIPHON_COUNTRY:-DE}"
     local tunnel_mode="plain"
-    if $warp_mode; then
-        if ! systemctl is-active --quiet warp-svc 2>/dev/null || ! ss -tlnp 2>/dev/null | grep -q ':40000'; then
-            echo "${yellow}WARP not running, using plain mode for Psiphon${reset}"
-        else
-            tunnel_mode="warp"
-        fi
+
+    step "Psiphon бинарь" installPsiphonBinary
+
+    if $OPT_PSIPHON_WARP \
+        && systemctl is-active --quiet warp-svc 2>/dev/null \
+        && ss -tlnp 2>/dev/null | grep -q ':40000'; then
+        tunnel_mode="warp"
     fi
 
-    # Записываем конфиг
-    writePsiphonConfig "$country" "$tunnel_mode"
-    setupPsiphonService
+    step "Psiphon конфиг" writePsiphonConfig "$country" "$tunnel_mode"
+    step "Psiphon сервис" setupPsiphonService
+    soft_step "Psiphon outbound" applyPsiphonOutbound
 
-    # Добавляем в Xray конфиги
-    applyPsiphonOutbound
-    # Пустой список доменов = rule удалён (пользователь добавит позже)
-    if [ -f "$psiphonDomainsFile" ] && [ -s "$psiphonDomainsFile" ]; then
-        applyPsiphonDomains
+    if [[ -f "${psiphonDomainsFile:-}" && -s "${psiphonDomainsFile}" ]]; then
+        soft_step "Psiphon домены" applyPsiphonDomains
     fi
 
-    echo -e "${green}Psiphon installed. Country: $country, Mode: $tunnel_mode${reset}"
+    ok "Psiphon: страна=$country, режим=$tunnel_mode"
 }
 
-# Неинтерактивное включение IPv6
 _auto_toggle_ipv6() {
-    local current
-    current=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)
-    if [ "$current" = "1" ]; then
-        echo -e "${cyan}Enabling IPv6...${reset}"
-        sysctl -w net.ipv6.conf.all.disable_ipv6=0 &>/dev/null
-        sysctl -w net.ipv6.conf.default.disable_ipv6=0 &>/dev/null
-        sysctl -w net.ipv6.conf.lo.disable_ipv6=0 &>/dev/null
-        sysctl -w net.ipv6.icmp.echo_ignore_all=0 &>/dev/null
-        sed -i '/disable_ipv6/d' /etc/sysctl.d/99-xray.conf 2>/dev/null || true
-        sed -i '/ipv6.*icmp.*ignore/d' /etc/sysctl.d/99-xray.conf 2>/dev/null || true
-        echo "${green}IPv6 enabled.${reset}"
+    local current; current=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo "0")
+    if [[ "$current" == "1" ]]; then
+        # Используем toggleIPv6 из modules/security.sh
+        step "Включение IPv6" toggleIPv6
     else
-        echo -e "${yellow}IPv6 already enabled, skipping.${reset}"
+        info "IPv6 уже включён, пропускаем"
     fi
 }
 
-# =================================================================
-# Основная функция --auto
-# =================================================================
-_run_auto() {
-    echo -e "${cyan}================================================================${reset}"
-    echo -e "   VWN — Unattended Installation"
-    echo -e "${cyan}================================================================${reset}"
-    echo -e "   $(msg auto_start)"
-    echo ""
+# -----------------------------------------------------------------
+# ГЛАВНАЯ ФУНКЦИЯ АВТО-РЕЖИМА
+# -----------------------------------------------------------------
 
-    _validate_auto_params
-    _print_auto_params
+run_auto() {
+    echo -e "${CYAN}════════════════════════════════════════════════════════════════${RESET}"
+    echo -e "   VWN — Автоматическая установка"
+    echo -e "${CYAN}════════════════════════════════════════════════════════════════${RESET}"
 
-    # Загружаем и инициализируем модули
-    _load_modules
+    validate_auto_params
+    print_auto_params
+    load_modules   # подключаем modules/*.sh
 
-    # Выставляем язык в vwn.conf без интерактива
+    # Сохраняем язык через vwn_conf_set из modules/core.sh
     mkdir -p "$(dirname "$VWN_CONF")"
     vwn_conf_set "VWN_LANG" "$OPT_LANG"
     _initLang
 
-    # Системные пакеты + swap
-    echo -e "${cyan}━━━ System packages ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
+    # ── Системные пакеты ──────────────────────────────────────────
+    section "Системные пакеты"
     identifyOS
+    prepareApt   # из modules/core.sh
+    soft_step "Swap"  setupSwap
 
-    _kill_apt
-    setupSwap
-
-    # Один apt update перед всем циклом пакетов
-    echo -e "${cyan}Updating package lists...${reset}"
     export DEBIAN_FRONTEND=noninteractive
-    timeout 60 ${PACKAGE_MANAGEMENT_UPDATE} >/dev/null 2>&1 || true
+    info "Обновление списков пакетов..."
+    timeout 60 bash -c "${PACKAGE_MANAGEMENT_UPDATE}" >/dev/null 2>&1 || true
 
-    echo -e "${cyan}Installing base packages...${reset}"
-    for p in tar gpg unzip jq nano ufw socat curl qrencode python3; do
-        installPackage "$p" || true
+    for pkg in tar gpg unzip jq nano ufw socat curl qrencode python3; do
+        soft_step "Установка $pkg"  installPackage "$pkg"
     done
-    installXray
+
+    step "Xray-core"  installXray
+
     if ! $OPT_NO_WARP; then
-        installWarp || echo "${yellow}WARP install failed (non-fatal)${reset}"
+        soft_step "Cloudflare WARP"  installWarp
     fi
 
-    # Nginx — нужен только если WS
     if ! $OPT_SKIP_WS; then
-        _installNginxMainline 2>/dev/null || installPackage nginx
+        soft_step "Nginx mainline"  _installNginxMainline \
+            || soft_step "Nginx (fallback)"  installPackage nginx
     fi
 
-    # WS установка — изолируем от set -e чтобы reality запустился в любом случае
+    # ── WS ────────────────────────────────────────────────────────
     if ! $OPT_SKIP_WS; then
         set +e
-        _auto_install_ws
-        _ws_exit=$?
+        _auto_install_ws; local _ws_rc=$?
         set -e
-        [ $_ws_exit -ne 0 ] && echo -e "${red}WS install failed (exit $_ws_exit), continuing to next steps...${reset}"
+        (( _ws_rc != 0 )) && warn "WS завершился с ошибкой (rc=$_ws_rc), продолжаем..."
     else
-        echo -e "${yellow}WS skipped (--skip-ws)${reset}"
-        # Минимальный firewall
-        ufw allow 22/tcp comment 'SSH' &>/dev/null || true
-        echo "y" | ufw enable &>/dev/null || true
-        applySysctl
-        if ! $OPT_NO_WARP; then
-            configWarp || echo "${yellow}WARP setup failed (non-fatal)${reset}"
-        fi
+        info "WS пропущен (--skip-ws)"
+        soft_step "UFW SSH" bash -c "ufw allow 22/tcp comment 'SSH' &>/dev/null && echo 'y' | ufw enable &>/dev/null"
+        soft_step "Sysctl"  applySysctl
+        ! $OPT_NO_WARP && soft_step "WARP" configWarp
     fi
 
-    # Reality установка
-    if $OPT_REALITY; then
-        _auto_install_reality
-    fi
+    # ── Reality ───────────────────────────────────────────────────
+    $OPT_REALITY && _auto_install_reality
 
-    # Stream SNI — если явно указан и Vision не перекрывает (Vision активирует сам)
+    # ── Stream SNI ────────────────────────────────────────────────
     if $OPT_STREAM && ! $OPT_VISION; then
-        echo -e "\n${cyan}━━━ Stream SNI ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-        setupStreamSNI 7443 10443 || echo "${yellow}Stream SNI failed (non-fatal)${reset}"
+        section "Stream SNI"
+        soft_step "Stream SNI" setupStreamSNI 7443 10443
     fi
 
-    # Vision установка
+    # ── Vision ────────────────────────────────────────────────────
     if $OPT_VISION; then
-        set +e
-        _auto_install_vision
-        _vision_exit=$?
-        set -e
-        [ $_vision_exit -ne 0 ] && echo -e "${red}Vision install failed (exit $_vision_exit), continuing...${reset}"
+        set +e; _auto_install_vision; local _v_rc=$?; set -e
+        (( _v_rc != 0 )) && warn "Vision завершился с ошибкой, продолжаем..."
     fi
 
-    # Опциональные компоненты — порядок важен!
-    # 1. Смена SSH порта (перед Fail2Ban чтобы f2b знал правильный порт)
-    if [ -n "$OPT_SSH_PORT" ]; then
-        echo -e "${cyan}━━━ SSH Port ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-        _auto_change_ssh_port "$OPT_SSH_PORT"
-    fi
+    # ── Опциональные компоненты (порядок важен!) ──────────────────
+
+    # 1. SSH порт (до fail2ban)
+    [[ -n "$OPT_SSH_PORT" ]] && _auto_change_ssh_port "$OPT_SSH_PORT"
 
     # 2. IPv6
     if $OPT_IPV6; then
-        echo -e "${cyan}━━━ IPv6 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
+        section "IPv6"
         _auto_toggle_ipv6
     fi
 
-    # 3. CPU Guard
+    # 3. CPU Guard — из modules/security.sh
     if $OPT_CPU_GUARD; then
-        echo -e "${cyan}━━━ CPU Guard ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-        setupCpuGuard
+        section "CPU Guard"
+        step "CPU Guard" setupCpuGuard
     fi
 
-    # 4. Fail2Ban
+    # 4. Fail2Ban — из modules/security.sh
     if $OPT_FAIL2BAN; then
-        echo -e "${cyan}━━━ Fail2Ban ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-        setupFail2Ban
+        section "Fail2Ban"
+        step "Fail2Ban" setupFail2Ban
     fi
 
-    # 5. WebJail (требует Fail2Ban)
+    # 5. WebJail (требует fail2ban) — из modules/security.sh
     if $OPT_JAIL; then
+        section "WebJail"
         if ! $OPT_FAIL2BAN; then
-            echo "${yellow}WARNING: --jail requires --fail2ban, installing Fail2Ban first${reset}"
-            setupFail2Ban
+            warn "--jail требует Fail2Ban, устанавливаем..."
+            step "Fail2Ban (для jail)" setupFail2Ban
         fi
-        echo -e "${cyan}━━━ WebJail ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-        setupWebJail
+        step "WebJail" setupWebJail
     fi
 
-    # 6. Adblock
+    # 6. Adblock — из modules/adblock.sh
     if $OPT_ADBLOCK; then
-        echo -e "${cyan}━━━ Adblock ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-        enableAdblock
+        section "Adblock"
+        step "Adblock" enableAdblock
     fi
 
-    # 7. Privacy Mode
+    # 7. Privacy — из modules/privacy.sh
     if $OPT_PRIVACY; then
-        echo -e "${cyan}━━━ Privacy Mode ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-        enablePrivacyMode
+        section "Privacy Mode"
+        step "Privacy Mode" enablePrivacyMode
     fi
 
-    # 8. Psiphon
-    if $OPT_PSIPHON; then
-        local ps_country
-        ps_country="${OPT_PSIPHON_COUNTRY:-DE}"
-        _auto_install_psiphon "$ps_country" "$OPT_PSIPHON_WARP"
-    fi
+    # 8. Psiphon — из modules/psiphon.sh
+    $OPT_PSIPHON && _auto_install_psiphon
 
-    # 9. BBR
+    # 9. BBR (последним) — из modules/security.sh
     if $OPT_BBR; then
-        echo -e "${cyan}━━━ BBR ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-        enableBBR
+        section "BBR TCP"
+        step "BBR" enableBBR
     fi
 
-    # Итоговая сводка
-    echo ""
-    echo -e "${green}================================================================${reset}"
-    echo -e "   $(msg auto_done)"
-    echo -e "${green}================================================================${reset}"
-    echo ""
-
-    if ! $OPT_SKIP_WS; then
-        echo -e "  ${cyan}VLESS WS+TLS:${reset}"
-        echo -e "    Domain  : ${green}$OPT_DOMAIN${reset}"
-        echo -e "    Port    : 443 (CDN) → internal $OPT_PORT"
-        echo -e "    Stub    : $OPT_STUB"
-    fi
-
-    if $OPT_REALITY; then
-        echo -e "  ${cyan}Reality:${reset}"
-        echo -e "    Port   : ${green}$OPT_REALITY_PORT${reset}"
-        echo -e "    SNI    : ${green}$OPT_REALITY_DEST${reset}"
-    fi
-
-    if $OPT_VISION; then
-        echo -e "  ${cyan}Vision:${reset}"
-        echo -e "    Domain : ${green}$OPT_DOMAIN${reset}"
-        echo -e "    Port   : ${green}443 (direct)${reset}"
-    fi
-
-    if [ -n "$OPT_SSH_PORT" ]; then
-        echo -e "  ${cyan}SSH Port:${reset} ${green}$OPT_SSH_PORT${reset}"
-    fi
-
-    if $OPT_IPV6; then
-        echo -e "  ${cyan}IPv6:${reset} ${green}enabled${reset}"
-    fi
-
-    if $OPT_CPU_GUARD; then
-        echo -e "  ${cyan}CPU Guard:${reset} ${green}enabled${reset}"
-    fi
-
-    if $OPT_JAIL; then
-        echo -e "  ${cyan}WebJail:${reset} ${green}enabled${reset}"
-    fi
-
-    if $OPT_ADBLOCK; then
-        echo -e "  ${cyan}Adblock:${reset} ${green}enabled${reset}"
-    fi
-
-    if $OPT_PRIVACY; then
-        echo -e "  ${cyan}Privacy:${reset} ${green}enabled${reset}"
-    fi
-
-    if $OPT_PSIPHON; then
-        local ps_country
-        ps_country="${OPT_PSIPHON_COUNTRY:-DE}"
-        local ps_mode
-        ps_mode="$($OPT_PSIPHON_WARP && echo 'WARP+' || echo '')Psiphon"
-        echo -e "  ${cyan}Psiphon:${reset} ${green}$ps_mode ($ps_country)${reset}"
-    fi
-
-    echo ""
-    echo -e "  ${cyan}Run ${green}vwn${reset}${cyan} to open the management panel${reset}"
-    echo -e "  ${cyan}Run ${green}vwn --help${reset}${cyan} for CLI options${reset}"
-    echo -e "${green}================================================================${reset}"
-    echo ""
-
-    # Показываем QR / subscription URL
-    _initUsersFile
-    rebuildAllSubFiles 2>/dev/null || true
-    getQrCode 2>/dev/null || true
+    _print_summary
 }
 
-# =================================================================
-# main
-# =================================================================
-main() {
-    _parse_args "$@"
-    check_root
-    check_os
-
-    echo -e "${cyan}================================================================${reset}"
-    if $UPDATE_ONLY; then
-        echo -e "   $(msg update_title)"
-    elif $AUTO_MODE; then
-        echo -e "   $(msg install_title) — Auto mode"
-    else
-        echo -e "   $(msg install_title)"
-    fi
-    echo -e "${cyan}================================================================${reset}"
+_print_summary() {
+    echo ""
+    echo -e "${GREEN}════════════════════════════════════════════════════════════════${RESET}"
+    echo -e "   Установка завершена!"
+    echo -e "${GREEN}════════════════════════════════════════════════════════════════${RESET}"
     echo ""
 
-    install_deps
+    ! $OPT_SKIP_WS && {
+        echo -e "  ${CYAN}VLESS WS+TLS:${RESET}"
+        echo -e "    Домен  : ${GREEN}$OPT_DOMAIN${RESET}"
+        echo -e "    Порт   : 443 (CDN) → $OPT_PORT (Xray)"
+    }
+    $OPT_REALITY  && echo -e "  ${CYAN}Reality:${RESET}  порт=${GREEN}$OPT_REALITY_PORT${RESET}  SNI=${GREEN}$OPT_REALITY_DEST${RESET}"
+    $OPT_VISION   && echo -e "  ${CYAN}Vision:${RESET}   домен=${GREEN}$OPT_DOMAIN${RESET}  443 (direct)"
+    [[ -n "$OPT_SSH_PORT" ]] && echo -e "  ${CYAN}SSH:${RESET}      порт=${GREEN}$OPT_SSH_PORT${RESET}"
+    $OPT_IPV6      && echo -e "  ${CYAN}IPv6:${RESET}     ${GREEN}enabled${RESET}"
+    $OPT_CPU_GUARD && echo -e "  ${CYAN}CPU Guard:${RESET} ${GREEN}enabled${RESET}"
+    $OPT_FAIL2BAN  && echo -e "  ${CYAN}Fail2Ban:${RESET} ${GREEN}enabled${RESET}"
+    $OPT_JAIL      && echo -e "  ${CYAN}WebJail:${RESET}  ${GREEN}enabled${RESET}"
+    $OPT_ADBLOCK   && echo -e "  ${CYAN}Adblock:${RESET}  ${GREEN}enabled${RESET}"
+    $OPT_PRIVACY   && echo -e "  ${CYAN}Privacy:${RESET}  ${GREEN}enabled${RESET}"
+    $OPT_PSIPHON   && echo -e "  ${CYAN}Psiphon:${RESET}  ${GREEN}${OPT_PSIPHON_COUNTRY:-DE}${RESET}"
+    $OPT_BBR       && echo -e "  ${CYAN}BBR:${RESET}      ${GREEN}enabled${RESET}"
+
+    echo ""
+    echo -e "  ${CYAN}Управление: ${GREEN}vwn${RESET}"
+    echo -e "  ${CYAN}Лог: ${YELLOW}${LOG_FILE}${RESET}"
+    echo -e "${GREEN}════════════════════════════════════════════════════════════════${RESET}"
+    echo ""
+
+    # Показываем QR — из modules/xray.sh и modules/users.sh
+    soft_step "Генерация подписки" bash -c "
+        _initUsersFile 2>/dev/null || true
+        rebuildAllSubFiles 2>/dev/null || true
+        getQrCode 2>/dev/null || true
+    "
+    log_ok "Installation complete"
+}
+
+# -----------------------------------------------------------------
+# ОСНОВНОЙ КОД
+# -----------------------------------------------------------------
+
+main() {
+    _log_init "$@"
+    log_info "VWN Installer v${VWN_VERSION} started"
+
+    parse_args "$@"
+
+    # Защита от параллельного запуска
+    [[ -z "${VWN_INSTALL_PARENT:-}" ]] && _acquire_lock
+
+    # Запускаем себя под таймаутом (только при первом вызове)
+    if [[ -z "${VWN_INSTALL_PARENT:-}" ]]; then
+        export VWN_INSTALL_PARENT=1
+        timeout --foreground "$INSTALL_TIMEOUT" bash "$0" "$@"
+        exit $?
+    fi
+
+    # ── Отсюда — под таймаутом ────────────────────────────────────
+
+    _check_root
+    _check_os
+
+    echo ""
+    echo -e "${CYAN}════════════════════════════════════════════════════════════════${RESET}"
+    if   $UPDATE_ONLY; then echo -e "   VWN — Обновление модулей"
+    elif $AUTO_MODE;   then echo -e "   VWN — Автоматическая установка"
+    else                    echo -e "   VWN v${VWN_VERSION} — VLESS + WARP + CDN + Reality"
+    fi
+    echo -e "${CYAN}════════════════════════════════════════════════════════════════${RESET}"
+    echo ""
+
+    install_base_deps   # использует lib/system.sh
 
     if $UPDATE_ONLY; then
-        echo -e "${cyan}$(msg update_modules)${reset}"
-        download_modules || exit 1
-        [ -f "$VWN_LIB/lang.sh" ] && { source "$VWN_LIB/lang.sh"; _initLang; }
+        # ── Режим обновления ───────────────────────────────────
+        info "Обновление модулей (конфиги не затрагиваются)..."
+        download_modules
+        download_configs
+        [[ -f "${VWN_LIB}/lang.sh" ]] && { source "${VWN_LIB}/lang.sh"; _initLang; }
         install_vwn_binary
-        echo -e "\n${green}$(msg update_done): $(show_version)${reset}"
-        echo "$(msg run_vwn)"
+        echo ""; ok "Обновление завершено. Версия: $(show_version)"
+        echo -e "  Запустите ${GREEN}vwn${RESET}"
 
     elif $AUTO_MODE; then
-        download_modules || exit 1
+        # ── Автоматический режим ───────────────────────────────
+        run_preflight_checks
+        download_modules
+        download_configs
         install_vwn_binary
-        _run_auto
+        run_auto
 
     else
-        # ── Стандартная интерактивная установка (оригинальный путь) ──
-        download_modules || exit 1
-        if [ -f "$VWN_LIB/lang.sh" ]; then
-            source "$VWN_LIB/lang.sh"
+        # ── Интерактивный режим ────────────────────────────────
+        run_preflight_checks
+        download_modules
+        download_configs
+
+        if [[ -f "${VWN_LIB}/lang.sh" ]]; then
+            source "${VWN_LIB}/lang.sh"
             selectLang
             _initLang
         fi
+
         install_vwn_binary
+        load_modules
 
-        _load_modules
-
-        echo -e "\n${green}================================================================${reset}"
-        echo -e "   $(msg install_done) $VWN_LIB"
-        echo -e "   $(msg install_version): $(show_version)"
-        echo -e "${green}================================================================${reset}"
         echo ""
-        echo -e "$(msg launching_menu)\n"
+        ok "════════════════════════════════════════════════════════════════"
+        ok "   Модули установлены → ${VWN_LIB}"
+        ok "   Версия: $(show_version)"
+        ok "════════════════════════════════════════════════════════════════"
+        echo ""
+        info "Запуск меню управления..."
         sleep 1
         exec "$VWN_BIN"
     fi
