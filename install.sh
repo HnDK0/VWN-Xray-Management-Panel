@@ -969,18 +969,25 @@ _run_auto() {
     # Системные пакеты + swap
     echo -e "${cyan}━━━ System packages ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
     identifyOS
-    
-    # ✅ Убиваем все процессы apt ПЕРЕД созданием свопа!
+
+    # Чистим dpkg один раз перед свопом
     fuser -kk /var/lib/dpkg/lock* 2>/dev/null || true
     rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/cache/apt/archives/lock 2>/dev/null
     pkill -9 apt apt-get dpkg 2>/dev/null || true
     sleep 1
-    
+
     setupSwap
-    
-    rm -f /var/lib/dpkg/lock* 2>/dev/null && dpkg --configure -a 2>/dev/null || true
+
+    # Один раз готовим apt и обновляем индексы — перед всем циклом пакетов
+    echo -e "${cyan}Preparing apt...${reset}"
+    prepareApt
+    export DEBIAN_FRONTEND=noninteractive
+    echo -e "${cyan}Updating package lists...${reset}"
+    timeout 120 ${PACKAGE_MANAGEMENT_UPDATE} >/dev/null 2>&1 || true
+
+    echo -e "${cyan}Installing base packages...${reset}"
     for p in tar gpg unzip jq nano ufw socat curl qrencode python3; do
-        installPackage "$p" &>/dev/null || true
+        installPackage "$p" || true
     done
     installXray
     if ! $OPT_NO_WARP; then

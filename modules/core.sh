@@ -291,22 +291,28 @@ identifyOS() {
 
 installPackage() {
     local pkg="$1"
-    
+
     echo -n "  ${pkg}... "
-    prepareApt
-    
+
+    # Пропускаем уже установленные пакеты без вызова apt
+    if dpkg -s "$pkg" &>/dev/null && dpkg -s "$pkg" 2>/dev/null | grep -q "^Status: install ok installed"; then
+        echo "${green}SKIP${reset}"
+        return 0
+    fi
+
     export DEBIAN_FRONTEND=noninteractive
     if timeout 120 ${PACKAGE_MANAGEMENT_INSTALL} "$pkg" >/dev/null 2>&1; then
         echo "${green}OK${reset}"
         return 0
     fi
-    
+
+    # При ошибке — чиним apt и пробуем ещё раз
     echo "${yellow}RETRY${reset}"
-    echo "  info: Fixing apt state for $pkg..."
+    prepareApt
     timeout 120 ${PACKAGE_MANAGEMENT_UPDATE} >/dev/null 2>&1 || true
-    
+
     if timeout 180 ${PACKAGE_MANAGEMENT_INSTALL} "$pkg" >/dev/null 2>&1; then
-        echo "  info: $pkg installed after fix."
+        echo "${green}OK (retry)${reset}"
         return 0
     else
         echo "${red}FAIL${reset}"
