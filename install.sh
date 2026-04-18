@@ -50,7 +50,17 @@
 #     --reality --reality-dest microsoft.com:443 --reality-port 8443
 # =================================================================
 
+set -eo pipefail
+
 LOCK_FILE="/tmp/vwn.lock"
+
+# Цвета нужны до любых сообщений об ошибках
+_c() { tput "$@" 2>/dev/null || true; }
+red=$(_c setaf 1)$(_c bold)
+green=$(_c setaf 2)$(_c bold)
+yellow=$(_c setaf 3)$(_c bold)
+cyan=$(_c setaf 6)$(_c bold)
+reset=$(_c sgr0)
 
 # Очистка блокировок dpkg в самом начале
 fuser -kk /var/lib/dpkg/lock* 2>/dev/null || true
@@ -105,16 +115,15 @@ fi
 
 # Глобальная очистка при любом выходе
 cleanup() {
-    # ✅ Восстановление терминала при любом выходе — исправляет сломанный вывод после официального скрипта Xray
+    # Восстановление терминала при любом выходе — исправляет сломанный вывод после официального скрипта Xray
     stty sane 2>/dev/null || true
-    
+
     rm -f "$LOCK_FILE"
     find /usr/local/etc/xray /etc/nginx -name "*.tmp" -delete 2>/dev/null
-    vwn close-80 2>/dev/null || true
+    # Вызываем vwn только если он уже установлен
+    [ -x "$VWN_BIN" ] && "$VWN_BIN" close-80 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM HUP ERR
-
-set -eo pipefail
 
 VWN_LIB="/usr/local/lib/vwn"
 VWN_BIN="/usr/local/bin/vwn"
@@ -122,17 +131,6 @@ VWN_BIN="/usr/local/bin/vwn"
 # Определяем реальный путь скрипта для любого способа запуска
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GITHUB_RAW="https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main"
-
-# ✅ Универсальная функция загрузки с fallback
-curl_fallback() {
-    for url in "$@"; do
-        if [[ "$url" == "-"* ]]; then break; fi
-        if curl -fsSL --connect-timeout 7 "$url" "$@"; then
-            return 0
-        fi
-    done
-    return 1
-}
 
 # ✅ Автоматический фикс apt зеркал если основной тупит
 fix_apt_mirrors() {
@@ -178,14 +176,6 @@ fix_apt_mirrors() {
     mv /etc/apt/sources.list.vwn_backup /etc/apt/sources.list 2>/dev/null
     echo -e "${red}Все зеркала недоступны, оставляем стандартный${reset}"
 }
-
-# Цвета (с fallback когда tput нет)
-_c() { tput "$@" 2>/dev/null || true; }
-red=$(_c setaf 1)$(_c bold)
-green=$(_c setaf 2)$(_c bold)
-yellow=$(_c setaf 3)$(_c bold)
-cyan=$(_c setaf 6)$(_c bold)
-reset=$(_c sgr0)
 
 MODULES="lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision xhttp menu"
 VWN_CONFIG="/usr/local/lib/vwn/config"
@@ -752,10 +742,8 @@ _auto_install_ws() {
     fi
 
     echo -e "${cyan}[4/6] SSL certificate ($OPT_CERT_METHOD)...${reset}"
-    set +e
-    _auto_ssl "$OPT_DOMAIN"
-    _ssl_exit=$?
-    set -e
+    local _ssl_exit=0
+    _auto_ssl "$OPT_DOMAIN" || _ssl_exit=$?
     if [ $_ssl_exit -ne 0 ]; then
         echo -e "${red}SSL failed (exit $_ssl_exit)${reset}"
         if $AUTO_MODE; then
@@ -799,7 +787,7 @@ _auto_install_reality() {
     writeRealityConfig "$OPT_REALITY_PORT" "$OPT_REALITY_DEST"
     setupRealityService
 
-    if ! $OPT_NO_WARP && [ -f "$warpDomainsFile" ]; then
+    if ! $OPT_NO_WARP && [ -f "${warpDomainsFile:-/usr/local/etc/xray/warp_domains.txt}" ]; then
         applyWarpDomains || true
     fi
 

@@ -335,7 +335,7 @@ setupAlias() {
 
 # Загрузка всех модулей системы
 loadAllModules() {
-    local modules=(lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision menu)
+    local modules=(lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision xhttp menu)
     
     for module in "${modules[@]}"; do
         if [ -f "$VWN_LIB/${module}.sh" ]; then
@@ -419,21 +419,25 @@ getServerIP() {
         "https://checkip.amazonaws.com"
     )
 
-    local tmpdir=$(mktemp -d)
+    local tmpdir
+    tmpdir=$(mktemp -d)
     local pids=()
-    trap 'rm -rf "$tmpdir"; kill "${pids[@]}" 2>/dev/null' RETURN INT TERM
 
-    local pids=()
+    local i
     for i in "${!urls[@]}"; do
         (curl -s --max-time 3 "${urls[$i]}" > "$tmpdir/$i" 2>/dev/null) &
         pids+=($!)
     done
 
+    # trap устанавливаем после заполнения pids
+    trap 'rm -rf "$tmpdir"; kill "${pids[@]}" 2>/dev/null' RETURN INT TERM
+
     local attempts=0
     while [ $attempts -lt 15 ]; do
         for f in "$tmpdir"/*; do
             [ -s "$f" ] || continue
-            local ip=$(cat "$f" 2>/dev/null | tr -d '[:space:]')
+            local ip
+            ip=$(cat "$f" 2>/dev/null | tr -d '[:space:]')
             if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && ! [[ "$ip" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
                 kill "${pids[@]}" 2>/dev/null || true
                 echo "$ip"
@@ -570,7 +574,7 @@ domainsToJson() {
         line=$(echo "$line" | tr -d '[:space:]')
         [ -z "$line" ] && continue
         if echo "$line" | grep -qP '[^\x00-\x7F]' 2>/dev/null; then
-            line=$(python3 -c "import encodings.idna; parts=\'$line\'.split(\'.\'); print(\'.\'.join(encodings.idna.ToASCII(p).decode() for p in parts))" 2>/dev/null || echo "$line")
+            line=$(L="$line" python3 -c "import os,encodings.idna; parts=os.environ['L'].split('.'); print('.'.join(encodings.idna.ToASCII(p).decode() for p in parts))" 2>/dev/null || echo "$line")
         fi
         [ -n "$result" ] && result="$result,"
         result="$result\"domain:$line\""
