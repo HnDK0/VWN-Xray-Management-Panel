@@ -978,16 +978,9 @@ _run_auto() {
     vwn_conf_set "VWN_LANG" "$OPT_LANG"
     _initLang
 
-    # Системный DNS — предотвращает утечку через DNS хостера
-    setupSystemDNS
-
     # Системные пакеты + swap
     echo -e "${cyan}━━━ System packages ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
     identifyOS
-
-    # ✅ ВАЖНО: DNS НУЖНО НАСТРАИВАТЬ ДО СОЗДАНИЯ СВОПА!
-    # После создания свопа ядро замораживает процессы и systemd-resolved зависает на 90 секунд
-    setupSystemDNS
     
     # ✅ Убиваем все процессы apt ПЕРЕД созданием свопа!
     fuser -kk /var/lib/dpkg/lock* 2>/dev/null || true
