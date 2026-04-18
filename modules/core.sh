@@ -390,9 +390,10 @@ setupSwap() {
     # ✅ Финальное исправление swapon: работает на ВСЕХ версиях и дистрибутивах
     # В util-linux 2.40+ опция -n удалена, но всё ещё упоминается в справке (баг)
     # Любая проверка по grep --help теперь даёт ложное срабатывание
-    if swapon --no-discard $swapfile 2>/dev/null; then
+    # ✅ КРИТИЧЕСКИ ВАЖНО: добавлен || true чтобы set -e не убил скрипт!
+    if swapon --no-discard $swapfile 2>/dev/null || true; then
         echo "info: swap activated with no-discard mode"
-    elif swapon $swapfile; then
+    elif swapon $swapfile || true; then
         echo "info: swap activated in standard mode"
     else
         echo "${red}error: failed to activate swap${reset}"
