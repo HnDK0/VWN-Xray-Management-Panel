@@ -984,8 +984,12 @@ _run_auto() {
     # Системные пакеты + swap
     echo -e "${cyan}━━━ System packages ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
     identifyOS
+
+    # ✅ ВАЖНО: DNS НУЖНО НАСТРАИВАТЬ ДО СОЗДАНИЯ СВОПА!
+    # После создания свопа ядро замораживает процессы и systemd-resolved зависает на 90 секунд
+    setupSystemDNS
     
-    # ✅ Убиваем все процессы apt ПЕРЕД созданием свопа! (ядро зависает на время создания свопа и рвет соединения)
+    # ✅ Убиваем все процессы apt ПЕРЕД созданием свопа!
     fuser -kk /var/lib/dpkg/lock* 2>/dev/null || true
     rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/cache/apt/archives/lock 2>/dev/null
     pkill -9 apt apt-get dpkg 2>/dev/null || true
@@ -993,7 +997,6 @@ _run_auto() {
     
     setupSwap
     
-    # ✅ НЕ делаем повторный apt update! Он уже был вызван в fix_apt_mirrors ранее
     rm -f /var/lib/dpkg/lock* 2>/dev/null && dpkg --configure -a 2>/dev/null || true
     for p in tar gpg unzip jq nano ufw socat curl qrencode python3; do
         installPackage "$p" &>/dev/null || true
