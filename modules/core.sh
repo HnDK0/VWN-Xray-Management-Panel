@@ -287,16 +287,17 @@ installPackage() {
     echo -n "  ${pkg}... "
     prepareApt
     
-    if timeout 60 yes '' | ${PACKAGE_MANAGEMENT_INSTALL} "$pkg" >/dev/null; then
+    export DEBIAN_FRONTEND=noninteractive
+    if timeout 120 ${PACKAGE_MANAGEMENT_INSTALL} "$pkg" >/dev/null 2>&1; then
         echo "${green}OK${reset}"
         return 0
     fi
     
     echo "${yellow}RETRY${reset}"
     echo "  info: Fixing apt state for $pkg..."
-    timeout 120 ${PACKAGE_MANAGEMENT_UPDATE} >/dev/null || true
+    timeout 120 ${PACKAGE_MANAGEMENT_UPDATE} >/dev/null 2>&1 || true
     
-    if timeout 120 yes '' | ${PACKAGE_MANAGEMENT_INSTALL} "$pkg"; then
+    if timeout 180 ${PACKAGE_MANAGEMENT_INSTALL} "$pkg" >/dev/null 2>&1; then
         echo "  info: $pkg installed after fix."
         return 0
     else
