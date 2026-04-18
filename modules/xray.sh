@@ -25,112 +25,7 @@ print(flag)
     fi
 }
 
-# Возвращает суффикс активных Global режимов для имени конфига
-# Примеры: " 🌐☁️🇩🇪", " 🌐🔱🇳🇱🌉🇺🇸🧅🇫🇷", ""
-# Split режимы НЕ отображаются — только Global
-_getActiveModesSuffix() {
-    local suffix=""
-    local has_global=false
-    
-    # Проверяем WARP Global
-    local warp_global=false
-    if [ -f "$configPath" ]; then
-        local warp_mode
-        warp_mode=$(jq -r '.routing.rules[] | select(.outboundTag=="warp") | if .port == "0-65535" then "Global" else "OFF" end' "$configPath" 2>/dev/null | head -1)
-        [ "$warp_mode" = "Global" ] && warp_global=true
-    fi
-    
-    # Проверяем Psiphon Global + страна
-    local psiphon_global=false
-    local psiphon_country=""
-    if [ -f "$configPath" ]; then
-        local ps_mode
-        ps_mode=$(jq -r '.routing.rules[] | select(.outboundTag=="psiphon") | if .port == "0-65535" then "Global" else "OFF" end' "$configPath" 2>/dev/null | head -1)
-        [ "$ps_mode" = "Global" ] && psiphon_global=true
-    fi
-    [ "$psiphon_global" = true ] && [ -f "$psiphonConfigFile" ] &&         psiphon_country=$(jq -r '.EgressRegion // ""' "$psiphonConfigFile" 2>/dev/null)
-    
-    # Проверяем Relay Global + страна (через ip-api на RELAY_HOST)
-    local relay_global=false
-    local relay_country=""
-    if [ -f "$configPath" ]; then
-        local relay_mode
-        relay_mode=$(jq -r '.routing.rules[] | select(.outboundTag=="relay") | if .port == "0-65535" then "Global" else "OFF" end' "$configPath" 2>/dev/null | head -1)
-        [ "$relay_mode" = "Global" ] && relay_global=true
-    fi
-    if [ "$relay_global" = true ] && [ -f "$relayConfigFile" ]; then
-        local relay_host=""
-        relay_host=$(source "$relayConfigFile" 2>/dev/null && echo "$RELAY_HOST")
-        if [ -n "$relay_host" ]; then
-            relay_country=$(curl -s --connect-timeout 5 "http://ip-api.com/line/${relay_host}?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
-        fi
-    fi
-    
-    # Проверяем TOR Global + страна
-    local tor_global=false
-    local tor_country=""
-    if [ -f "$configPath" ]; then
-        local t_mode
-        t_mode=$(jq -r '.routing.rules[] | select(.outboundTag=="tor") | if .port == "0-65535" then "Global" else "OFF" end' "$configPath" 2>/dev/null | head -1)
-        [ "$t_mode" = "Global" ] && tor_global=true
-    fi
-    [ "$tor_global" = true ] &&         tor_country=$(grep "^ExitNodes" "$TOR_CONFIG" 2>/dev/null | grep -oP '\{[A-Z]+\}' | tr -d '{}' | head -1)
-    
-    # Если хоть один Global — добавляем 🌐
-    [ "$warp_global" = true ] || [ "$psiphon_global" = true ] || [ "$relay_global" = true ] || [ "$tor_global" = true ] && has_global=true
-    [ "$has_global" = true ] && suffix=" 🌐"
-    
-    # WARP: ☁️ + флаг страны (запрос через WARP socks5)
-    if [ "$warp_global" = true ]; then
-        local warp_country=""
-        warp_country=$(curl -s --connect-timeout 5 --socks5 127.0.0.1:40000 "http://ip-api.com/line/?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
-        if [ -n "$warp_country" ] && [[ "$warp_country" =~ ^[A-Z]{2}$ ]]; then
-            local wflag
-            wflag=$(python3 -c "c='${warp_country}'; print(''.join(chr(0x1F1E6 + ord(ch) - ord('A')) for ch in c))" 2>/dev/null)
-            [ -n "$wflag" ] && suffix="$suffix ☁️$wflag"
-        else
-            suffix="$suffix ☁️"
-        fi
-    fi
-    
-    # Psiphon: 🔱 + флаг страны
-    if [ "$psiphon_global" = true ]; then
-        if [ -n "$psiphon_country" ] && [[ "$psiphon_country" =~ ^[A-Z]{2}$ ]]; then
-            local pflag
-            pflag=$(python3 -c "c='${psiphon_country}'; print(''.join(chr(0x1F1E6 + ord(ch) - ord('A')) for ch in c))" 2>/dev/null)
-            [ -n "$pflag" ] && suffix="$suffix 🔱$pflag"
-        else
-            suffix="$suffix 🔱"
-        fi
-    fi
-    
-    # Relay: 🌉 + флаг страны
-    if [ "$relay_global" = true ]; then
-        if [ -n "$relay_country" ] && [[ "$relay_country" =~ ^[A-Z]{2}$ ]]; then
-            local rflag
-            rflag=$(python3 -c "c='${relay_country}'; print(''.join(chr(0x1F1E6 + ord(ch) - ord('A')) for ch in c))" 2>/dev/null)
-            [ -n "$rflag" ] && suffix="$suffix 🌉$rflag"
-        else
-            suffix="$suffix 🌉"
-        fi
-    fi
-    
-    # TOR: 🧅 + флаг страны
-    if [ "$tor_global" = true ]; then
-        if [ -n "$tor_country" ] && [[ "$tor_country" =~ ^[A-Z]{2}$ ]]; then
-            local tflag
-            tflag=$(python3 -c "c='${tor_country}'; print(''.join(chr(0x1F1E6 + ord(ch) - ord('A')) for ch in c))" 2>/dev/null)
-            [ -n "$tflag" ] && suffix="$suffix 🧅$tflag"
-        else
-            suffix="$suffix 🧅"
-        fi
-    fi
-    
-    # Убираем лишние пробелы
-    echo "$suffix" | sed 's/^ *//;s/ *$//;s/  */ /g'
-}
-
-# Формирует красивое имя конфига: 🇩🇪 VL-WS | label 🇩🇪 🌐🧅
+# Формирует красивое имя конфига: 🇩🇪 VL-WS | label 🇩🇪
 # Аргументы: тип (WS|Reality), label, [ip]
 _getConfigName() {
     local type="$1"
@@ -138,134 +33,19 @@ _getConfigName() {
     local ip="${3:-$(getServerIP)}"
     local flag
     flag=$(_getCountryFlag "$ip")
-    local modes
-    modes=$(_getActiveModesSuffix)
     case "$type" in
-        WS)       echo "${flag} VL-WS | ${label} ${flag}${modes}" ;;
-        Reality)  echo "${flag} VL-Reality | ${label} ${flag}${modes}" ;;
-        *)        echo "${flag} VL-${type} | ${label} ${flag}${modes}" ;;
+        WS)       echo "${flag} VL-WS | ${label} ${flag}" ;;
+        Reality)  echo "${flag} VL-Reality | ${label} ${flag}" ;;
+        *)        echo "${flag} VL-${type} | ${label} ${flag}" ;;
     esac
 }
 
 installXray() {
     command -v xray &>/dev/null && { echo "info: xray already installed."; return; }
-
-    # Предварительно ставим unzip — официальный скрипт Xray требует его для распаковки
-    installPackage "unzip" || true
-
-    # Запускаем официальный установщик
-    local install_ok=false
-    if bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install 2>&1; then
-        command -v xray &>/dev/null && install_ok=true
-    fi
-
-    # Восстанавливаем терминал — официальный скрипт Xray ломает tty (убирает переносы строк)
-    stty sane 2>/dev/null || true
-
-    if ! $install_ok; then
-        echo "${yellow}Official Xray installer failed, trying direct download...${reset}"
-        _installXrayDirect || { echo "${red}Xray installation failed.${reset}"; return 1; }
-    fi
-
+    bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
     create_xray_user
     fix_xray_service
     setup_xray_logs
-    _ensureXrayService
-}
-
-# Прямая загрузка бинаря Xray с GitHub Releases — fallback при недоступности официального установщика
-_installXrayDirect() {
-    local ARCH ARCH_TAG
-    ARCH=$(uname -m)
-    case "$ARCH" in
-        x86_64)  ARCH_TAG="64" ;;
-        aarch64) ARCH_TAG="arm64-v8a" ;;
-        armv7l)  ARCH_TAG="arm32-v7a" ;;
-        *)       echo "${red}Unsupported arch: $ARCH${reset}"; return 1 ;;
-    esac
-
-    # Получаем последний тег версии
-    local version
-    version=$(curl -fsSL --connect-timeout 15 \
-        "https://api.github.com/repos/XTLS/Xray-core/releases/latest" 2>/dev/null \
-        | grep '"tag_name"' | head -1 | grep -oE 'v[0-9]+\.[0-9.]+')
-    [ -z "$version" ] && version="v24.12.31"
-
-    local tmpdir
-    tmpdir=$(mktemp -d)
-    # shellcheck disable=SC2064
-    trap "rm -rf '$tmpdir'" RETURN
-
-    local zip_url="https://github.com/XTLS/Xray-core/releases/download/${version}/Xray-linux-${ARCH_TAG}.zip"
-    echo "info: Downloading Xray ${version} (${ARCH_TAG})..."
-
-    if curl -fsSL --connect-timeout 30 --retry 2 "$zip_url" -o "$tmpdir/xray.zip" 2>/dev/null; then
-        # Распаковываем: сначала unzip, потом python3 как fallback
-        if command -v unzip &>/dev/null; then
-            unzip -q -o "$tmpdir/xray.zip" xray -d "$tmpdir/" 2>/dev/null || \
-            unzip -q -o "$tmpdir/xray.zip" -d "$tmpdir/" 2>/dev/null || true
-        else
-            python3 -c "
-import zipfile, sys
-with zipfile.ZipFile(sys.argv[1]) as z:
-    z.extractall(sys.argv[2])
-" "$tmpdir/xray.zip" "$tmpdir/" 2>/dev/null || true
-        fi
-    fi
-
-    local xray_bin="$tmpdir/xray"
-    if [ ! -f "$xray_bin" ] || [ ! -s "$xray_bin" ]; then
-        echo "${red}Direct download failed: could not extract xray binary${reset}"
-        return 1
-    fi
-
-    install -m 755 "$xray_bin" /usr/local/bin/xray
-    echo "${green}Xray ${version} installed to /usr/local/bin/xray${reset}"
-
-    # Скачиваем geo-базы
-    mkdir -p /usr/local/share/xray
-    for dat in geoip.dat geosite.dat; do
-        curl -fsSL --connect-timeout 15 \
-            "https://github.com/v2fly/geoip/releases/latest/download/${dat}" \
-            -o "/usr/local/share/xray/${dat}" 2>/dev/null || true
-    done
-    return 0
-}
-
-# Создаёт xray.service если официальный установщик его не создал
-_ensureXrayService() {
-    local svc_found=false
-    for f in /etc/systemd/system/xray.service /usr/lib/systemd/system/xray.service /lib/systemd/system/xray.service; do
-        [ -f "$f" ] && svc_found=true && break
-    done
-
-    if ! $svc_found; then
-        echo "info: Creating xray.service manually..."
-        cat > /etc/systemd/system/xray.service << 'EOF'
-[Unit]
-Description=Xray Service
-Documentation=https://github.com/xtls
-After=network.target nss-lookup.target
-
-[Service]
-User=xray
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-NoNewPrivileges=true
-ExecStart=/usr/local/bin/xray run -config /usr/local/etc/xray/config.json
-Restart=on-failure
-RestartPreventExitStatus=23
-LimitNOFILE=infinity
-
-[Install]
-WantedBy=multi-user.target
-EOF
-        systemctl daemon-reload
-        echo "info: xray.service created."
-    fi
-
-    # Убеждаемся что директория конфига существует
-    mkdir -p /usr/local/etc/xray
 }
 
 writeXrayConfig() {
@@ -274,50 +54,108 @@ writeXrayConfig() {
     local domain="$3"
     local new_uuid
     local USERS_FILE="${USERS_FILE:-/usr/local/etc/xray/users.conf}"
-
     # Если users.conf уже есть — берём UUID первого пользователя
     if [ -f "$USERS_FILE" ] && [ -s "$USERS_FILE" ]; then
         new_uuid=$(cut -d'|' -f1 "$USERS_FILE" | head -1)
     fi
     [ -z "$new_uuid" ] && new_uuid=$(cat /proc/sys/kernel/random/uuid)
-
     mkdir -p /usr/local/etc/xray /var/log/xray
 
-    # Проверка существования шаблона
-    if [ ! -f "$VWN_CONFIG_DIR/xray_ws.json" ]; then
-        echo "error: xray_ws.json template not found" >&2
-        return 1
-    fi
-
-    # Автодетект формата шаблона:
-    # Если шаблон содержит плейсхолдеры __UUID__ / __PORT__ — используем render_config (текстовая замена).
-    # Если шаблон — валидный JSON с числовыми значениями — используем jq.
-    if grep -qE '__UUID__|__PORT__|__PATH__|__DOMAIN__' "$VWN_CONFIG_DIR/xray_ws.json" 2>/dev/null; then
-        render_config "$VWN_CONFIG_DIR/xray_ws.json" "$configPath" \
-            UUID    "$new_uuid" \
-            PORT    "$xrayPort" \
-            PATH    "$wsPath" \
-            DOMAIN  "$domain"
-    else
-        jq \
-            --arg port   "$xrayPort" \
-            --arg path   "$wsPath" \
-            --arg domain "$domain" \
-            --arg uuid   "$new_uuid" \
-            '
-                .inbounds[0].port = ($port | tonumber)
-                | .inbounds[0].streamSettings.wsSettings.path = $path
-                | .inbounds[0].streamSettings.wsSettings.host = $domain
-                | .inbounds[0].settings.clients[0].id = $uuid
-            ' "$VWN_CONFIG_DIR/xray_ws.json" > "$configPath"
-    fi
-
-    # Валидация результата
-    if ! jq . "$configPath" >/dev/null 2>&1; then
-        echo "error: writeXrayConfig produced invalid JSON at $configPath" >&2
-        cat "$configPath" >&2
-        return 1
-    fi
+    cat > "$configPath" << EOF
+{
+    "log": {
+        "access": "none",
+        "error": "/var/log/xray/error.log",
+        "loglevel": "error"
+    },
+    "inbounds": [{
+        "port": $xrayPort,
+        "listen": "127.0.0.1",
+        "protocol": "vless",
+        "settings": {
+            "clients": [{"id": "$new_uuid"}],
+            "decryption": "none"
+        },
+        "streamSettings": {
+            "network": "ws",
+            "wsSettings": {
+                "path": "$wsPath",
+                "host": "$domain",
+                "heartbeatPeriod": 30
+            },
+            "sockopt": {
+                "tcpKeepAliveIdle": 100,
+                "tcpKeepAliveInterval": 10,
+                "tcpKeepAliveRetry": 3
+            }
+        },
+        "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}
+    }],
+    "outbounds": [
+        {
+            "tag": "free",
+            "protocol": "freedom",
+            "settings": {"domainStrategy": "UseIPv4"}
+        },
+        {
+            "tag": "warp",
+            "protocol": "socks",
+            "settings": {"servers": [{"address": "127.0.0.1", "port": 40000}]}
+        },
+        {
+            "tag": "block",
+            "protocol": "blackhole"
+        }
+    ],
+    "routing": {
+        "domainStrategy": "AsIs",
+        "rules": [
+            {
+                "type": "field",
+                "ip": ["geoip:private"],
+                "outboundTag": "block"
+            },
+            {
+                "type": "field",
+                "port": "25, 587, 465, 2525",
+                "network": "tcp",
+                "outboundTag": "block"
+            },
+            {
+                "type": "field",
+                "protocol": ["bittorrent"],
+                "outboundTag": "block"
+            },
+            {
+                "type": "field",
+                "domain": [
+                    "domain:openai.com",
+                    "domain:chatgpt.com",
+                    "domain:oaistatic.com",
+                    "domain:oaiusercontent.com",
+                    "domain:auth0.openai.com"
+                ],
+                "outboundTag": "warp"
+            },
+            {
+                "type": "field",
+                "port": "0-65535",
+                "outboundTag": "free"
+            }
+        ]
+    },
+    "policy": {
+        "levels": {
+            "0": {
+                "handshake": 4,
+                "connIdle": 300,
+                "uplinkOnly": 2,
+                "downlinkOnly": 5
+            }
+        }
+    }
+}
+EOF
 }
 
 getConfigInfo() {
@@ -440,7 +278,7 @@ getQrCode() {
 
     if [ -n "$sub_url" ]; then
         echo -e "${cyan}[ Subscription URL ]${reset}"
-        qrencode -s 3 -m 2 -t ANSIUTF8 "$sub_url" 2>/dev/null || true
+        qrencode -s 1 -m 1 -t ANSIUTF8 "$sub_url" 2>/dev/null || true
         echo -e "\n${green}${sub_url}${reset}"
         echo -e "${yellow}v2rayNG: + → Subscription group → URL${reset}"
         echo ""
@@ -505,8 +343,10 @@ modifyXrayUUID() {
         # Нет users.conf — меняем только в конфигах напрямую
         local new_uuid
         new_uuid=$(cat /proc/sys/kernel/random/uuid)
-        [ -f "$configPath" ] && edit_json "$configPath" ".inbounds[0].settings.clients[0].id = \"$new_uuid\""
-        [ -f "$realityConfigPath" ] && edit_json "$realityConfigPath" ".inbounds[0].settings.clients[0].id = \"$new_uuid\""
+        [ -f "$configPath" ] && jq ".inbounds[0].settings.clients[0].id = \"$new_uuid\"" \
+            "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
+        [ -f "$realityConfigPath" ] && jq ".inbounds[0].settings.clients[0].id = \"$new_uuid\"" \
+            "$realityConfigPath" > "${realityConfigPath}.tmp" && mv "${realityConfigPath}.tmp" "$realityConfigPath"
         systemctl restart xray xray-reality 2>/dev/null || true
         echo "${green}$(msg new_uuid): $new_uuid${reset}"
     fi
@@ -520,7 +360,8 @@ modifyXrayPort() {
     if ! _validatePort "$xrayPort" &>/dev/null; then
         echo "${red}$(msg invalid_port)${reset}"; return 1
     fi
-    edit_json "$configPath" ".inbounds[0].port = $xrayPort"
+    jq ".inbounds[0].port = $xrayPort" \
+        "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
     sed -i "s|127.0.0.1:${oldPort}|127.0.0.1:${xrayPort}|g" "$nginxPath"
     systemctl restart xray nginx
     echo "${green}$(msg port_changed) $xrayPort${reset}"
@@ -596,16 +437,7 @@ modifyDomain() {
         "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
     userDomain="$new_domain"
     configCert
-
-    # Если Vision активен, пересобираем nginx в режиме Vision
-    if systemctl is-active --quiet xray-vision 2>/dev/null; then
-        local proxy_url
-        proxy_url=$(vwn_conf_get STUB_URL 2>/dev/null || echo "https://www.bing.com/")
-        writeNginxConfigVision "$proxy_url" "$new_domain"
-        systemctl restart nginx xray xray-vision
-    else
-        systemctl restart nginx xray
-    fi
+    systemctl restart nginx xray
 }
 
 CONNECT_HOST_FILE="/usr/local/etc/xray/connect_host"
@@ -652,43 +484,4 @@ updateXrayCore() {
     bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
     systemctl restart xray xray-reality 2>/dev/null || true
     echo "${green}$(msg xray_updated)${reset}"
-}
-
-rebuildXrayConfigs() {
-    local skip_sub="${1:-false}"
-    if [ ! -f "$configPath" ]; then
-        echo "${red}$(msg xray_not_installed)${reset}"; return 1;
-    fi
-
-    local xrayPort wsPath domain
-    xrayPort=$(jq -r '.inbounds[0].port // ""' "$configPath" 2>/dev/null)
-    wsPath=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // ""' "$configPath" 2>/dev/null)
-    domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // ""' "$configPath" 2>/dev/null)
-
-    if [ -z "$xrayPort" ] || [ -z "$wsPath" ] || [ -z "$domain" ]; then
-        echo "${red}$(msg xray_not_installed) (missing params)${reset}"; return 1;
-    fi
-
-    echo -e "${cyan}Rebuilding WebSocket configs...${reset}"
-
-    echo -e "  ${cyan}[1/3] config.json...${reset}"
-    writeXrayConfig "$xrayPort" "$wsPath" "$domain"
-
-    echo -e "  ${cyan}[2/3] Applying active features...${reset}"
-    [ -f "$warpDomainsFile" ] && applyWarpDomains 2>/dev/null || true
-    [ -f "$relayConfigFile" ] && applyRelayDomains 2>/dev/null || true
-    [ -f "$psiphonConfigFile" ] && applyPsiphonDomains 2>/dev/null || true
-    [ -f "$torConfigFile" ] && applyTorDomains 2>/dev/null || true
-    _adblockIsEnabled && _adblockApplyToConfig "$configPath" 2>/dev/null || true
-    _privacyIsEnabled && _xrayDisableLog "$configPath" 2>/dev/null || true
-
-    echo -e "  ${cyan}[3/3] Restarting services...${reset}"
-    nginx -t && systemctl reload nginx || {
-        echo "${red}$(msg nginx_syntax_err)${reset}"; return 1;
-    }
-    systemctl restart xray 2>/dev/null || true
-
-    $skip_sub || rebuildAllSubFiles 2>/dev/null || true
-
-    echo "${green}Done. WebSocket configs rebuilt.${reset}"
 }

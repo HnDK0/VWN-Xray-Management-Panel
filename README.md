@@ -3,7 +3,7 @@
 
 # VWN — Xray Management Panel
 
-Automated installer for Xray VLESS with WebSocket+TLS, Reality, Vision, Cloudflare WARP, CDN, Relay, Psiphon, and Tor support.
+Automated installer for Xray VLESS with WebSocket+TLS, Reality, Cloudflare WARP, CDN, Relay, Psiphon, and Tor support.
 
 ## Quick Install
 
@@ -21,14 +21,6 @@ Update modules (without touching configs):
 vwn update
 ```
 
-Quick commands:
-```bash
-vwn status     # Full diagnostics
-vwn backup     # Create backup
-vwn restore    # Restore from backup
-vwn qr         # Show subscription QR
-```
-
 ## Unattended Install (`--auto`)
 
 Fully non-interactive installation — pass all parameters as arguments, no prompts.
@@ -39,36 +31,22 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
   --auto --domain vpn.example.com
 ```
 
-### Full (WS + Reality + Vision, SSL via Cloudflare DNS, BBR, Fail2Ban)
+### Full (WS + Reality, SSL via Cloudflare DNS, BBR, Fail2Ban)
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh) \
   --auto \
   --domain vpn.example.com \
   --stub https://microsoft.com/ \
   --cert-method cf --cf-email me@example.com --cf-key YOUR_CF_KEY \
-  --reality --reality-dest www.apple.com:443 \
-  --vision \
+  --reality --reality-dest www.apple.com:443 --reality-port 8443 \
   --bbr --fail2ban
 ```
-
-> **Note on Vision + WS:** Vision and WS coexist on the same domain. Vision takes port 443 directly; Nginx (and WS) moves to internal port 7443 as a fallback backend. Cloudflare proxy (orange cloud) must be **disabled** for the domain — Vision uses raw TLS.
 
 ### Reality only (no WS, no Nginx, no domain needed)
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh) \
   --auto --skip-ws \
   --reality --reality-dest microsoft.com:443 --reality-port 8443
-```
-
-### Full stack (all security features + Psiphon + SSH port change)
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh) \
-  --auto \
-  --domain vpn.example.com \
-  --ssh-port 22222 \
-  --cpu-guard --ipv6 --fail2ban --jail --adblock --privacy \
-  --psiphon --psiphon-country DE \
-  --reality --bbr
 ```
 
 ### All `--auto` options
@@ -86,60 +64,44 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
 | `--cf-email EMAIL` | — | Cloudflare account email (required for `--cert-method cf`) |
 | `--cf-key KEY` | — | Cloudflare API key (required for `--cert-method cf`) |
 | `--skip-ws` | off | Skip WS install entirely (Reality-only mode) |
-| `--ssh-port PORT` | — | Change SSH port (1–65535). Applied **before** Fail2Ban |
-| `--stream` | off | Activate Stream SNI — serve WS + Reality on port 443 via SNI multiplexing. **Mutually exclusive with `--vision`** |
-| `--vision` | off | Install VLESS+TLS+Vision (direct on port 443; Nginx/WS moves to internal 7443). Requires WS+TLS. **Mutually exclusive with `--stream`** |
-| `--ipv6` | off | Enable IPv6 system-wide |
-| `--cpu-guard` | off | Enable CPU Guard (priority for xray/nginx) |
 | `--bbr` | off | Enable BBR TCP congestion control |
-| `--fail2ban` | off | Install Fail2Ban |
-| `--jail` | off | Enable WebJail (nginx-probe, requires `--fail2ban`) |
-| `--adblock` | off | Enable Adblock (geosite:category-ads-all) |
-| `--privacy` | off | Enable Privacy Mode (no traffic logs) |
-| `--psiphon` | off | Install Psiphon proxy |
-| `--psiphon-country CODE` | `DE` | Psiphon exit country (DE, NL, US, GB, FR, AT, CA, SE) |
-| `--psiphon-warp` | off | Route Psiphon through WARP (requires WARP) |
+| `--fail2ban` | off | Install Fail2Ban + WebJail (nginx scanner protection) |
 | `--no-warp` | off | Skip Cloudflare WARP setup |
 
-> **SSL methods:**
-> `standalone` — temporarily opens port 80 for Let's Encrypt HTTP-01 challenge. The domain must already point to the server.
+> **SSL methods:**  
+> `standalone` — temporarily opens port 80 for Let's Encrypt HTTP-01 challenge. The domain must already point to the server.  
 > `cf` — uses Cloudflare DNS API, port 80 not needed. Recommended when the domain is behind Cloudflare.
-
-> **Vision:** Takes over port 443 completely. Nginx is moved to internal port 7443. The TLS certificate is **shared** with WS — no separate certificate is issued. The domain must have a **direct** A-record pointing to the server IP. Cloudflare orange-cloud proxy must be **disabled** — Vision uses raw TLS, not HTTP, so Cloudflare cannot proxy it.
-
-> **❗ Important:** `--stream` and `--vision` are **mutually exclusive**. You can use only one of them at the same time.
 
 ## Requirements
 
 - Ubuntu 22.04+ / Debian 11+
 - Root access
-- A domain pointed at the server (for WS+TLS and Vision)
+- A domain pointed at the server (for WS+TLS)
 - For Reality — only the server IP is needed, no domain required
 
 ## Features
 
-- ✅ **VLESS + WebSocket + TLS** — connections via Cloudflare CDN (port 443)
-- ✅ **VLESS + Reality** — direct connections without CDN (router, Clash), installed together with WS or standalone
-- ✅ **VLESS + TLS + Vision** — direct connections with `xtls-rprx-vision` flow, shared TLS cert on port 443, fallback to nginx stub
-- ✅ **Stream SNI** — serve WS and Reality on port 443 via SNI multiplexing (Vision runs directly on 443, incompatible with Stream)
-- ✅ **Nginx mainline** — reverse proxy with a stub/decoy site, auto-installs from nginx.org (>= 1.19)
-- ✅ **Cloudflare WARP** — route selected domains or all traffic (applied to all configs: WS, Reality, Vision)
-- ✅ **Psiphon** — censorship bypass with exit country selection, supports plain and WARP+Psiphon chained mode
-- ✅ **Tor** — censorship bypass with exit country selection, bridge support (obfs4, snowflake, meek-azure), circuit renewal
-- ✅ **Relay** — external outbound (VLESS/VMess/Trojan/SOCKS5 via link)
+- ✅ **VLESS + WebSocket + TLS** — connections via Cloudflare CDN
+- ✅ **VLESS + Reality** — direct connections without CDN (router, Clash) — installed together with WS
+- ✅ **Nginx mainline** — reverse proxy with a stub/decoy site, auto-installs from nginx.org
+- ✅ **Cloudflare WARP** — route selected domains or all traffic
+- ✅ **Psiphon** — censorship bypass with exit country selection
+- ✅ **Tor** — censorship bypass with exit country selection, bridge support (obfs4, snowflake, meek)
+- ✅ **Relay** — external outbound (VLESS/VMess/Trojan/SOCKS via link)
 - ✅ **CF Guard** — blocks direct access, only Cloudflare IPs allowed
 - ✅ **Multi-user** — multiple UUIDs with labels, individual QR codes and subscription URLs
-- ✅ **Subscription pages** — per-user `.txt` (clients), `.html` (browser with QR + copy buttons + Clash YAML + "Copy all" for multiple VLESS links)
-- ✅ **Subscription auth** — `/sub/` pages protected by HTTP basic auth
+- ✅ **Subscription URL** — per-user `.txt` (clients) and `.html` (browser with QR) pages
 - ✅ **CPU Guard** — prioritises xray/nginx over background processes, prevents host throttling
-- ✅ **Privacy Mode** — Xray access logs off, Nginx access_log off, journald suppressed for all Xray services, `/var/log/xray` on tmpfs (RAM), existing logs shredded
-- ✅ **Adblock** — blocks ads and trackers via built-in `geosite:category-ads-all` (EasyList, EasyPrivacy, AdGuard, regional lists); applied to all configs
-- ✅ **Backup & Restore** — manual backup/restore/delete of all configs including Vision
-- ✅ **Diagnostics** — full system check with per-component breakdown including Vision
+- ✅ **Privacy Mode** — Xray access logs off, Nginx access_log off, journald suppressed, `/var/log/xray` on tmpfs (RAM), existing logs shredded
+- ✅ **Adblock** — blocks ads and trackers via built-in `geosite:category-ads-all` (EasyList, EasyPrivacy, AdGuard, regional lists); no extra software, updates with Xray
+- ✅ **Backup & Restore** — manual backup/restore of all configs
+- ✅ **Diagnostics** — full system check with per-component breakdown
 - ✅ **Fail2Ban + Web-Jail** — brute-force and scanner protection
 - ✅ **BBR** — TCP acceleration
 - ✅ **Anti-Ping** — ICMP disabled
 - ✅ **IPv6 toggle** — enable/disable system-wide IPv6
+- ✅ **Subscription auth** — `/sub/` pages protected by HTTP basic auth, auto-generated credentials, manageable via menu
+- ✅ **Stream SNI** — optionally serve both Nginx (WS) and Reality on port 443 via SNI multiplexing, no extra ports exposed
 - ✅ **Unattended install** — full setup via CLI flags, no interactive prompts
 - ✅ **RU / EN interface** — language selector on first run
 
@@ -149,67 +111,52 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
 Client (CDN/mobile)
     └── Cloudflare CDN → 443/HTTPS → Nginx → VLESS+WS → Xray → outbound
 
-Client (router/Clash — Reality)
-    └── IP:REALITY_PORT/TCP → VLESS+Reality → Xray → outbound        (default)
-    └── IP:443/TCP          → stream SNI → VLESS+Reality → Xray      (with Stream SNI)
+Client (router/Clash/direct)
+    └── IP:8443/TCP → VLESS+Reality → Xray → outbound        (default)
+    └── IP:443/TCP  → stream SNI → VLESS+Reality → Xray      (with Stream SNI enabled)
 
-Client (router/Clash — Vision)
-    └── domain:443/TCP → Xray-Vision (direct TLS termination) → outbound
-                              ↓ fallback (non-Vision traffic)
-                         127.0.0.1:7443 → Nginx (HTTP) → VLESS+WS stub
-
-Stream SNI map (port 443):
-    ws.example.com   → 127.0.0.1:7443   (nginx HTTP → Xray WS)
-    default          → 127.0.0.1:10443  (Xray Reality)
-
-outbound (by routing rules, applied to WS + Reality + Vision):
-    ├── direct  — direct exit (default)
+outbound (by routing rules):
+    ├── free    — direct exit (default)
     ├── warp    — Cloudflare WARP (SOCKS5:40000)
     ├── psiphon — Psiphon tunnel (SOCKS5:40002)
     ├── tor     — Tor (SOCKS5:40003)
     ├── relay   — external server (vless/vmess/trojan/socks)
-    └── block   — blackhole (geoip:private, ads via adblock)
+    └── block   — blackhole (geoip:private, SMTP, BitTorrent)
 ```
 
 ## Ports
 
-| Port | Purpose |
-|------|---------|
-| 22 | SSH (configurable) |
-| 443 | VLESS+WS+TLS via Nginx / VLESS+Vision direct (when Vision installed) |
-| REALITY_PORT | VLESS+Reality (default: 8443, external, without Stream SNI) |
-| 7443¹ | Nginx HTTP (internal, Stream SNI or Vision mode) |
-| 10443¹ | VLESS+Reality (internal, Stream SNI mode) |
-| 40000 | WARP SOCKS5 (local) |
-| 40002 | Psiphon SOCKS5 (local) |
-| 40003 | Tor SOCKS5 (local) |
-| 40004 | Tor Control Port (local) |
+| Port  | Purpose                           |
+|-------|-----------------------------------|
+| 22    | SSH (configurable)                |
+| 443   | VLESS+WS+TLS via Nginx (+ Reality when Stream SNI enabled) |
+| 8443  | VLESS+Reality (default, external) |
+| 7443¹ | Nginx HTTP (internal, Stream SNI mode) |
+| 10443¹| VLESS+Reality (internal, Stream SNI mode) |
+| 40000 | WARP SOCKS5 (warp-cli, local)     |
+| 40002 | Psiphon SOCKS5 (local)            |
+| 40003 | Tor SOCKS5 (local)                |
+| 40004 | Tor Control Port (local)          |
 
-¹ Internal ports when Stream SNI or Vision mode is active.
+¹ Internal ports when Stream SNI is enabled via item 4 → 10.
 
 ## CLI Commands
 
 ```bash
 vwn                  # Open interactive menu
 vwn update           # Update modules (no config changes)
-vwn status           # Run full diagnostics
-vwn backup           # Create backup
-vwn restore          # Restore from backup
-vwn qr               # Show subscription QR code
-vwn open-80          # Open port 80 (for ACME)
-vwn close-80         # Close port 80 (after ACME)
 ```
 
 ## Menu
 
 ```
 ================================================================
-   VWN — Xray Management Panel  01.01.2026 12:00
+   VWN — Xray Management Panel  18.03.2026 12:00
 ================================================================
   ── Protocols ──────────────────────────────────────────
   WS:      RUNNING,  WARP: ACTIVE | Split
   Reality: RUNNING,  SSL: OK (89d)
-  Vision:  RUNNING,  Nginx: RUNNING,  CF Guard: OFF
+  Nginx:   RUNNING,  CF Guard: OFF
   CDN:     cdn.example.com
   ── Tunnels ────────────────────────────────────────────
   Relay: OFF,  Psiphon: OFF,  Tor: OFF
@@ -222,41 +169,44 @@ vwn close-80         # Close port 80 (after ACME)
   ── Protocols ──────────────────────────────────────────
   3.  Manage WS + CDN
   4.  Manage VLESS + Reality
-  5.  Manage Vision (VLESS+TLS+Vision)
 
   ── Tunnels ────────────────────────────────────────────
-  6.  Manage WARP
-  7.  Manage Relay (external)
-  8.  Manage Psiphon
-  9.  Manage Tor
+  5.  Manage Relay (external)
+  6.  Manage Psiphon
+  7.  Manage Tor
+
+  ── WARP ───────────────────────────────────────────────
+  8.  Toggle WARP mode (Global/Split/OFF)
+  9.  Add domain to WARP
+  10. Remove domain from WARP
+  11. Edit WARP list (Nano)
+  12. Check IP (Real vs WARP)
 
   ── Security ───────────────────────────────────────────
-  10. Enable BBR
-  11. Enable Fail2Ban
-  12. Enable Web-Jail
-  13. Change SSH port
-  14. Manage UFW
-  15. Toggle IPv6
-  16. CPU Guard (priority)
-  17. Adblock (block ads)
+  13. Enable BBR
+  14. Enable Fail2Ban
+  15. Enable Web-Jail
+  16. Change SSH port
+  17. Manage UFW
+  18. Toggle IPv6
+  19. CPU Guard (priority)
+  20. Adblock (block ads)
 
   ── Logs ───────────────────────────────────────────────
-  18. Xray logs (access)
-  19. Xray logs (error)
-  20. Nginx logs (access)
-  21. Nginx logs (error)
-  22. Clear all logs
-  23. Privacy mode (disable logging)
+  21. Xray logs (access)
+  22. Xray logs (error)
+  23. Nginx logs (access)
+  24. Nginx logs (error)
+  25. Clear all logs
+  26. Privacy mode (disable logging)
 
   ── Services ───────────────────────────────────────────
-  24. Restart all services
-  25. Update Xray-core
-  26. Rebuild all configs
-  27. Diagnostics
-  28. Backup & Restore
-  29. Change language
-  30. Full removal
-  31. Manage Stream SNI
+  27. Restart all services
+  28. Update Xray-core
+  29. Diagnostics
+  30. Backup & Restore
+  31. Change language
+  32. Full removal
 
   ── Exit ───────────────────────────────────────────────
   0.  Exit
@@ -267,8 +217,8 @@ vwn close-80         # Close port 80 (after ACME)
 | Status | Meaning |
 |--------|---------|
 | `ACTIVE \| Global` | All traffic routed through tunnel |
-| `ACTIVE \| Split` | Only domains from the list routed through tunnel |
-| `route OFF` | Service running but not in routing |
+| `ACTIVE \| Split` | Only domains from the list |
+| `ACTIVE \| route OFF` | Service running but not in routing |
 | `OFF` | Service not running |
 | `CPU Guard: ON` | xray/nginx have priority over background processes |
 | `Adblock: ON` | Ads and trackers blocked via geosite:category-ads-all |
@@ -279,8 +229,8 @@ vwn close-80         # Close port 80 (after ACME)
 Multiple VLESS UUIDs with labels (e.g. "iPhone Vasya", "Laptop work").
 
 - Add / Remove / Rename users
-- Changes applied instantly to WS, Reality, and Vision configs
-- Individual QR code per user
+- Changes applied instantly to both WS and Reality configs
+- Individual QR code per user (WS and Reality links)
 - Individual subscription URL per user
 - Cannot delete the last user
 - Users stored in `/usr/local/etc/xray/users.conf` (format: `UUID|label|token`)
@@ -293,14 +243,16 @@ Each user gets two personal subscription pages:
 
 ```
 https://your-domain.com/sub/label_token.txt   ← clients (v2rayNG, Hiddify, Nekoray…)
-https://your-domain.com/sub/label_token.html  ← browser page with QR codes + copy buttons + Clash YAML
+https://your-domain.com/sub/label_token.html  ← browser page with QR codes + copy buttons
 ```
 
-The `.txt` file is base64-encoded and contains all connection links (WS+TLS, Reality, and Vision if installed).
-The `.html` page shows each link with a **copy button** and a **QR code on click**, plus a **Clash Meta / Mihomo YAML** block.  
-If there is more than one VLESS link, an extra **Copy all** button is shown.
+The `.txt` file is base64-encoded and contains all connection links (WS+TLS and Reality if installed).  
+The `.html` page shows each link with a **copy button** and a **QR code on click** (one at a time, no clutter).
 
-Subscription pages can be protected with HTTP basic auth (WS menu → item 12).
+- URL does not change when configs are updated — only the content changes
+- URL changes only when the user is renamed
+- Manage via item 2 → item 3 (QR + Subscription URL) or item 2 → item 5 (Rebuild all)
+- **Protected by basic auth** — credentials are auto-generated on first install and stored in `vwn.conf`. Manage via item 3 → 12.
 
 ## WS + CDN Management (item 3)
 
@@ -318,229 +270,158 @@ Subscription pages can be protected with HTTP basic auth (WS menu → item 12).
 | 10 | Manage log auto-clear |
 | 11 | Change UUID |
 | 12 | Subscription auth (basic auth) |
-| 13 | Rebuild WS configs |
-| 14 | Install (choose WS or Reality) |
-| 15 | Remove WS |
+| 13 | Stream SNI — Reality on port 443 |
 
-## VLESS + Reality (item 4)
-
-Direct connections without CDN, hidden behind a real website (Reality protocol).
-
-| Item | Action |
-|------|--------|
-| 1 | Install Reality |
-| 2 | Show QR code |
-| 3 | Show connection info |
-| 4 | Change UUID |
-| 5 | Change port |
-| 6 | Change destination site |
-| 7 | Restart xray-reality |
-| 8 | Show logs |
-| 9 | Remove Reality |
-| 10 | Rebuild Reality configs |
-
-Reality mask sites: `microsoft.com:443`, `www.apple.com:443`, `www.amazon.com:443`, or custom.
-
-## VLESS + TLS + Vision (item 5)
-
-Direct connections with `xtls-rprx-vision` flow. Separate `xray-vision` service listening on port **443**. Requires WS+TLS to be installed first.
-
-**How it works:**
-
-```
-Client → domain:443 → Xray-Vision (direct TLS termination)
-                              ↓ fallback (non-Vision traffic)
-                        127.0.0.1:7443 → Nginx (HTTP) → WS stub
-```
-
-- Vision runs **directly on port 443** — no Stream SNI or nginx proxy needed
-- Vision and Stream SNI are **mutually exclusive** — enabling one disables the other
-- Vision domain must have a **direct DNS A-record** — no Cloudflare proxy (orange cloud must be grey)
-- TLS certificate is **shared** with WS — no separate certificate is issued
-- Non-Vision traffic is forwarded to Nginx on `127.0.0.1:7443` (shared with WS, no SSL on that internal port)
-- All routing features (WARP, Relay, Psiphon, Tor, Adblock, Privacy) apply to Vision automatically
-
-**Connection link format:**
-```
-vless://UUID@dir.example.com:443?security=tls&flow=xtls-rprx-vision&type=tcp&sni=dir.example.com&fp=chrome&allowInsecure=0
-```
-
-**Vision menu (item 5):**
-
-| Item | Action |
-|------|--------|
-| 1 | Install Vision |
-| 2 | Show connection info |
-| 3 | Show QR code |
-| 4 | Change UUID |
-| 5 | Change domain (re-issues certificate) |
-| 6 | Remove Vision |
-| 7 | Rebuild Vision configs |
-
-## Stream SNI (item 31)
-
-Serves WS and Reality on port 443 via nginx `ssl_preread` SNI routing. Nginx reads the SNI field before the TLS handshake and routes traffic to the correct backend.
-
-**Note:** Vision is **not compatible** with Stream SNI. Vision runs directly on port 443 and cannot be routed through the stream proxy. Enabling Stream SNI when Vision is active will fail with an error.
-
-The routing map is dynamic — stored in `vwn.conf` as `STREAM_DOMAINS` and regenerated whenever a domain is added or removed:
-
-```nginx
-stream {
-    map $ssl_preread_server_name $upstream_backend {
-        ws.example.com    127.0.0.1:7443;    # Nginx (HTTP) → Xray WS
-        default           127.0.0.1:10443;   # Xray Reality
-    }
-    server {
-        listen 443;
-        ssl_preread on;
-        proxy_pass $upstream_backend;
-    }
-}
-```
-
-Requires `nginx-full` or `nginx-extras` (built with `--with-stream`). The installer offers to install it automatically.
-
-Before enabling Stream SNI, the script runs preliminary checks: nginx installed/running, WS/Reality configs exist, SSL cert present, stream module available, ports free, **Vision not active**.
-
-## Adblock (item 17)
+## Adblock (item 20)
 
 Blocks ads and trackers for all users of the VPN without any additional software.
 
-Uses `geosite:category-ads-all` — a built-in category in Xray's `geosite.dat`, updated automatically with every `vwn update`. Applied to WS, Reality, and Vision configs simultaneously.
+Uses `geosite:category-ads-all` — a built-in category in Xray's `geosite.dat`, updated automatically with every `vwn update`. No external lists, no DNS servers, no Pi-hole needed.
 
 **Covered lists:** EasyList, EasyPrivacy, AdGuard Base List, Peter Lowe's List, and regional ad lists for CN, RU, JP, KR, IR, TR, UA, DE, FR and others.
 
-## Privacy Mode (item 23)
+**How it works:** matching domains are routed to the `block` outbound (blackhole) — the connection is silently dropped at the Xray level before it leaves the server. Applied to both WS and Reality configs simultaneously.
 
-Prevents anyone with server access from seeing where users connect.
+Protection against duplicate rules — pressing "Enable" repeatedly does not create duplicate entries in the config.
+
+## Privacy Mode (item 26)
+
+Prevents anyone with server access — including the server administrator — from seeing where users connect.
+
+What is applied when enabled:
 
 | Layer | Action |
 |-------|--------|
 | Xray `config.json` | `access: none`, `loglevel: none` |
 | Xray `reality.json` | `access: none`, `loglevel: none` |
-| Xray `vision.json` | `access: none`, `loglevel: none` |
 | Nginx `xray.conf` | `access_log off` |
-| systemd (xray, xray-reality, xray-vision) | `StandardOutput=null`, `StandardError=null` |
+| systemd (xray, xray-reality) | `StandardOutput=null`, `StandardError=null` — nothing reaches journald |
 | `/var/log/xray` | Mounted as **tmpfs** (RAM) — wiped on every reboot |
-| Existing logs | Overwritten with `shred` before clearing (with ext4 journal warning) |
+| Existing logs | Overwritten with `shred` before clearing |
 
-## CPU Guard (item 16)
+The current state is visible in the menu header: `Privacy: ON / OFF`.
 
-Sets `CPUWeight=200` and `Nice=-10` for xray, xray-reality, xray-vision, and nginx.
-Sets `CPUWeight=20` for `user.slice` (SSH sessions, background scripts).
+Disabling the mode rolls back all changes: log levels restored to `error`, `access_log` re-enabled, tmpfs unmounted, journald drop-ins removed.
 
-## 🛡️ DNS Leak Prevention
+## CPU Guard (item 19)
 
-If a DNS test shows your server's DNS, it means the client (phone/PC) is not resolving domains locally.
+Protects against host throttling caused by stray processes consuming CPU.
 
-**What to do:**
-In your application's DNS settings, change **Domain Strategy** to `UseIP`, `IPv4_only`, or `IPIfNonMatch`.
+Sets `CPUWeight=200` and `Nice=-10` for xray, xray-reality, and nginx — they always get CPU first.  
+Sets `CPUWeight=20` for `user.slice` (SSH sessions, background scripts) — limited to ~16% CPU.
 
-**Important:**
-After changing this setting, make sure the application has working DNS servers configured.
-This forces the client to send a ready-made IP to the server, completely hiding the system DNS servers.
+Settings are written to systemd drop-in files and survive reboot:
+```
+/etc/systemd/system/xray.service.d/cpuguard.conf
+/etc/systemd/system/nginx.service.d/cpuguard.conf
+/etc/systemd/system/user.slice.d/cpuguard.conf
+```
 
-## Tunnels (items 6–9)
+Status is shown in the menu header: `CPU Guard: ON / OFF`.
 
-All tunnels support **Global / Split / OFF** modes. Applied to WS, Reality, and Vision configs simultaneously.
+## VLESS + Reality (item 4)
 
-### WARP (item 6)
+Direct connections without CDN. Separate `xray-reality` service.  
+Can be installed **together with WS** during initial setup — the installer asks at the end.  
+Can also be added via `--auto --reality` flag in unattended mode.
 
-**Split** (default domains): `test.com`
+```
+vless://UUID@IP:8443?security=reality&sni=microsoft.com&fp=chrome&pbk=KEY&sid=SID&type=tcp&flow=xtls-rprx-vision
+```
 
-**Global** — all traffic via WARP. **OFF** — removed from routing. Applied to WS, Reality, and Vision configs.
+**Stream SNI (item 4 → 10):** optionally move Reality to port 443, sharing it with Nginx via SNI multiplexing. Nginx reads the SNI before the TLS handshake and routes your domain to nginx HTTP (internally on 8443) and all other SNI names to xray-reality (internally on 10443). Requires `nginx-full` or `nginx-extras` (built with `--with-stream`).
 
-WARP auto-connects with retry logic (up to 3 attempts). Compatible with both old (`--accept-tos`) and new warp-cli versions.
+## Tunnels (items 5–7)
 
-### Relay (item 7)
+All tunnels support **Global / Split / OFF** modes. Applied to both WS and Reality configs.
+
+### Relay (item 5)
 
 Supported: `vless://` `vmess://` `trojan://` `socks5://`
 
-- Configure by pasting the connection link
-- Global mode — all traffic through relay
-- Split mode — only domains from the list
-- IP check through relay (temporary xray instance for non-SOCKS protocols)
+### Psiphon (item 6)
 
-### Psiphon (item 8)
+Exit country selection: DE, NL, US, GB, FR, AT, CA, SE and others.  
+Optional WARP+Psiphon chained mode.
 
-- Exit country selection: DE, NL, US, GB, FR, AT, CA, SE, CH, FI
-- Optional WARP+Psiphon chained mode (Psiphon through WARP SOCKS5)
-- Tunnel mode switch: plain ↔ warp
-- IP check through Psiphon SOCKS5
+### Tor (item 7)
 
-### Tor (item 9)
+Exit country via `ExitNodes`. Bridge support: obfs4, snowflake, meek-azure.  
+**Recommended: Split mode** — Tor is slower than direct internet.
 
-- Exit country via `ExitNodes`: DE, NL, US, GB, FR, SE, CH, FI
-- Bridge support: obfs4, snowflake, meek-azure
-- Circuit renewal via `SIGNAL NEWNYM`
-- Auto-upgrade to official torproject.org repository (0.4.8+)
-- **Recommended: Split mode** — Tor is slower than direct internet
+## WARP (items 8–12)
+
+**Split** (default domains): `openai.com, chatgpt.com, oaistatic.com, oaiusercontent.com, auth0.openai.com`
+
+**Global** — all traffic via WARP. **OFF** — removed from routing.
 
 ## SSL Certificates
 
-**Method 1 — Cloudflare DNS API** (recommended): port 80 not needed.
+**Method 1 — Cloudflare DNS API** (recommended): port 80 not needed.  
 **Method 2 — Standalone**: temporarily opens port 80.
 
-Auto-renewal via cron every 35 days at 03:00 (with pre/post hooks for opening/closing port 80).
+Auto-renewal via cron every 35 days at 03:00.  
+Nginx is started before SSL issuance so the reload hook succeeds.
 
-Both methods are available for WS SSL (item 3 → 5) and Vision SSL (item 5 → 1 or item 5 → 5).
+Both methods are available interactively (item 3 → 5) and via `--cert-method` flag in unattended mode.
 
-## Diagnostics (item 27)
+## CF Guard (item 3 → 7)
+
+Blocks direct server access — only requests from Cloudflare IPs are allowed.  
+Enable after setting up the orange cloud in Cloudflare DNS.  
+Use item 3 → 8 to refresh the Cloudflare IP list.
+
+Real IP restoration (`CF-Connecting-IP`) is applied automatically on install, independent of CF Guard.
+
+## Backup & Restore (item 30)
+
+Backups stored in `/root/vwn-backups/` with timestamps. No auto-deletion.
+
+What is backed up: Xray configs, Nginx + SSL certs, Cloudflare API key, cron tasks, Fail2Ban rules.
+
+## Diagnostics (item 29)
 
 | Section | Checks |
 |---------|--------|
 | System | RAM, disk, swap, clock sync |
 | Xray | Config validity, service status, ports |
-| Vision | Config validity, xray-vision service, port, SSL, DNS |
 | Nginx | Config, service, port 443, SSL expiry, DNS |
 | WARP | warp-svc, connection, SOCKS5 response |
 | Tunnels | Psiphon / Tor / Relay status |
 | Connectivity | Internet, domain reachability |
 
-Each section runs independently and reports OK/FAIL with detailed output.
-
-## Backup & Restore (item 28)
-
-Backups stored in `/root/vwn-backups/` with timestamps. No auto-deletion.
-
-Includes: Xray configs (WS, Reality, Vision), Nginx + SSL certs (including Vision certs), Cloudflare API key, cron tasks, Fail2Ban rules, xray-vision systemd service, sysctl settings.
-
-Backup management: create, list, restore, delete.
+Output: `✓` / `✗` per check, summary of issues at the end.
 
 ## File Structure
 
 ```
 /usr/local/lib/vwn/
 ├── lang.sh       # Localisation (RU/EN)
-├── core.sh       # Variables, utilities, status, vwn_conf_*, findFreePort, rebuildAllConfigs
-├── xray.sh       # Xray WS+TLS config, QR, URL generation
-├── nginx.sh      # Nginx, CDN, SSL, Stream SNI (dynamic map), subscriptions, basic auth
+├── core.sh       # Variables, utilities, status, vwn_conf_*
+├── xray.sh       # Xray WS+TLS config
+├── nginx.sh      # Nginx, CDN, SSL, subscriptions
 ├── reality.sh    # VLESS+Reality
-├── vision.sh     # VLESS+TLS+Vision
-├── warp.sh       # Cloudflare WARP install, registration, domains
-├── relay.sh      # External outbound (VLESS/VMess/Trojan/SOCKS5)
+├── relay.sh      # External outbound
 ├── psiphon.sh    # Psiphon tunnel
-├── tor.sh        # Tor tunnel + bridges
+├── tor.sh        # Tor tunnel
 ├── security.sh   # UFW, BBR, Fail2Ban, SSH, IPv6, CPU Guard
-├── logs.sh       # Logs, logrotate, cron (SSL + log clear)
+├── logs.sh       # Logs, logrotate, cron
 ├── backup.sh     # Backup & Restore
-├── users.sh      # Multi-user management + HTML/TXT subscription pages + Clash YAML
-├── diag.sh       # Diagnostics (incl. Vision)
-├── privacy.sh    # Privacy mode (all Xray services)
-├── adblock.sh    # Adblock (all configs)
-└── menu.sh       # Main menu + install + removal
+├── users.sh      # Multi-user management + HTML subscription
+├── diag.sh       # Diagnostics
+├── privacy.sh    # Privacy mode (log suppression, tmpfs, shred)
+├── adblock.sh    # Adblock (geosite:category-ads-all routing rule)
+└── menu.sh       # Main menu + installWsTls() + --auto entry point
 
 /usr/local/etc/xray/
 ├── config.json              # VLESS+WS config
 ├── reality.json             # VLESS+Reality config
-├── vision.json              # VLESS+TLS+Vision config
-├── vwn.conf                 # VWN settings (lang, domain, STREAM_DOMAINS, vision_port…)
+├── reality_client.txt       # Reality client params
+├── vwn.conf                 # VWN settings (lang, domain, pubkey, privacy_mode…)
 ├── users.conf               # User list (UUID|label|token)
-├── connect_host             # CDN connect address (override default domain)
-├── sub/
+├── sub/                     # Subscription files
 │   ├── label_token.txt      # base64 links for clients
-│   └── label_token.html     # Browser page (QR + copy + Clash YAML)
+│   └── label_token.html     # Browser page (QR + copy)
 ├── warp_domains.txt
 ├── psiphon.json
 ├── psiphon_domains.txt
@@ -548,25 +429,18 @@ Backup management: create, list, restore, delete.
 ├── relay.conf
 └── relay_domains.txt
 
-/etc/nginx/cert/
-├── cert.pem / cert.key      # WS+Vision shared TLS certificate
-└── default.crt / default.key # Fallback self-signed cert
-
 /etc/systemd/system/
 ├── xray.service.d/
-│   ├── cpuguard.conf
-│   └── no-journal.conf
+│   ├── cpuguard.conf        # CPU priority (CPU Guard)
+│   └── no-journal.conf      # Suppress journald (Privacy Mode)
 ├── xray-reality.service.d/
 │   ├── cpuguard.conf
-│   └── no-journal.conf
-├── xray-vision.service        # Vision systemd unit
-├── xray-vision.service.d/
 │   └── no-journal.conf
 ├── nginx.service.d/
 │   └── cpuguard.conf
 ├── user.slice.d/
-│   └── cpuguard.conf
-└── var-log-xray.mount
+│   └── cpuguard.conf        # Limit SSH/background CPU
+└── var-log-xray.mount       # tmpfs mount for /var/log/xray (Privacy Mode)
 
 /root/vwn-backups/
 └── vwn-backup-YYYY-MM-DD_HH-MM-SS.tar.gz
@@ -574,133 +448,45 @@ Backup management: create, list, restore, delete.
 
 ## Troubleshooting
 
-> **Ping won't show VLESS issues.** Ping is ICMP, VLESS runs over TCP/HTTPS. ICMP may be blocked (Anti-Ping) while VLESS works fine. Test connectivity through your client (v2rayNG, Hiddify, Nekoray).
-
-### 🔴 Connection timeouts (most common issue)
-
-**Symptom:** client hangs on "Connecting...", then timeout. You run `journalctl -f -u xray` — **empty, nothing shows up**.
-
-**Reason:** the request may **never reach Xray**. Connection chain:
-
-```
-Client → Cloudflare → Nginx (port 443) → Xray WS (port 16500) → outbound
-Client → IP:REALITY_PORT → Xray Reality → outbound
-Client → domain:443 → Xray Vision (direct) → outbound
-```
-
-If the break is at the first link — Xray logs will be empty. You need to look **at the link where the break happens**.
-
----
-
-#### Step 1. Find where the break is (30 seconds)
-
 ```bash
-# Monitor ALL logs at once:
-tail -f /var/log/nginx/access.log /var/log/nginx/error.log /var/log/xray/access.log /var/log/xray/error.log 2>/dev/null
+# Something not working — run diagnostics
+vwn  # item 28
 
-# In ONE window journalctl (all services):
-journalctl -f -u xray -u xray-reality -u xray-vision -u nginx --no-pager
-```
+# WARP won't connect
+systemctl restart warp-svc && sleep 5 && warp-cli connect
 
-Now **try connecting from your client** to VLESS. Watch where a record appears:
+# Psiphon logs
+tail -50 /var/log/psiphon/psiphon.log
 
-| Where the record appears | Where the break | What to do |
-|---------------------|-----------|------------|
-| **Nginx access.log** — record exists, Xray logs empty | Between Nginx and Xray | Nginx not proxying to Xray. Check `proxy_pass` in `/etc/nginx/conf.d/xray.conf` |
-| **Nginx access.log** — NO record | Before Nginx (network/CF Guard) | See Step 2 below |
-| **Nginx error.log** — error exists | Nginx can't handle | Read the error in error.log |
-| **Xray access.log** — `accepted` record | Everything works, outbound issue | See Step 3 |
-| **Xray error.log** — error exists | Xray accepted but can't process | Read the error |
-| **Everywhere empty** | Request not reaching server | See Step 2 |
+# Reality won't start
+xray -test -config /usr/local/etc/xray/reality.json
 
----
+# Nginx after IPv6 disable
+sed -i '/listen \[::\]:443/d' /etc/nginx/conf.d/xray.conf && nginx -t && systemctl reload nginx
 
-#### Step 2. Request not reaching the server
+# Tor — try bridges (item 7 → 11)
+tail -50 /var/log/tor/notices.log
 
-```bash
-# Check 1: domain resolves?
-dig +short your-domain.com
+# Subscription not updating
+vwn  # item 2 → item 5 (Rebuild all subscription files)
 
-# Check 2: port 443 accessible from outside?
-curl -vI https://your-domain.com/  # from EXTERNAL IP (not from server!)
+# Forgot subscription password
+vwn  # item 3 → 12 (shows current credentials or set new ones)
 
-# Check 3: CF Guard blocking?
-# If Nginx access.log has no records — CF Guard may have blocked before Xray
-# Check:
-grep -A5 "CF Guard" /etc/nginx/conf.d/xray.conf
-# If CF Guard ON — add your IP to whitelist: vwn → 3 → 7
+# CPU Guard — check priorities
+systemctl show xray.service -p CPUWeight
 
-# Check 4: Nginx running at all?
-nginx -t && systemctl status nginx
+# Adblock — enable/disable
+vwn  # item 20
 
-# Check 5: port 443 listening?
-ss -tlnp | grep :443
-```
-
----
-
-#### Step 3. Request reached Xray but connection fails
-
-```bash
-# Enable DEBUG logs (disabled by default):
-for f in /usr/local/etc/xray/*.json; do
-    sed -i 's/"loglevel": ".*"/"loglevel": "debug"/' "$f"
-    sed -i 's/"access": ".*"/"access": "\/var\/log\/xray\/access.log"/' "$f"
-done
-
-# Remove systemd stub (no-journal) so journalctl works:
-for svc in xray xray-reality xray-vision; do
-    rm -f /etc/systemd/system/${svc}.service.d/no-journal.conf 2>/dev/null
-done
-
-systemctl daemon-reload
-systemctl restart xray xray-reality xray-vision
-
-# Now watch logs:
-journalctl -f -u xray -u xray-reality -u xray-vision --no-pager
-
-# Typical errors in logs:
-# "invalid user ID"         → wrong UUID in client
-# "failed to validate host" → WS path mismatch
-# "tls: bad certificate"    → SSL cert doesn't match domain
-# "failed to listen"        → Xray didn't start on port
-# "outbound tag not found"  → routing config broken
-
-# After debugging — disable logs back:
-vwn → item 26 (Rebuild all configs)
-```
-
----
-
-#### Step 4. Quick problem table
-
-| Symptom | Where to look | Command | Fix |
-|---------|-------------|---------|-----|
-| **Timeout WS, all logs empty** | Before Nginx | `curl -vI https://your-domain.com/` | Check DNS, CF Guard, firewall |
-| **Timeout WS, Nginx access.log has record** | Nginx → Xray | `grep proxy_pass /etc/nginx/conf.d/xray.conf` | Check proxy_pass points to correct Xray port |
-| **Timeout WS, Nginx error.log has record** | Nginx error | `tail -20 /var/log/nginx/error.log` | Read the error |
-| **Timeout Reality, logs empty** | Before Xray Reality | `ss -tlnp \| grep 8443` | Port not listening → `systemctl restart xray-reality` |
-| **Timeout Reality, Xray error.log has record** | Xray error | `journalctl -f -u xray-reality` | Read the error |
-| **Timeout Vision, logs empty** | Before Xray Vision | `ss -tlnp \| grep :443` | Check if xray-vision is running and listening |
-| **Connection works, no internet** | Outbound | `grep -A5 "outbounds" /usr/local/etc/xray/*.json` | outbound down (WARP/Psiphon/Tor crashed) |
-| **All timeouts** | Xray config | `xray -test -config /usr/local/etc/xray/config.json` | Config broken → vwn → 26 (Rebuild) |
-
----
-
-### 🚀 Automatic diagnostics
-
-```bash
-# Full diagnostics of all components
-vwn status
-
-# Update modules before diagnostics
-vwn update
+# Privacy Mode — verify status
+vwn  # item 26 → item 4 (Show status)
 ```
 
 ## Removal
 
 ```bash
-vwn  # item 30
+vwn  # item 32
 ```
 
 Backups in `/root/vwn-backups/` are not removed automatically.
@@ -713,10 +499,6 @@ Backups in `/root/vwn-backups/` are not removed automatically.
 - [acme.sh](https://github.com/acmesh-official/acme.sh)
 - nginx (mainline from nginx.org), jq, ufw, tor, obfs4proxy, qrencode
 
-## Version
-
-Current: **3.1**
-
 ## License
 
 MIT License
@@ -728,9 +510,9 @@ MIT License
 <details>
 <summary>🇷🇺 Русский</summary>
 
-# VWN — Панель управления Xray
+# VWN — Xray Management Panel
 
-Автоматический установщик Xray VLESS с поддержкой WebSocket+TLS, Reality, Vision, Cloudflare WARP, CDN, Relay, Psiphon и Tor.
+Автоматический установщик Xray VLESS с поддержкой WebSocket+TLS, Reality, Cloudflare WARP, CDN, Relay, Psiphon и Tor.
 
 ## Быстрая установка
 
@@ -743,22 +525,14 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
 vwn
 ```
 
-Обновление модулей (без изменения конфигов):
+Обновить модули (без изменения конфигов):
 ```bash
 vwn update
 ```
 
-Быстрые команды:
-```bash
-vwn status     # Полная диагностика
-vwn backup     # Создать бэкап
-vwn restore    # Восстановить из бэкапа
-vwn qr         # Показать QR-код подписки
-```
-
 ## Автоматическая установка (`--auto`)
 
-Полностью неинтерактивная установка — все параметры передаются как аргументы.
+Полностью неинтерактивная установка — все параметры передаются аргументами, никаких вопросов.
 
 ### Минимально (WS+CDN, SSL через HTTP-01)
 ```bash
@@ -766,107 +540,79 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
   --auto --domain vpn.example.com
 ```
 
-### Полный стек (WS + Reality + Vision, SSL через Cloudflare DNS, BBR, Fail2Ban)
+### Полная (WS + Reality, SSL через Cloudflare DNS, BBR, Fail2Ban)
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh) \
   --auto \
   --domain vpn.example.com \
   --stub https://microsoft.com/ \
-  --cert-method cf --cf-email me@example.com --cf-key YOUR_CF_KEY \
-  --reality --reality-dest www.apple.com:443 \
-  --vision \
+  --cert-method cf --cf-email me@example.com --cf-key ВАШ_CF_КЛЮЧ \
+  --reality --reality-dest www.apple.com:443 --reality-port 8443 \
   --bbr --fail2ban
 ```
 
-> **Про Vision + WS:** Vision и WS работают вместе на одном домене. Vision занимает порт 443 напрямую; Nginx (и WS) перемещается на внутренний порт 7443 как fallback-бэкенд. Cloudflare-прокси (оранжевое облако) должно быть **отключено** — Vision использует raw TLS.
-
-### Только Reality (без WS, без Nginx, домен не нужен)
+### Только Reality (без WS, Nginx и домена)
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh) \
   --auto --skip-ws \
   --reality --reality-dest microsoft.com:443 --reality-port 8443
 ```
 
-### Полный стек (все функции безопасности + Psiphon + смена порта SSH)
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh) \
-  --auto \
-  --domain vpn.example.com \
-  --ssh-port 22222 \
-  --cpu-guard --ipv6 --fail2ban --jail --adblock --privacy \
-  --psiphon --psiphon-country DE \
-  --reality --bbr
-```
+### Все опции `--auto`
 
-### Все параметры `--auto`
-
-| Параметр | Умолч. | Описание |
-|----------|--------|----------|
-| `--domain DOMAIN` | — | CDN-домен для VLESS+WS+TLS. **Обязателен** без `--skip-ws` |
+| Опция | Умолчание | Описание |
+|-------|-----------|----------|
+| `--domain ДОМЕН` | — | CDN-домен для VLESS+WS+TLS. **Обязателен** если не задан `--skip-ws` |
 | `--stub URL` | `https://httpbin.org/` | URL сайта-заглушки, проксируемого Nginx |
-| `--port PORT` | `16500` | Внутренний порт Xray WS |
+| `--port ПОРТ` | `16500` | Внутренний порт Xray WS |
 | `--lang ru\|en` | `ru` | Язык интерфейса |
-| `--reality` | выкл. | Установить VLESS+Reality |
+| `--reality` | выкл | Установить также VLESS+Reality |
 | `--reality-dest HOST:PORT` | `microsoft.com:443` | SNI-назначение Reality |
-| `--reality-port PORT` | `8443` | Порт Reality |
+| `--reality-port ПОРТ` | `8443` | Порт Reality |
 | `--cert-method cf\|standalone` | `standalone` | Метод SSL: `cf` = Cloudflare DNS API, `standalone` = HTTP-01 |
-| `--cf-email EMAIL` | — | Email Cloudflare (для `--cert-method cf`) |
-| `--cf-key KEY` | — | API-ключ Cloudflare (для `--cert-method cf`) |
-| `--skip-ws` | выкл. | Пропустить WS (только Reality) |
-| `--ssh-port PORT` | — | Сменить порт SSH (1–65535). Применяется **до** Fail2Ban |
-| `--stream` | выкл. | Активировать Stream SNI — WS + Reality на порту 443. **Несовместим с `--vision`** |
-| `--vision` | выкл. | Установить VLESS+TLS+Vision (порт 443 напрямую; Nginx/WS уходит на внутренний 7443). Требует WS+TLS. **Несовместим с `--stream`** |
-| `--ipv6` | выкл. | Включить IPv6 |
-| `--cpu-guard` | выкл. | Включить CPU Guard (приоритет xray/nginx) |
-| `--bbr` | выкл. | Включить BBR TCP |
-| `--fail2ban` | выкл. | Установить Fail2Ban |
-| `--jail` | выкл. | Включить WebJail (требует `--fail2ban`) |
-| `--adblock` | выкл. | Включить блокировку рекламы |
-| `--privacy` | выкл. | Включить режим приватности (без логов трафика) |
-| `--psiphon` | выкл. | Установить Psiphon |
-| `--psiphon-country CODE` | `DE` | Страна выхода Psiphon (DE, NL, US, GB, FR, AT, CA, SE) |
-| `--psiphon-warp` | выкл. | Направить Psiphon через WARP (требует WARP) |
-| `--no-warp` | выкл. | Не настраивать Cloudflare WARP |
+| `--cf-email EMAIL` | — | Email Cloudflare (обязателен при `--cert-method cf`) |
+| `--cf-key КЛЮЧ` | — | API Key Cloudflare (обязателен при `--cert-method cf`) |
+| `--skip-ws` | выкл | Пропустить WS (режим только Reality) |
+| `--bbr` | выкл | Включить BBR TCP |
+| `--fail2ban` | выкл | Установить Fail2Ban + WebJail |
+| `--no-warp` | выкл | Пропустить настройку Cloudflare WARP |
 
-> **Методы SSL:**
-> `standalone` — временно открывает порт 80 для HTTP-01. Домен должен уже указывать на сервер.
-> `cf` — использует Cloudflare DNS API, порт 80 не нужен. Рекомендуется при домене за Cloudflare.
-
-> **Vision:** занимает порт 443 напрямую. Nginx перемещается на внутренний порт 7443. TLS-сертификат **общий** с WS — отдельный сертификат не выпускается. Домен должен иметь **прямую A-запись** на IP сервера. Оранжевое облако Cloudflare должно быть **серым** — Vision использует raw TLS, Cloudflare не может проксировать такой трафик.
-
-> **❗ Важно:** `--stream` и `--vision` **несовместимы**. Можно использовать только одно из двух одновременно.
+> **Методы SSL:**  
+> `standalone` — временно открывает порт 80 для HTTP-01 проверки Let's Encrypt. Домен должен уже указывать на сервер.  
+> `cf` — использует Cloudflare DNS API, порт 80 не нужен. Рекомендуется когда домен за Cloudflare.
 
 ## Требования
 
 - Ubuntu 22.04+ / Debian 11+
-- Доступ root
-- Домен, указывающий на сервер (для WS+TLS и Vision)
-- Для Reality — нужен только IP сервера, домен не обязателен
+- Root доступ
+- Домен, направленный на сервер (для WS+TLS)
+- Для Reality — только IP сервера, домен не нужен
 
-## Возможности
+## Особенности
 
-- ✅ **VLESS + WebSocket + TLS** — подключения через Cloudflare CDN (порт 443)
-- ✅ **VLESS + Reality** — прямые подключения без CDN (роутер, Clash), устанавливается вместе с WS или отдельно
-- ✅ **VLESS + TLS + Vision** — прямые подключения с `xtls-rprx-vision`, общий TLS-сертификат с WS на порту 443
-- ✅ **Stream SNI** — WS и Reality на одном порту 443 через SNI-мультиплексирование (Vision несовместим со Stream)
-- ✅ **Nginx mainline** — реверс-прокси с сайтом-заглушкой, автоустановка с nginx.org (>= 1.19)
-- ✅ **Cloudflare WARP** — маршрутизация по доменам или весь трафик (применяется ко всем конфигам)
-- ✅ **Psiphon** — обход блокировок с выбором страны выхода, режимы plain и WARP+Psiphon
-- ✅ **Tor** — обход блокировок с выбором страны выхода, поддержка мостов (obfs4, snowflake, meek), обновление цепи
-- ✅ **Relay** — внешний outbound (VLESS/VMess/Trojan/SOCKS5 по ссылке)
-- ✅ **CF Guard** — блокировка прямого доступа, только IP Cloudflare
-- ✅ **Мультипользователь** — несколько UUID с метками, индивидуальные QR и подписки
-- ✅ **Подписки** — `.txt` (клиенты), `.html` (браузер с QR + кнопки копирования + Clash YAML + кнопка «Скопировать все» при нескольких VLESS)
-- ✅ **Auth подписок** — страницы `/sub/` защищены HTTP basic auth
-- ✅ **CPU Guard** — приоритет xray/nginx над фоновыми процессами
-- ✅ **Режим приватности** — логи Xray отключены, journald заглушён, `/var/log/xray` на tmpfs (RAM), логи уничтожены через shred
-- ✅ **Блокировка рекламы** — через `geosite:category-ads-all`, применяется ко всем конфигам
-- ✅ **Бэкап и восстановление** — ручной бэкап/восстановление/удаление всех конфигов включая Vision
-- ✅ **Диагностика** — полная проверка с разбивкой по компонентам включая Vision
+- ✅ **VLESS + WebSocket + TLS** — подключения через Cloudflare CDN
+- ✅ **VLESS + Reality** — прямые подключения без CDN (роутер, Clash) — устанавливается вместе с WS
+- ✅ **Nginx mainline** — reverse proxy с сайтом-заглушкой, автоустановка с nginx.org
+- ✅ **Cloudflare WARP** — роутинг выбранных доменов или всего трафика
+- ✅ **Psiphon** — обход блокировок с выбором страны выхода
+- ✅ **Tor** — обход блокировок с выбором страны выхода, поддержка мостов (obfs4, snowflake, meek)
+- ✅ **Relay** — внешний outbound (VLESS/VMess/Trojan/SOCKS по ссылке)
+- ✅ **CF Guard** — блокировка прямого доступа, только Cloudflare IP
+- ✅ **Мульти-пользователи** — несколько UUID с метками, индивидуальные QR коды и ссылки подписки
+- ✅ **Ссылка подписки** — `.txt` для клиентов и `.html` страница с QR в браузере
+- ✅ **CPU Guard** — приоритет xray/nginx над фоновыми процессами, защита от ограничений хостера
+- ✅ **Режим приватности** — access логи Xray и Nginx отключены, journald подавлен, `/var/log/xray` на tmpfs (RAM), существующие логи перезаписаны через `shred`
+- ✅ **Блокировка рекламы** — блокирует рекламу и трекеры через встроенный `geosite:category-ads-all` (EasyList, EasyPrivacy, AdGuard, региональные списки); не требует доп. ПО, обновляется вместе с Xray
+- ✅ **Бэкап и восстановление** — ручной бэкап/восстановление всех конфигов
+- ✅ **Диагностика** — полная проверка системы с детализацией по компонентам
 - ✅ **Fail2Ban + Web-Jail** — защита от брутфорса и сканеров
-- ✅ **BBR, Anti-Ping, IPv6 toggle**
-- ✅ **Автоустановка** — через флаги CLI без интерактивных запросов
-- ✅ **Интерфейс RU / EN**
+- ✅ **BBR** — ускорение TCP
+- ✅ **Anti-Ping** — отключение ICMP
+- ✅ **Переключение IPv6** — включить/отключить IPv6 системно
+- ✅ **Защита подписок** — страницы `/sub/` защищены HTTP basic auth, пароль генерируется автоматически, управление через меню
+- ✅ **Stream SNI** — опционально: nginx (WS) и Reality на одном порту 443 через SNI-мультиплексирование
+- ✅ **Автоматическая установка** — полная настройка через аргументы CLI без интерактивных вопросов
+- ✅ **RU / EN интерфейс** — выбор языка при первом запуске
 
 ## Архитектура
 
@@ -874,398 +620,317 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Ng
 Клиент (CDN/мобильный)
     └── Cloudflare CDN → 443/HTTPS → Nginx → VLESS+WS → Xray → outbound
 
-Клиент (роутер/Clash — Reality)
-    └── IP:REALITY_PORT/TCP → VLESS+Reality → Xray → outbound        (по умолчанию)
-    └── IP:443/TCP          → stream SNI → VLESS+Reality → Xray      (со Stream SNI)
+Клиент (роутер/Clash/прямое)
+    └── IP:8443/TCP → VLESS+Reality → Xray → outbound        (по умолчанию)
+    └── IP:443/TCP  → stream SNI → VLESS+Reality → Xray      (при включённом Stream SNI)
 
-Клиент (роутер/Clash — Vision)
-    └── domain:443/TCP → Xray-Vision (прямое TLS) → outbound
-                              ↓ fallback (не-Vision трафик)
-                         127.0.0.1:7443 → Nginx (HTTP) → сайт-заглушка
-
-Stream SNI map (порт 443):
-    ws.example.com   → 127.0.0.1:7443   (Nginx HTTP → Xray WS)
-    default          → 127.0.0.1:10443  (Xray Reality)
-
-outbound (правила маршрутизации, применяются к WS + Reality + Vision):
-    ├── direct  — прямой выход (по умолчанию)
+outbound (по routing rules):
+    ├── free    — прямой выход (default)
     ├── warp    — Cloudflare WARP (SOCKS5:40000)
-    ├── psiphon — Psiphon (SOCKS5:40002)
+    ├── psiphon — Psiphon tunnel (SOCKS5:40002)
     ├── tor     — Tor (SOCKS5:40003)
     ├── relay   — внешний сервер (vless/vmess/trojan/socks)
-    └── block   — blackhole (geoip:private, реклама через adblock)
+    └── block   — blackhole (geoip:private, SMTP, BitTorrent)
 ```
 
 ## Порты
 
-| Порт | Назначение |
-|------|-----------|
-| 22 | SSH (настраивается) |
-| 443 | VLESS+WS+TLS через Nginx / VLESS+Vision напрямую (при установленном Vision) |
-| REALITY_PORT | VLESS+Reality (по умолчанию 8443, внешний, без Stream SNI) |
-| 7443¹ | Nginx HTTP (внутренний, режим Stream SNI или Vision) |
-| 10443¹ | VLESS+Reality (внутренний, режим Stream SNI) |
-| 40000 | WARP SOCKS5 (локальный) |
-| 40002 | Psiphon SOCKS5 (локальный) |
-| 40003 | Tor SOCKS5 (локальный) |
-| 40004 | Tor Control Port (локальный) |
+| Порт  | Назначение                        |
+|-------|-----------------------------------|
+| 22    | SSH (изменяемый)                  |
+| 443   | VLESS+WS+TLS через Nginx (+ Reality при Stream SNI) |
+| 8443  | VLESS+Reality (по умолчанию, снаружи) |
+| 7443¹ | Nginx HTTP (внутренний, режим Stream SNI) |
+| 10443¹| VLESS+Reality (внутренний, режим Stream SNI) |
+| 40000 | WARP SOCKS5 (warp-cli, локальный) |
+| 40002 | Psiphon SOCKS5 (локальный)        |
+| 40003 | Tor SOCKS5 (локальный)            |
+| 40004 | Tor Control Port (локальный)      |
 
-¹ Внутренние порты при активном Stream SNI или Vision.
+¹ Внутренние порты при включённом Stream SNI (пункт 4 → 10).
 
-## Команды CLI
+## CLI команды
 
 ```bash
 vwn                  # Открыть интерактивное меню
 vwn update           # Обновить модули (без изменения конфигов)
-vwn status           # Запустить полную диагностику
-vwn backup           # Создать бэкап
-vwn restore          # Восстановить из бэкапа
-vwn qr               # Показать QR-код подписки
-vwn open-80          # Открыть порт 80 (для ACME)
-vwn close-80         # Закрыть порт 80 (после ACME)
 ```
 
-## Меню
+## Меню управления
 
 ```
 ================================================================
-   VWN — Xray Management Panel  01.01.2026 12:00
+   VWN — Xray Management Panel  18.03.2026 12:00
 ================================================================
-  ── Протоколы ─────────────────────────────────────────
+  ── Протоколы ──────────────────────────────────────────
   WS:      RUNNING,  WARP: ACTIVE | Split
   Reality: RUNNING,  SSL: OK (89d)
-  Vision:  RUNNING,  Nginx: RUNNING,  CF Guard: OFF
+  Nginx:   RUNNING,  CF Guard: OFF
   CDN:     cdn.example.com
-  ── Туннели ───────────────────────────────────────────
+  ── Туннели ────────────────────────────────────────────
   Relay: OFF,  Psiphon: OFF,  Tor: OFF
-  ── Безопасность ──────────────────────────────────────
+  ── Безопасность ───────────────────────────────────────
   BBR: ON,  F2B: ON,  Jail: PROTECTED,  IPv6: OFF,  CPU Guard: ON,  Adblock: OFF,  Privacy: OFF
 ----------------------------------------------------------------
   1.  Установить
   2.  Управление пользователями
 
-  ── Протоколы ─────────────────────────────────────────
+  ── Протоколы ──────────────────────────────────────────
   3.  Управление WS + CDN
   4.  Управление VLESS + Reality
-  5.  Управление Vision (VLESS+TLS+Vision)
 
-  ── Туннели ───────────────────────────────────────────
-  6.  Управление WARP
-  7.  Управление Relay (внешний)
-  8.  Управление Psiphon
-  9.  Управление Tor
+  ── Туннели ────────────────────────────────────────────
+  5.  Управление Relay (внешний сервер)
+  6.  Управление Psiphon
+  7.  Управление Tor
 
-  ── Безопасность ─────────────────────────────────────────
-  10. Включить BBR
-  11. Включить Fail2Ban
-  12. Включить Web-Jail
-  13. Сменить порт SSH
-  14. Управление UFW
-  15. Переключить IPv6
-  16. CPU Guard (приоритет)
-  17. Блокировка рекламы
+  ── WARP ───────────────────────────────────────────────
+  8.  Переключить режим WARP (Global/Split/OFF)
+  9.  Добавить домен в WARP
+  10. Удалить домен из WARP
+  11. Редактировать список WARP (Nano)
+  12. Проверить IP (Real vs WARP)
 
-  ── Логи ────────────────────────────────────────────────
-  18. Логи Xray (access)
-  19. Логи Xray (error)
-  20. Логи Nginx (access)
-  21. Логи Nginx (error)
-  22. Очистить все логи
-  23. Режим приватности (отключить логи)
+  ── Безопасность ───────────────────────────────────────
+  13. Включить BBR
+  14. Включить Fail2Ban
+  15. Включить Web-Jail
+  16. Сменить SSH порт
+  17. Управление UFW
+  18. Вкл/Выкл IPv6
+  19. CPU Guard (приоритеты)
+  20. Блокировка рекламы
 
-  ── Сервисы ──────────────────────────────────────────────
-  24. Перезапустить все сервисы
-  25. Обновить Xray-core
-  26. Пересоздать все конфиги
-  27. Диагностика
-  28. Бэкап и восстановление
-  29. Сменить язык
-  30. Полное удаление
-  31. Управление Stream SNI
+  ── Логи ───────────────────────────────────────────────
+  21. Логи Xray (access)
+  22. Логи Xray (error)
+  23. Логи Nginx (access)
+  24. Логи Nginx (error)
+  25. Очистить все логи
+  26. Режим приватности (отключить логи)
 
-  ── Выход ─────────────────────────────────────────────
-  0.  Выход
+  ── Сервисы ────────────────────────────────────────────
+  27. Перезапустить все сервисы
+  28. Обновить Xray-core
+  29. Диагностика
+  30. Бэкап и восстановление
+  31. Сменить язык / Change language
+  32. Полное удаление
+
+  ── Выход ──────────────────────────────────────────────
+  0.  Выйти
 ```
 
-## Индикаторы статусов
+### Статусы в заголовке
 
-| Статус | Значение |
+| Статус | Описание |
 |--------|----------|
 | `ACTIVE \| Global` | Весь трафик идёт через туннель |
-| `ACTIVE \| Split` | Только домены из списка идут через туннель |
-| `route OFF` | Сервис запущен, но не в маршрутизации |
+| `ACTIVE \| Split` | Только домены из списка |
+| `ACTIVE \| маршрут OFF` | Сервис запущен, но не в роутинге |
 | `OFF` | Сервис не запущен |
 | `CPU Guard: ON` | xray/nginx имеют приоритет над фоновыми процессами |
-| `Adblock: ON` | Реклама и трекеры заблокированы |
-| `Privacy: ON` | Логирование отключено, логи в RAM |
+| `Adblock: ON` | Реклама и трекеры заблокированы через geosite:category-ads-all |
+| `Privacy: ON` | Всё логирование трафика отключено, логи в RAM |
 
-## Мультипользователь (пункт 2)
+## Мульти-пользователи (пункт 2)
 
-Несколько UUID VLESS с метками (например «iPhone Васи», «Ноутбук работа»).
+Несколько VLESS UUID с произвольными метками ("iPhone Vasya", "Ноутбук работа").
 
-- Добавление / Удаление / Переименование пользователей
-- Изменения применяются мгновенно к конфигам WS, Reality и Vision
-- Индивидуальный QR-код для каждого
-- Индивидуальный URL подписки для каждого
-- Нельзя удалить последнего пользователя
-- Пользователи хранятся в `/usr/local/etc/xray/users.conf` (формат: `UUID|метка|токен`)
+- Добавить / Удалить / Переименовать
+- Изменения мгновенно применяются к обоим конфигам (WS и Reality)
+- Индивидуальный QR код для каждого пользователя (WS и Reality ссылки)
+- Индивидуальная ссылка подписки для каждого пользователя
+- Последнего пользователя удалить нельзя
+- Хранится в `/usr/local/etc/xray/users.conf` (формат: `UUID|метка|токен`)
 
-При первом открытии существующий UUID автоматически импортируется как пользователь `default`.
+При первом открытии существующий UUID импортируется как пользователь `default`.
 
-## URL подписки
+## Ссылка подписки
 
 Каждый пользователь получает две персональные страницы:
 
 ```
-https://your-domain.com/sub/label_token.txt   ← клиенты (v2rayNG, Hiddify, Nekoray…)
-https://your-domain.com/sub/label_token.html  ← браузер с QR-кодами + кнопки копирования + Clash YAML
+https://ваш-домен.com/sub/label_token.txt   ← клиенты (v2rayNG, Hiddify, Nekoray…)
+https://ваш-домен.com/sub/label_token.html  ← браузер: QR коды + кнопки копирования
 ```
 
-Файл `.txt` закодирован в base64 и содержит все ссылки подключения (WS+TLS, Reality и Vision если установлен).
-Страница `.html` показывает каждую ссылку с **кнопкой копирования** и **QR-кодом по клику**, плюс **Clash Meta / Mihomo YAML** блок.  
-Если VLESS-ссылок больше одной, дополнительно показывается кнопка **«Скопировать все»**.
+`.txt` файл закодирован в base64 и содержит все ссылки подключения (WS+TLS и Reality если установлен).  
+`.html` страница показывает каждую ссылку с **кнопкой копирования** и **QR кодом по клику** — по одному, без нагромождения.
 
-Страницы подписок можно защитить HTTP basic auth (меню WS → пункт 12).
+- URL не меняется при обновлении конфигов — меняется только содержимое
+- URL меняется только при переименовании пользователя
+- Управление: пункт 2 → 3 (QR + Subscription URL) или пункт 2 → 5 (Пересоздать все)
+- **Защищены basic auth** — пароль генерируется автоматически при установке и сохраняется в `vwn.conf`. Управление: пункт 3 → 12.
 
 ## Управление WS + CDN (пункт 3)
 
 | Пункт | Действие |
 |-------|----------|
-| 1 | Сменить порт Xray |
-| 2 | Сменить путь WS |
+| 1 | Изменить порт Xray |
+| 2 | Изменить путь WS |
 | 3 | Сменить домен |
-| 4 | Адрес подключения (CDN-домен) |
-| 5 | Перевыпустить SSL-сертификат |
-| 6 | Сменить сайт-заглушку |
-| 7 | CF Guard — доступ только через Cloudflare |
+| 4 | Адрес подключения (CDN домен) |
+| 5 | Перевыпустить SSL сертификат |
+| 6 | Изменить сайт-заглушку |
+| 7 | CF Guard — только Cloudflare IP |
 | 8 | Обновить IP Cloudflare |
 | 9 | Управление автообновлением SSL |
 | 10 | Управление автоочисткой логов |
 | 11 | Сменить UUID |
-| 12 | Auth подписок (basic auth) |
-| 13 | Пересоздать конфиги WS |
-| 14 | Установить (выбор WS или Reality) |
-| 15 | Удалить WS |
+| 12 | Пароль на подписки (basic auth) |
+| 13 | Stream SNI — Reality на порту 443 |
 
-## VLESS + Reality (пункт 4)
-
-Прямые подключения без CDN, скрытые за реальным сайтом (протокол Reality).
-
-| Пункт | Действие |
-|-------|----------|
-| 1 | Установить Reality |
-| 2 | Показать QR-код |
-| 3 | Показать параметры подключения |
-| 4 | Сменить UUID |
-| 5 | Сменить порт |
-| 6 | Сменить сайт-маску |
-| 7 | Перезапустить xray-reality |
-| 8 | Показать логи |
-| 9 | Удалить Reality |
-| 10 | Пересоздать конфиги Reality |
-
-Сайты-маски Reality: `microsoft.com:443`, `www.apple.com:443`, `www.amazon.com:443`, или произвольный.
-
-## VLESS + TLS + Vision (пункт 5)
-
-Прямые подключения с потоком `xtls-rprx-vision`. Отдельный сервис `xray-vision` слушающий порт **443**. Требует предварительно установленного WS+TLS.
-
-**Как работает:**
-
-```
-Клиент → domain:443 → Xray-Vision (прямая TLS терминация)
-                              ↓ fallback (не-Vision трафик)
-                        127.0.0.1:7443 → Nginx (HTTP) → WS заглушка
-```
-
-- Vision работает **напрямую на порту 443** — не требует Stream SNI или nginx-прокси
-- Vision и Stream SNI **несовместимы** — включение одного отключает другое
-- Домен Vision должен иметь **прямую A-запись** — без CF-прокси (оранжевое облако должно быть серым)
-- TLS-сертификат **общий** с WS — отдельный сертификат не выпускается
-- Не-Vision трафик пересылается на Nginx `127.0.0.1:7443` (без SSL, порт внутренний, общий с WS)
-- Все функции маршрутизации (WARP, Relay, Psiphon, Tor, Adblock, Privacy) применяются к Vision автоматически
-
-**Формат ссылки подключения:**
-```
-vless://UUID@dir.example.com:443?security=tls&flow=xtls-rprx-vision&type=tcp&sni=dir.example.com&fp=chrome&allowInsecure=0
-```
-
-**Меню Vision (пункт 5):**
-
-| Пункт | Действие |
-|-------|----------|
-| 1 | Установить Vision |
-| 2 | Показать параметры подключения |
-| 3 | Показать QR-код |
-| 4 | Сменить UUID |
-| 5 | Сменить домен (перевыпустит сертификат) |
-| 6 | Удалить Vision |
-| 7 | Пересоздать конфиги Vision |
-
-## Stream SNI (пункт 31)
-
-Обслуживает WS и Reality на одном порту 443 через nginx `ssl_preread`. Nginx читает SNI до TLS handshake и маршрутизирует трафик на нужный backend.
-
-**Важно:** Vision **не совместим** со Stream SNI. Vision работает напрямую на порту 443 и не может быть маршрутизирован через stream-прокси. Попытка включить Stream SNI при активном Vision завершится ошибкой.
-
-Карта маршрутизации динамическая — хранится в `vwn.conf` как `STREAM_DOMAINS` и перегенерируется при добавлении/удалении доменов:
-
-```nginx
-stream {
-    map $ssl_preread_server_name $upstream_backend {
-        ws.example.com    127.0.0.1:7443;    # Nginx (HTTP) → Xray WS
-        default           127.0.0.1:10443;   # Xray Reality
-    }
-    server {
-        listen 443;
-        ssl_preread on;
-        proxy_pass $upstream_backend;
-    }
-}
-```
-
-Требует `nginx-full` или `nginx-extras` (собранный с `--with-stream`). Установщик предлагает поставить автоматически.
-
-Перед включением Stream SNI скрипт проводит предварительные проверки: nginx установлен/запущен, есть конфиги WS/Reality, SSL-сертификат, модуль stream, порты свободны, **Vision не активен**.
-
-## Блокировка рекламы (пункт 17)
+## Блокировка рекламы (пункт 20)
 
 Блокирует рекламу и трекеры для всех пользователей VPN без дополнительного ПО.
 
-Использует `geosite:category-ads-all` — встроенную категорию в `geosite.dat` Xray, обновляемую вместе с Xray. Применяется к конфигам WS, Reality и Vision одновременно.
+Использует `geosite:category-ads-all` — встроенную категорию в `geosite.dat` Xray, которая автоматически обновляется при каждом `vwn update`. Никаких внешних списков, DNS-серверов и Pi-hole не нужно.
 
-**Покрывает:** EasyList, EasyPrivacy, AdGuard Base List, Peter Lowe's List, региональные списки для CN, RU, JP, KR, IR, TR, UA, DE, FR и других.
+**Покрывает:** EasyList, EasyPrivacy, AdGuard Base List, Peter Lowe's List и региональные списки для CN, RU, JP, KR, IR, TR, UA, DE, FR и других стран.
 
-## Режим приватности (пункт 23)
+**Как работает:** совпадающие домены направляются в outbound `block` (blackhole) — соединение молча дропается на уровне Xray до выхода с сервера. Применяется одновременно к конфигам WS и Reality.
 
-Исключает возможность отследить куда подключаются пользователи.
+Защита от дублирования — повторное нажатие "Включить" не создаёт дублирующих записей в конфиге.
+
+## Режим приватности (пункт 26)
+
+Не позволяет видеть куда подключаются пользователи — даже при наличии доступа к серверу или его администратору.
+
+Что применяется при включении:
 
 | Слой | Действие |
 |------|----------|
 | Xray `config.json` | `access: none`, `loglevel: none` |
 | Xray `reality.json` | `access: none`, `loglevel: none` |
-| Xray `vision.json` | `access: none`, `loglevel: none` |
 | Nginx `xray.conf` | `access_log off` |
-| systemd (xray, xray-reality, xray-vision) | `StandardOutput=null`, `StandardError=null` |
+| systemd (xray, xray-reality) | `StandardOutput=null`, `StandardError=null` — ничего не попадает в journald |
 | `/var/log/xray` | Монтируется как **tmpfs** (RAM) — очищается при каждой перезагрузке |
-| Существующие логи | Перезаписываются через `shred` перед очисткой (с предупреждением для ext4) |
+| Существующие логи | Перезаписываются через `shred` перед очисткой |
 
-## CPU Guard (пункт 16)
+Текущее состояние видно в шапке меню: `Privacy: ON / OFF`.
 
-Устанавливает `CPUWeight=200` и `Nice=-10` для xray, xray-reality, xray-vision и nginx.
-Устанавливает `CPUWeight=20` для `user.slice` (SSH, фоновые процессы).
+При выключении все изменения откатываются: уровень логов возвращается на `error`, `access_log` включается, tmpfs размонтируется, drop-in файлы journald удаляются.
 
-## 🛡️ Устранение утечки DNS
+## CPU Guard (пункт 19)
 
-Если тест показывает DNS вашего сервера, значит клиент (телефон/ПК) не резолвит домены сам.
+Защита от ограничений хостера из-за посторонних процессов нагружающих CPU.
 
-**Что сделать:**
-В настройках DNS вашего приложения измените **Доменную стратегию** на `UseIP`, `IPv4_only` или `IPIfNonMatch`.
+Устанавливает `CPUWeight=200` и `Nice=-10` для xray, xray-reality и nginx — они всегда получают CPU первыми.  
+Устанавливает `CPUWeight=20` для `user.slice` (SSH сессии, фоновые скрипты) — максимум ~16% CPU.
 
-**Важно:**
-После смены настройки убедитесь, что в приложении прописаны рабочие DNS.
-Это заставит клиент присылать на сервер готовый IP, полностью скрывая системные DNS сервера.
+Настройки записываются в drop-in файлы systemd и переживают перезагрузку:
+```
+/etc/systemd/system/xray.service.d/cpuguard.conf
+/etc/systemd/system/nginx.service.d/cpuguard.conf
+/etc/systemd/system/user.slice.d/cpuguard.conf
+```
 
-## Туннели (пункты 6–9)
+Статус виден в шапке меню: `CPU Guard: ON / OFF`.
 
-Все туннели поддерживают режимы **Global / Split / OFF**. Применяются к конфигам WS, Reality и Vision одновременно.
+## VLESS + Reality (пункт 4)
 
-### WARP (пункт 6)
+Прямые подключения без CDN. Отдельный сервис `xray-reality`.  
+Можно установить **вместе с WS** во время первичной установки — установщик предложит в конце.  
+Также доступно через флаг `--auto --reality` при автоматической установке.
 
-**Split** (домены по умолчанию): `test.com`
+```
+vless://UUID@IP:8443?security=reality&sni=microsoft.com&fp=chrome&pbk=KEY&sid=SID&type=tcp&flow=xtls-rprx-vision
+```
 
-**Global** — весь трафик через WARP. **OFF** — отключён от роутинга. Применяется к конфигам WS, Reality и Vision.
+**Stream SNI (пункт 4 → 10):** опционально переносит Reality на порт 443, разделяя его с Nginx через SNI-мультиплексирование. Nginx читает SNI до TLS handshake и маршрутизирует: ваш домен → nginx HTTP (внутри на 8443), все остальные SNI → xray-reality (внутри на 10443). Требует `nginx-full` или `nginx-extras` (собранный с `--with-stream`).
 
-WARP автоматически переподключается с логикой повтора (до 3 попыток). Совместим со старыми (`--accept-tos`) и новыми версиями warp-cli.
+## Туннели (пункты 5–7)
 
-### Relay (пункт 7)
+Все туннели поддерживают режимы: **Global / Split / OFF**. Применяются к обоим конфигам (WS и Reality).
+
+### Relay (пункт 5)
 
 Поддерживает: `vless://` `vmess://` `trojan://` `socks5://`
 
-- Настройка через вставку ссылки подключения
-- Global — весь трафик через relay
-- Split — только домены из списка
-- Проверка IP через relay (временный xray для не-SOCKS протоколов)
+### Psiphon (пункт 6)
 
-### Psiphon (пункт 8)
+Выбор страны выхода: DE, NL, US, GB, FR, AT, CA, SE и др.  
+Поддерживается режим WARP+Psiphon (цепочка туннелей).
 
-- Выбор страны выхода: DE, NL, US, GB, FR, AT, CA, SE, CH, FI
-- Режим WARP+Psiphon (цепочка туннелей — Psiphon через WARP SOCKS5)
-- Переключение режима туннеля: plain ↔ warp
-- Проверка IP через Psiphon SOCKS5
+### Tor (пункт 7)
 
-### Tor (пункт 9)
+Выбор страны выхода через `ExitNodes`. Поддержка мостов: obfs4, snowflake, meek-azure.  
+**Рекомендуется Split режим** — Tor медленнее обычного интернета.
 
-- Выбор страны выхода через `ExitNodes`: DE, NL, US, GB, FR, SE, CH, FI
-- Поддержка мостов: obfs4, snowflake, meek-azure
-- Обновление цепи через `SIGNAL NEWNYM`
-- Автообновление до официального репозитория torproject.org (0.4.8+)
-- **Рекомендуется Split режим** — Tor медленнее обычного интернета
+## WARP (пункты 8–12)
 
-## SSL-сертификаты
+**Split** (домены по умолчанию): `openai.com, chatgpt.com, oaistatic.com, oaiusercontent.com, auth0.openai.com`
 
-**Метод 1 — Cloudflare DNS API** (рекомендуется): порт 80 не нужен.
+**Global** — весь трафик через WARP. **OFF** — отключён от роутинга.
+
+## SSL сертификаты
+
+**Метод 1 — Cloudflare DNS API** (рекомендуется): порт 80 не нужен.  
 **Метод 2 — Standalone**: временно открывает порт 80.
 
-Автообновление через cron раз в 35 дней в 3:00 (с pre/post hook для открытия/закрытия порта 80).
+Автообновление через cron раз в 35 дней в 3:00.  
+Nginx запускается до выпуска сертификата — reload hook срабатывает корректно.
 
-Оба метода доступны для WS (пункт 3 → 5) и для Vision (пункт 5 → 1 или пункт 5 → 5).
+Оба метода доступны интерактивно (пункт 3 → 5) и через флаг `--cert-method` при автоматической установке.
 
-## Диагностика (пункт 27)
+## CF Guard (пункт 3 → 7)
 
-| Раздел | Проверки |
-|--------|----------|
-| Система | RAM, диск, swap, синхронизация времени |
-| Xray | Конфиги, сервисы, порты |
-| Vision | Конфиг, xray-vision, порт, SSL, DNS |
-| Nginx | Конфиг, сервис, порт 443, SSL, DNS |
-| WARP | warp-svc, подключение, SOCKS5 |
-| Туннели | Psiphon / Tor / Relay |
-| Связность | Интернет, доступность домена |
+Блокирует прямой доступ к серверу — пропускает только запросы с IP Cloudflare.  
+Включайте после настройки оранжевого облака в Cloudflare DNS.  
+Пункт 3 → 8 — обновить список IP Cloudflare вручную.
 
-Каждый раздел проверяется независимо и выводит OK/FAIL с подробным описанием.
+Восстановление реального IP (`CF-Connecting-IP`) применяется автоматически при установке и не зависит от CF Guard.
 
-## Бэкап и восстановление (пункт 28)
+## Бэкап и восстановление (пункт 30)
 
 Бэкапы в `/root/vwn-backups/` с датой и временем. Автоудаления нет.
 
-Включает: конфиги Xray (WS, Reality, Vision), Nginx + SSL (в т.ч. общий сертификат), API-ключи Cloudflare, cron, Fail2Ban, systemd-юнит xray-vision, настройки sysctl.
+Включает: конфиги Xray, Nginx + SSL, API ключи Cloudflare, cron, Fail2Ban.
 
-Управление бэкапами: создание, просмотр, восстановление, удаление.
+## Диагностика (пункт 29)
+
+| Раздел | Проверки |
+|--------|----------|
+| Система | RAM, диск, swap, часы |
+| Xray | Конфиги, сервисы, порты |
+| Nginx | Конфиг, сервис, SSL, DNS |
+| WARP | warp-svc, подключение, SOCKS5 |
+| Туннели | Psiphon / Tor / Relay |
+| Связность | Интернет, домен |
+
+Вывод: `✓` / `✗` по каждой проверке + итоговый список проблем.
 
 ## Структура файлов
 
 ```
 /usr/local/lib/vwn/
 ├── lang.sh       # Локализация (RU/EN)
-├── core.sh       # Переменные, утилиты, статусы, vwn_conf_*, findFreePort, rebuildAllConfigs
-├── xray.sh       # Xray WS+TLS конфиг, QR, генерация URL
-├── nginx.sh      # Nginx, CDN, SSL, Stream SNI (динамический map), подписки, basic auth
+├── core.sh       # Переменные, утилиты, статусы, vwn_conf_*
+├── xray.sh       # Xray WS+TLS конфиг
+├── nginx.sh      # Nginx, CDN, SSL, подписки
 ├── reality.sh    # VLESS+Reality
-├── vision.sh     # VLESS+TLS+Vision
-├── warp.sh       # Cloudflare WARP: установка, регистрация, домены
-├── relay.sh      # Внешний outbound (VLESS/VMess/Trojan/SOCKS5)
+├── relay.sh      # Внешний outbound
 ├── psiphon.sh    # Psiphon туннель
-├── tor.sh        # Tor туннель + мосты
+├── tor.sh        # Tor туннель
 ├── security.sh   # UFW, BBR, Fail2Ban, SSH, IPv6, CPU Guard
-├── logs.sh       # Логи, logrotate, cron (SSL + очистка логов)
+├── logs.sh       # Логи, logrotate, cron
 ├── backup.sh     # Бэкап и восстановление
-├── users.sh      # Управление пользователями + HTML/TXT подписки + Clash YAML
-├── diag.sh       # Диагностика (включая Vision)
-├── privacy.sh    # Режим приватности (все Xray-сервисы)
-├── adblock.sh    # Блокировка рекламы (все конфиги)
-└── menu.sh       # Главное меню + установка + удаление
+├── users.sh      # Управление пользователями + HTML подписки
+├── diag.sh       # Диагностика
+├── privacy.sh    # Режим приватности (подавление логов, tmpfs, shred)
+├── adblock.sh    # Блокировка рекламы (правило geosite:category-ads-all)
+└── menu.sh       # Главное меню + installWsTls() + точка входа --auto
 
 /usr/local/etc/xray/
 ├── config.json              # Конфиг VLESS+WS
 ├── reality.json             # Конфиг VLESS+Reality
-├── vision.json              # Конфиг VLESS+TLS+Vision
-├── vwn.conf                 # Настройки VWN (язык, домен, STREAM_DOMAINS, vision_port…)
+├── reality_client.txt       # Параметры клиента Reality
+├── vwn.conf                 # Настройки VWN (язык, домен, pubkey, privacy_mode…)
 ├── users.conf               # Список пользователей (UUID|метка|токен)
-├── connect_host             # Адрес подключения (переопределение основного домена)
-├── sub/
+├── sub/                     # Файлы подписок
 │   ├── label_token.txt      # base64 ссылки для клиентов
-│   └── label_token.html     # Браузерная страница (QR + копирование + Clash YAML)
+│   └── label_token.html     # Браузерная страница (QR + копирование)
 ├── warp_domains.txt
 ├── psiphon.json
 ├── psiphon_domains.txt
@@ -1273,25 +938,18 @@ WARP автоматически переподключается с логико
 ├── relay.conf
 └── relay_domains.txt
 
-/etc/nginx/cert/
-├── cert.pem / cert.key      # Общий TLS-сертификат WS+Vision
-└── default.crt / default.key # Fallback самоподписанный
-
 /etc/systemd/system/
 ├── xray.service.d/
-│   ├── cpuguard.conf
-│   └── no-journal.conf
+│   ├── cpuguard.conf        # Приоритет CPU (CPU Guard)
+│   └── no-journal.conf      # Подавление journald (Режим приватности)
 ├── xray-reality.service.d/
 │   ├── cpuguard.conf
-│   └── no-journal.conf
-├── xray-vision.service        # Systemd-юнит Vision
-├── xray-vision.service.d/
 │   └── no-journal.conf
 ├── nginx.service.d/
 │   └── cpuguard.conf
 ├── user.slice.d/
-│   └── cpuguard.conf
-└── var-log-xray.mount
+│   └── cpuguard.conf        # Лимит CPU для SSH/фоновых процессов
+└── var-log-xray.mount       # tmpfs монтирование /var/log/xray (Режим приватности)
 
 /root/vwn-backups/
 └── vwn-backup-YYYY-MM-DD_HH-MM-SS.tar.gz
@@ -1299,133 +957,45 @@ WARP автоматически переподключается с логико
 
 ## Решение проблем
 
-> **Ping не покажет проблему с VLESS.** Ping — это ICMP, VLESS идёт через TCP/HTTPS. ICMP может быть заблокирован (Anti-Ping), а VLESS при этом работать. Проверяй подключение через клиент (v2rayNG, Hiddify, Nekoray).
-
-### 🔴 Таймауты подключений (самая частая проблема)
-
-**Симптом:** клиент зависает на "Connecting...", потом timeout. Запускаешь `journalctl -f -u xray` — **пусто, ничего не пишет**.
-
-**Причина:** запрос может **не доходить до Xray**. Цепочка подключения:
-
-```
-Клиент → Cloudflare → Nginx (порт 443) → Xray WS (порт 16500) → outbound
-Клиент → IP:REALITY_PORT → Xray Reality → outbound
-Клиент → domain:443 → Xray Vision (напрямую) → outbound
-```
-
-Если обрыв на первом звене — в логах Xray будет пусто. Нужно смотреть **на том звене где обрыв**.
-
----
-
-#### Шаг 1. Определи где обрыв (30 секунд)
-
 ```bash
-# Запусти МОНИТОР ВСЕХ логов сразу:
-tail -f /var/log/nginx/access.log /var/log/nginx/error.log /var/log/xray/access.log /var/log/xray/error.log 2>/dev/null
+# Что-то не работает — запустить диагностику
+vwn  # пункт 28
 
-# В ОДНОМ окне journalctl (все сервисы):
-journalctl -f -u xray -u xray-reality -u xray-vision -u nginx --no-pager
-```
+# WARP не подключается
+systemctl restart warp-svc && sleep 5 && warp-cli connect
 
-Теперь **с клиента попробуй подключиться** к VLESS. Смотри где появилась запись:
+# Логи Psiphon
+tail -50 /var/log/psiphon/psiphon.log
 
-| Где появилась запись | Где обрыв | Что делать |
-|---------------------|-----------|------------|
-| **Nginx access.log** — запись есть, Xray логи пустые | Между Nginx и Xray | Nginx не проксирует в Xray. Проверь `proxy_pass` в `/etc/nginx/conf.d/xray.conf` |
-| **Nginx access.log** — записи НЕТ | До Nginx (сеть/CF Guard) | Смотри Шаг 2 ниже |
-| **Nginx error.log** — есть ошибка | Nginx не может обработать | Читай ошибку в error.log |
-| **Xray access.log** — запись `accepted` | Всё работает, проблема в outbound | Смотри Шаг 3 |
-| **Xray error.log** — есть ошибка | Xray принял но не может обработать | Читай ошибку |
-| **Везде пусто** | Запрос не доходит до сервера | Смотри Шаг 2 |
+# Reality не запускается
+xray -test -config /usr/local/etc/xray/reality.json
 
----
+# Nginx после отключения IPv6
+sed -i '/listen \[::\]:443/d' /etc/nginx/conf.d/xray.conf && nginx -t && systemctl reload nginx
 
-#### Шаг 2. Запрос не доходит до сервера
+# Tor — попробовать мосты (пункт 7 → 11)
+tail -50 /var/log/tor/notices.log
 
-```bash
-# Проверь 1: домен резолвится?
-dig +short your-domain.com
+# Подписка не обновляется
+vwn  # пункт 2 → пункт 5 (Пересоздать файлы подписки)
 
-# Проверь 2: порт 443 доступен снаружи?
-curl -vI https://your-domain.com/  # с ВНЕШНЕГО IP (не с сервера!)
+# Забыли пароль от подписок
+vwn  # пункт 3 → 12 (показывает текущие данные или позволяет сменить)
 
-# Проверь 3: CF Guard блокирует?
-# Если в Nginx access.log нет записей — возможно CF Guard отсек до Xray
-# Проверь:
-grep -A5 "CF Guard" /etc/nginx/conf.d/xray.conf
-# Если CF Guard ON — добавь свой IP в whitelist: vwn → 3 → 7
+# CPU Guard — проверить приоритеты
+systemctl show xray.service -p CPUWeight
 
-# Проверь 4: Nginx вообще работает?
-nginx -t && systemctl status nginx
+# Блокировка рекламы — включить/выключить
+vwn  # пункт 20
 
-# Проверь 5: порт 443 слушается?
-ss -tlnp | grep :443
-```
-
----
-
-#### Шаг 3. Запрос дошёл до Xray но подключение не работает
-
-```bash
-# Включи ДЕБАГ логи (по умолчанию они отключены):
-for f in /usr/local/etc/xray/*.json; do
-    sed -i 's/"loglevel": ".*"/"loglevel": "debug"/' "$f"
-    sed -i 's/"access": ".*"/"access": "\/var\/log\/xray\/access.log"/' "$f"
-done
-
-# Убери заглушку systemd (no-journal) чтобы journalctl работал:
-for svc in xray xray-reality xray-vision; do
-    rm -f /etc/systemd/system/${svc}.service.d/no-journal.conf 2>/dev/null
-done
-
-systemctl daemon-reload
-systemctl restart xray xray-reality xray-vision
-
-# Теперь смотри логи:
-journalctl -f -u xray -u xray-reality -u xray-vision --no-pager
-
-# Типичные ошибки в логах:
-# "invalid user ID"         → неверный UUID в клиенте
-# "failed to validate host" → WS path не совпадает
-# "tls: bad certificate"    → SSL сертификат не совпадает с доменом
-# "failed to listen"        → Xray не запустился на порту
-# "outbound tag not found"  → конфиг роутинга сломан
-
-# После отладки — выключить логи обратно:
-vwn → пункт 26 (Пересоздать все конфиги)
-```
-
----
-
-#### Шаг 4. Быстрая таблица проблем
-
-| Симптом | Где смотреть | Команда | Решение |
-|---------|-------------|---------|---------|
-| **Timeout WS, логи пустые везде** | До Nginx | `curl -vI https://your-domain.com/` | Проверь DNS, CF Guard, firewall |
-| **Timeout WS, Nginx access.log есть** | Nginx → Xray | `grep proxy_pass /etc/nginx/conf.d/xray.conf` | Проверь что proxy_pass указывает на правильный порт Xray |
-| **Timeout WS, Nginx error.log есть** | Nginx ошибка | `tail -20 /var/log/nginx/error.log` | Читай ошибку |
-| **Timeout Reality, логи пустые** | До Xray Reality | `ss -tlnp \| grep 8443` | Порт не слушается → `systemctl restart xray-reality` |
-| **Timeout Reality, Xray error.log есть** | Xray ошибка | `journalctl -f -u xray-reality` | Читай ошибку |
-| **Timeout Vision, логи пустые** | До Xray Vision | `ss -tlnp \| grep :443` | Порт не слушается → `systemctl restart xray-vision` |
-| **Подключение есть, интернет нет** | Outbound | `grep -A5 "outbounds" /usr/local/etc/xray/*.json` | outbound не работает (WARP/Psiphon/Tor упал) |
-| **Все таймауты** | Xray конфиг | `xray -test -config /usr/local/etc/xray/config.json` | Конфиг сломан → vwn → 26 (Пересоздать) |
-
----
-
-### 🚀 Автоматическая диагностика
-
-```bash
-# Полная проверка всех компонентов
-vwn status
-
-# Обновить модули перед диагностикой
-vwn update
+# Режим приватности — проверить статус
+vwn  # пункт 26 → пункт 4 (Показать статус)
 ```
 
 ## Удаление
 
 ```bash
-vwn  # Пункт 30
+vwn  # Пункт 32
 ```
 
 Бэкапы в `/root/vwn-backups/` автоматически не удаляются.
@@ -1437,10 +1007,6 @@ vwn  # Пункт 30
 - [Psiphon tunnel core](https://github.com/Psiphon-Labs/psiphon-tunnel-core-binaries)
 - [acme.sh](https://github.com/acmesh-official/acme.sh)
 - nginx (mainline с nginx.org), jq, ufw, tor, obfs4proxy, qrencode
-
-## Версия
-
-Текущая: **3.1**
 
 ## Лицензия
 

@@ -67,15 +67,9 @@ _applyUsersToConfigs() {
         jq --argjson c "$clients_r" '.inbounds[0].settings.clients = $c' \
             "$realityConfigPath" > "${realityConfigPath}.tmp" && mv "${realityConfigPath}.tmp" "$realityConfigPath"
     fi
-    # Vision использует flow xtls-rprx-vision — тот же формат clients что у Reality
-    if [ -f "$visionConfigPath" ]; then
-        jq --argjson c "$clients_r" '.inbounds[0].settings.clients = $c' \
-            "$visionConfigPath" > "${visionConfigPath}.tmp" && mv "${visionConfigPath}.tmp" "$visionConfigPath"
-    fi
 
     systemctl restart xray 2>/dev/null || true
     systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
 }
 
 # ── Инициализация ─────────────────────────────────────────────────
@@ -124,7 +118,7 @@ buildUserSubFile() {
         wep=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$wp" 2>/dev/null || echo "$wp")
         connect_host=$(getConnectHost 2>/dev/null || echo "$domain")
         [ -z "$connect_host" ] && connect_host="$domain"
-        name=$(_getConfigName "WS" "$label" "$server_ip")
+        name="${flag} VL-WS | ${label} ${flag}"
         encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$name" 2>/dev/null || echo "$name")
         lines+="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=ws&host=${domain}&path=${wep}#${encoded_name}"$'\n'
     fi
@@ -148,24 +142,9 @@ buildUserSubFile() {
         r_destHost=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0]' "$realityConfigPath" 2>/dev/null)
         r_pubKey=$(vwn_conf_get REALITY_PUBKEY 2>/dev/null)
         [ -z "$r_pubKey" ] && r_pubKey=$(grep "PublicKey:" /usr/local/etc/xray/reality_client.txt 2>/dev/null | awk '{print $NF}')
-        r_name=$(_getConfigName "Reality" "$label" "$server_ip")
+        r_name="${flag} VL-Reality | ${label} ${flag}"
         r_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$r_name" 2>/dev/null || echo "$r_name")
         lines+="vless://${r_uuid}@${server_ip}:${r_port}?encryption=none&security=reality&sni=${r_destHost}&fp=chrome&pbk=${r_pubKey}&sid=${r_shortId}&type=tcp&flow=xtls-rprx-vision#${r_encoded_name}"$'\n'
-    fi
-
-    if [ -f "$visionConfigPath" ]; then
-        local v_domain v_uuid v_name v_encoded_name
-        v_domain=$(vwn_conf_get VISION_DOMAIN 2>/dev/null || true)
-        v_uuid=$(jq -r --arg u "$uuid" \
-            '.inbounds[0].settings.clients[] | select(.id==$u) | .id' \
-            "$visionConfigPath" 2>/dev/null | head -1)
-        [ -z "$v_uuid" ] && \
-            v_uuid=$(jq -r '.inbounds[0].settings.clients[0].id' "$visionConfigPath" 2>/dev/null)
-        if [ -n "$v_domain" ] && [ -n "$v_uuid" ] && [ "$v_uuid" != "null" ]; then
-            v_name=$(_getConfigName "Vision" "$label" "$server_ip")
-            v_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$v_name" 2>/dev/null || echo "$v_name")
-            lines+="vless://${v_uuid}@${v_domain}:443?security=tls&flow=xtls-rprx-vision&type=tcp&sni=${v_domain}&fp=chrome&allowInsecure=0#${v_encoded_name}"$'\n'
-        fi
     fi
 
     local filename safe
@@ -232,18 +211,6 @@ try:
         print(f'    public-key: {pbk}')
         print(f'    short-id: {sid}')
         print(f'  flow: xtls-rprx-vision')
-    elif security == 'tls' and params.get('flow', '') == 'xtls-rprx-vision':
-        sni = params.get('sni', host)
-        print(f'- name: \"{name}\"')
-        print(f'  type: vless')
-        print(f'  server: {host}')
-        print(f'  port: {port}')
-        print(f'  uuid: {uuid}')
-        print(f'  tls: true')
-        print(f'  servername: {sni}')
-        print(f'  client-fingerprint: chrome')
-        print(f'  network: tcp')
-        print(f'  flow: xtls-rprx-vision')
 except Exception as e:
     pass
 " "$url" 2>/dev/null
@@ -252,13 +219,8 @@ except Exception as e:
 buildUserHtmlPage() {
     local uuid="$1" label="$2" token="$3" lines="$4"
     local domain safe htmlfile sub_url
-    local btn_copy_text btn_copy_all_text btn_copied_text btn_qr_text
     domain=$(_getDomain)
     [ -z "$domain" ] && return 0
-    btn_copy_text=$(msg btn_copy)
-    btn_copy_all_text=$(msg btn_copy_all)
-    btn_copied_text=$(msg btn_copied)
-    btn_qr_text=$(msg btn_qr)
     safe=$(_safeLabel "$label")
     htmlfile="${SUB_DIR}/${safe}_${token}.html"
     sub_url="https://${domain}/sub/${safe}_${token}.txt"
@@ -294,7 +256,6 @@ h2{color:#6c7086;font-size:11px;font-weight:700;text-transform:uppercase;letter-
 .reality{background:#302520;color:#fab387}
 .sub{background:#252540;color:#89dceb}
 .clash{background:#2a2040;color:#cba6f7}
-.vision{background:#252535;color:#b4befe}
 .url{font-size:11px;word-break:break-all;color:#cdd6f4;line-height:1.5;margin-bottom:8px;padding:6px;background:#111;border-radius:4px;white-space:pre-wrap}
 .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .btn{background:#313244;color:#cdd6f4;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:11px}
@@ -313,43 +274,23 @@ HTMLEOF
     echo "<h1 style='color:#89b4fa;font-size:15px;margin-bottom:16px;padding-bottom:8px;border-bottom:1px solid #2a2a2a'>📡 ${label}</h1>" >> "$htmlfile"
 
     local i=0
-    local all_vless=""
-    local vless_count=0
     for cfg in "${configs[@]}"; do
         local proto_label="VLESS" proto_class=""
         echo "$cfg" | grep -q "type=ws"            && proto_label="WS+TLS"  && proto_class="ws"
         echo "$cfg" | grep -q "security=reality"   && proto_label="Reality" && proto_class="reality"
-        echo "$cfg" | grep -q "flow=xtls-rprx-vision" && echo "$cfg" | grep -q "security=tls" && proto_label="Vision+TLS" && proto_class="vision"
-        if [[ "$cfg" == vless://* ]]; then
-            all_vless="${all_vless}${cfg}"$'\n'
-            vless_count=$((vless_count+1))
-        fi
         cat >> "$htmlfile" << CARDEOF
 <div class="card">
   <span class="proto ${proto_class}">${proto_label}</span>
   <div class="url" id="u${i}">${cfg}</div>
   <div class="actions">
-    <button class="btn" onclick="cp('u${i}',this)">📋 ${btn_copy_text}</button>
-    <button class="btn qr-btn" onclick="tqr(${i})">${btn_qr_text}</button>
+    <button class="btn" onclick="cp('u${i}',this)">📋 Копировать</button>
+    <button class="btn qr-btn" onclick="tqr(${i})">QR-код</button>
   </div>
   <div class="qr-wrap" id="qr${i}"><div class="qr-inner" id="qrc${i}"></div></div>
 </div>
 CARDEOF
         i=$((i+1))
     done
-
-    if [ "$vless_count" -gt 1 ]; then
-        all_vless="${all_vless%$'\n'}"
-        cat >> "$htmlfile" << ALLVLESSEOF
-<div class="card">
-  <span class="proto sub">VLESS</span>
-  <div class="actions">
-    <button class="btn" onclick="cp('uallvless',this)">${btn_copy_all_text}</button>
-  </div>
-  <div class="url" id="uallvless" style="display:none">${all_vless}</div>
-</div>
-ALLVLESSEOF
-    fi
 
     # Clash блок
     if [ -n "$clash_yaml" ]; then
@@ -359,7 +300,7 @@ ALLVLESSEOF
   <span class="proto clash">Clash</span>
   <div class="url" id="uclash">${clash_yaml}</div>
   <div class="actions">
-    <button class="btn" onclick="cp('uclash',this)">📋 ${btn_copy_text}</button>
+    <button class="btn" onclick="cp('uclash',this)">📋 Копировать</button>
   </div>
 </div>
 CLASHEOF
@@ -372,8 +313,8 @@ CLASHEOF
   <span class="proto sub">SUB</span>
   <div class="url" id="usub">${sub_url}</div>
   <div class="actions">
-    <button class="btn" onclick="cp('usub',this)">📋 ${btn_copy_text}</button>
-    <button class="btn qr-btn" onclick="tqr('sub')">${btn_qr_text}</button>
+    <button class="btn" onclick="cp('usub',this)">📋 Копировать</button>
+    <button class="btn qr-btn" onclick="tqr('sub')">QR-код</button>
   </div>
   <div class="qr-wrap" id="qrsub"><div class="qr-inner" id="qrcsub"></div></div>
 </div>
@@ -383,7 +324,7 @@ CLASHEOF
 var Q={};
 function cp(id,btn){
   navigator.clipboard.writeText(document.getElementById(id).textContent.trim()).then(function(){
-    var o=btn.textContent;btn.textContent='✓ ${btn_copied_text}';
+    var o=btn.textContent;btn.textContent='✓ Скопировано';
     setTimeout(function(){btn.textContent=o;},1500);
   });
 }
@@ -410,10 +351,6 @@ rebuildAllSubFiles() {
         [ -z "$uuid" ] && continue
         buildUserSubFile "$uuid" "$label" "$token" && count=$((count+1))
     done < "$USERS_FILE"
-
-    # Перезапускаем сервисы ОДИН раз в самом конце а не на каждого пользователя
-    systemctl try-restart xray xray-reality xray-vision 2>/dev/null || true
-
     echo "${green}$(msg done) ($count)${reset}"
 }
 
@@ -546,7 +483,7 @@ showUserQR() {
     echo ""
     if [ -n "$sub_url" ]; then
         echo -e "${cyan}[ Subscription URL ]${reset}"
-        qrencode -s 3 -m 2 -t ANSIUTF8 "$sub_url" 2>/dev/null || true
+        qrencode -s 1 -m 1 -t ANSIUTF8 "$sub_url" 2>/dev/null || true
         echo -e "\n${green}${sub_url}${reset}"
         echo -e "${yellow}v2rayNG: + → Subscription group → URL${reset}"
         # Дополнительная ссылка по IP (когда домен ещё не проброшен через CDN)

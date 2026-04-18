@@ -24,29 +24,33 @@ case "${1:-}" in
         exit 0
         ;;
     "status")
-        source "$VWN_LIB/core.sh"
-        loadAllModules
+        for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock menu; do
+            [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh"
+        done
         _initLang
         runFullDiag
         exit 0
         ;;
     "backup")
-        source "$VWN_LIB/core.sh"
-        loadAllModules
+        for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock menu; do
+            [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh"
+        done
         _initLang
         createBackup
         exit 0
         ;;
     "restore")
-        source "$VWN_LIB/core.sh"
-        loadAllModules
+        for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock menu; do
+            [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh"
+        done
         _initLang
         restoreBackup
         exit 0
         ;;
     "qr")
-        source "$VWN_LIB/core.sh"
-        loadAllModules
+        for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock menu; do
+            [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh"
+        done
         _initLang
         getQrCode
         exit 0
@@ -54,18 +58,23 @@ case "${1:-}" in
 esac
 
 # Загружаем модули
-source "$VWN_LIB/core.sh"
-loadAllModules
+for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock menu; do
+    if [ -f "$VWN_LIB/${module}.sh" ]; then
+        # shellcheck source=/dev/null
+        source "$VWN_LIB/${module}.sh"
+    else
+        echo "ERROR: Module ${module}.sh not found in $VWN_LIB"
+        echo "Reinstall: bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh)"
+        exit 1
+    fi
+done
 
-# Выбор языка при первом запуске (и всегда вызываем _initLang для обновления MSG)
+# Выбор языка при первом запуске
 VWN_CONF="/usr/local/etc/xray/vwn.conf"
 if [ ! -f "$VWN_CONF" ] || ! grep -q "VWN_LANG=" "$VWN_CONF" 2>/dev/null; then
     selectLang
+    _initLang
 fi
-_initLang
-
-# Системный DNS — предотвращает утечку через DNS хостера
-setupSystemDNS
 
 isRoot
 menu "$@"

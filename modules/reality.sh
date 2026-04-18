@@ -58,46 +58,99 @@ writeRealityConfig() {
 
     mkdir -p /usr/local/etc/xray
 
-    # Проверка существования шаблона
-    if [ ! -f "$VWN_CONFIG_DIR/xray_reality.json" ]; then
-        echo "error: xray_reality.json template not found" >&2
-        return 1
-    fi
-
-    # Автодетект формата шаблона — плейсхолдеры или валидный JSON
-    if grep -qE '__UUID__|__PORT__|__PRIVKEY__|__SHORTID__|__DEST__|__HOST__' \
-            "$VWN_CONFIG_DIR/xray_reality.json" 2>/dev/null; then
-        render_config "$VWN_CONFIG_DIR/xray_reality.json" "$realityConfigPath" \
-            UUID     "$new_uuid" \
-            PORT     "$realityPort" \
-            PRIVKEY  "$privKey" \
-            SHORTID  "$shortId" \
-            DEST     "$dest" \
-            HOST     "$destHost"
-    else
-        # Генерируем конфиг из шаблона через jq
-        jq \
-            --arg port     "$realityPort" \
-            --arg dest     "$dest" \
-            --arg host     "$destHost" \
-            --arg privKey  "$privKey" \
-            --arg shortId  "$shortId" \
-            --arg uuid     "$new_uuid" \
-            '
-                .inbounds[0].port = ($port | tonumber)
-                | .inbounds[0].streamSettings.realitySettings.dest = $dest
-                | .inbounds[0].streamSettings.realitySettings.serverNames[0] = $host
-                | .inbounds[0].streamSettings.realitySettings.privateKey = $privKey
-                | .inbounds[0].streamSettings.realitySettings.shortIds[0] = $shortId
-                | .inbounds[0].settings.clients[0].id = $uuid
-            ' "$VWN_CONFIG_DIR/xray_reality.json" > "$realityConfigPath"
-    fi
-
-    # Валидация результата
-    if ! jq . "$realityConfigPath" >/dev/null 2>&1; then
-        echo "error: writeRealityConfig produced invalid JSON at $realityConfigPath" >&2
-        return 1
-    fi
+    cat > "$realityConfigPath" << EOF
+{
+    "log": {
+        "access": "none",
+        "error": "/var/log/xray/reality-error.log",
+        "loglevel": "error"
+    },
+    "inbounds": [{
+        "port": $realityPort,
+        "listen": "0.0.0.0",
+        "protocol": "vless",
+        "settings": {
+            "clients": [{"id": "$new_uuid", "flow": "xtls-rprx-vision"}],
+            "decryption": "none"
+        },
+        "streamSettings": {
+            "network": "tcp",
+            "security": "reality",
+            "realitySettings": {
+                "show": false,
+                "dest": "$dest",
+                "serverNames": ["$destHost"],
+                "privateKey": "$privKey",
+                "shortIds": ["$shortId"]
+            }
+        },
+        "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}
+    }],
+    "outbounds": [
+        {
+            "tag": "free",
+            "protocol": "freedom",
+            "settings": {"domainStrategy": "UseIPv4"}
+        },
+        {
+            "tag": "warp",
+            "protocol": "socks",
+            "settings": {"servers": [{"address": "127.0.0.1", "port": 40000}]}
+        },
+        {
+            "tag": "block",
+            "protocol": "blackhole"
+        }
+    ],
+    "routing": {
+        "domainStrategy": "AsIs",
+        "rules": [
+            {
+                "type": "field",
+                "ip": ["geoip:private"],
+                "outboundTag": "block"
+            },
+            {
+                "type": "field",
+                "port": "25, 587, 465, 2525",
+                "network": "tcp",
+                "outboundTag": "block"
+            },
+            {
+                "type": "field",
+                "protocol": ["bittorrent"],
+                "outboundTag": "block"
+            },
+            {
+                "type": "field",
+                "domain": [
+                    "domain:openai.com",
+                    "domain:chatgpt.com",
+                    "domain:oaistatic.com",
+                    "domain:oaiusercontent.com",
+                    "domain:auth0.openai.com"
+                ],
+                "outboundTag": "warp"
+            },
+            {
+                "type": "field",
+                "port": "0-65535",
+                "outboundTag": "free"
+            }
+        ]
+    },
+    "policy": {
+        "levels": {
+            "0": {
+                "handshake": 4,
+                "connIdle": 300,
+                "uplinkOnly": 2,
+                "downlinkOnly": 5
+            }
+        }
+    }
+}
+EOF
 
     cat > /usr/local/etc/xray/reality_client.txt << EOF
 === Reality параметры для клиента ===
@@ -225,9 +278,6 @@ installReality() {
     writeRealityConfig "$realityPort" "$dest" || return 1
     setupRealityService || return 1
 
-    # Сохраняем порт Reality в vwn.conf для последующего rollback при отключении Stream SNI
-    vwn_conf_set REALITY_PORT "$realityPort"
-
     # Синхронизируем WARP и Relay домены в новый конфиг
     [ -f "$warpDomainsFile" ] && applyWarpDomains
     [ -f "$relayConfigFile" ] && applyRelayDomains
@@ -277,12 +327,7 @@ showRealityInfo() {
     echo "ServerName:  $destHost"
     echo "Flow:        xtls-rprx-vision"
     echo "--------------------------------------------------"
-    local r_label r_name r_encoded_name
-    r_label="default"
-    [ -f "$USERS_FILE" ] && r_label=$(cut -d'|' -f2 "$USERS_FILE" | head -1)
-    r_name=$(_getConfigName "Reality" "$r_label" "$serverIP")
-    r_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$r_name" 2>/dev/null || echo "$r_name")
-    local url="vless://${uuid}@${serverIP}:${port}?encryption=none&security=reality&sni=${destHost}&fp=chrome&pbk=${pubKey}&sid=${shortId}&type=tcp&flow=xtls-rprx-vision#${r_encoded_name}"
+    local url="vless://${uuid}@${serverIP}:${port}?encryption=none&security=reality&sni=${destHost}&fp=chrome&pbk=${pubKey}&sid=${shortId}&type=tcp&flow=xtls-rprx-vision#Reality-${serverIP}"
     echo -e "${green}$url${reset}"
     echo "--------------------------------------------------"
 }
@@ -305,12 +350,7 @@ showRealityQR() {
         port=$(jq -r '.inbounds[0].port' "$realityConfigPath")
     fi
 
-    local r_label r_name r_encoded_name
-    r_label="default"
-    [ -f "$USERS_FILE" ] && r_label=$(cut -d'|' -f2 "$USERS_FILE" | head -1)
-    r_name=$(_getConfigName "Reality" "$r_label" "$serverIP")
-    r_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$r_name" 2>/dev/null || echo "$r_name")
-    local url="vless://${uuid}@${serverIP}:${port}?encryption=none&security=reality&sni=${destHost}&fp=chrome&pbk=${pubKey}&sid=${shortId}&type=tcp&flow=xtls-rprx-vision#${r_encoded_name}"
+    local url="vless://${uuid}@${serverIP}:${port}?encryption=none&security=reality&sni=${destHost}&fp=chrome&pbk=${pubKey}&sid=${shortId}&type=tcp&flow=xtls-rprx-vision#Reality-${serverIP}"
     command -v qrencode &>/dev/null || installPackage "qrencode"
     qrencode -s 1 -m 1 -t ANSIUTF8 "$url"
     echo -e "\n${green}$url${reset}\n"
@@ -330,7 +370,7 @@ modifyRealityPort() {
         local internal_port
         internal_port=$(jq -r '.inbounds[0].port' "$realityConfigPath")
         echo "${yellow}Stream SNI активен. Reality снаружи работает на порту 443.${reset}"
-        echo "${yellow}$(msg stream_sni_change_in_main_menu): ${internal_port}${reset}"
+        echo "${yellow}Внутренний порт: ${internal_port}. Для смены используйте пункт 13 (Stream SNI).${reset}"
         return 0
     fi
 
@@ -395,51 +435,6 @@ removeReality() {
     fi
 }
 
-rebuildRealityConfigs() {
-    local skip_sub="${1:-false}"
-    if [ ! -f "$realityConfigPath" ]; then
-        echo "${red}$(msg reality_not_installed)${reset}"; return 1;
-    fi
-
-    local realityPort dest
-    realityPort=$(jq -r '.inbounds[0].port // ""' "$realityConfigPath" 2>/dev/null)
-    dest=$(jq -r '.inbounds[0].streamSettings.realitySettings.dest // ""' "$realityConfigPath" 2>/dev/null)
-
-    # ❗ НИКОГДА НЕ ГЕНЕРИРУЕМ НОВЫЕ КЛЮЧИ!
-    # Все ключи остаются нетронутыми, мы только перезаписываем шаблон
-
-    if [ -z "$realityPort" ] || [ -z "$dest" ]; then
-        echo "${red}$(msg reality_not_installed) (missing params)${reset}"; return 1;
-    fi
-
-    echo -e "${cyan}Rebuilding Reality configs...${reset}"
-
-    echo -e "  ${cyan}[1/2] reality.json...${reset}"
-    writeRealityConfig "$realityPort" "$dest"
-
-    # Если Stream SNI активен — nginx делает ssl_preread и проксирует внутрь,
-    # поэтому Reality должен слушать 127.0.0.1, а не 0.0.0.0
-    if grep -q "ssl_preread on" /etc/nginx/nginx.conf 2>/dev/null; then
-        jq '.inbounds[0].listen = "127.0.0.1"' \
-            "$realityConfigPath" > "${realityConfigPath}.tmp" \
-            && mv "${realityConfigPath}.tmp" "$realityConfigPath"
-    fi
-
-    echo -e "  ${cyan}[2/2] Applying active features...${reset}"
-    [ -f "$warpDomainsFile" ] && applyWarpDomains 2>/dev/null || true
-    [ -f "$relayConfigFile" ] && applyRelayDomains 2>/dev/null || true
-    [ -f "$psiphonConfigFile" ] && applyPsiphonDomains 2>/dev/null || true
-    [ -f "$torConfigFile" ] && applyTorDomains 2>/dev/null || true
-    _adblockIsEnabled && _adblockApplyToConfig "$realityConfigPath" 2>/dev/null || true
-    _privacyIsEnabled && _xrayDisableLog "$realityConfigPath" 2>/dev/null || true
-
-    systemctl restart xray-reality 2>/dev/null || true
-
-    $skip_sub || rebuildAllSubFiles 2>/dev/null || true
-
-    echo "${green}Done. Reality configs rebuilt.${reset}"
-}
-
 manageReality() {
     set +e
     while true; do
@@ -466,7 +461,8 @@ manageReality() {
         echo -e "${green}7.${reset} $(msg reality_restart)"
         echo -e "${green}8.${reset} $(msg reality_logs)"
         echo -e "${green}9.${reset} $(msg reality_remove)"
-        echo -e "${green}10.${reset} $(msg menu_rebuild_reality)"
+        echo -e "${green}10.${reset} $(msg menu_stream_sni)"
+        echo -e "${green}11.${reset} $(msg menu_stream_sni_disable)"
         echo -e "${green}0.${reset} $(msg back)"
         echo ""
         read -rp "$(msg choose)" choice
@@ -482,7 +478,8 @@ manageReality() {
                echo "---"
                tail -n 30 /var/log/xray/reality-error.log 2>/dev/null || true ;;
             9) removeReality ;;
-            10) rebuildRealityConfigs ;;
+            10) setupStreamSNI ;;
+            11) disableStreamSNI ;;
             0) break ;;
         esac
         [ "${choice}" = "0" ] && continue
