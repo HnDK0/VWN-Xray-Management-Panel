@@ -25,7 +25,112 @@ print(flag)
     fi
 }
 
-# Формирует красивое имя конфига: 🇩🇪 VL-WS | label 🇩🇪
+# Возвращает суффикс активных Global режимов для имени конфига
+# Примеры: " 🌐☁️🇩🇪", " 🌐🔱🇳🇱🌉🇺🇸🧅🇫🇷", ""
+# Split режимы НЕ отображаются — только Global
+_getActiveModesSuffix() {
+    local suffix=""
+    local has_global=false
+    
+    # Проверяем WARP Global
+    local warp_global=false
+    if [ -f "$configPath" ]; then
+        local warp_mode
+        warp_mode=$(jq -r '.routing.rules[] | select(.outboundTag=="warp") | if .port == "0-65535" then "Global" else "OFF" end' "$configPath" 2>/dev/null | head -1)
+        [ "$warp_mode" = "Global" ] && warp_global=true
+    fi
+    
+    # Проверяем Psiphon Global + страна
+    local psiphon_global=false
+    local psiphon_country=""
+    if [ -f "$configPath" ]; then
+        local ps_mode
+        ps_mode=$(jq -r '.routing.rules[] | select(.outboundTag=="psiphon") | if .port == "0-65535" then "Global" else "OFF" end' "$configPath" 2>/dev/null | head -1)
+        [ "$ps_mode" = "Global" ] && psiphon_global=true
+    fi
+    [ "$psiphon_global" = true ] && [ -f "$psiphonConfigFile" ] &&         psiphon_country=$(jq -r '.EgressRegion // ""' "$psiphonConfigFile" 2>/dev/null)
+    
+    # Проверяем Relay Global + страна (через ip-api на RELAY_HOST)
+    local relay_global=false
+    local relay_country=""
+    if [ -f "$configPath" ]; then
+        local relay_mode
+        relay_mode=$(jq -r '.routing.rules[] | select(.outboundTag=="relay") | if .port == "0-65535" then "Global" else "OFF" end' "$configPath" 2>/dev/null | head -1)
+        [ "$relay_mode" = "Global" ] && relay_global=true
+    fi
+    if [ "$relay_global" = true ] && [ -f "$relayConfigFile" ]; then
+        local relay_host=""
+        relay_host=$(source "$relayConfigFile" 2>/dev/null && echo "$RELAY_HOST")
+        if [ -n "$relay_host" ]; then
+            relay_country=$(curl -s --connect-timeout 5 "http://ip-api.com/line/${relay_host}?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
+        fi
+    fi
+    
+    # Проверяем TOR Global + страна
+    local tor_global=false
+    local tor_country=""
+    if [ -f "$configPath" ]; then
+        local t_mode
+        t_mode=$(jq -r '.routing.rules[] | select(.outboundTag=="tor") | if .port == "0-65535" then "Global" else "OFF" end' "$configPath" 2>/dev/null | head -1)
+        [ "$t_mode" = "Global" ] && tor_global=true
+    fi
+    [ "$tor_global" = true ] &&         tor_country=$(grep "^ExitNodes" "$TOR_CONFIG" 2>/dev/null | grep -oP '\{[A-Z]+\}' | tr -d '{}' | head -1)
+    
+    # Если хоть один Global — добавляем 🌐
+    [ "$warp_global" = true ] || [ "$psiphon_global" = true ] || [ "$relay_global" = true ] || [ "$tor_global" = true ] && has_global=true
+    [ "$has_global" = true ] && suffix=" 🌐"
+    
+    # WARP: ☁️ + флаг страны (запрос через WARP socks5)
+    if [ "$warp_global" = true ]; then
+        local warp_country=""
+        warp_country=$(curl -s --connect-timeout 5 --socks5 127.0.0.1:40000 "http://ip-api.com/line/?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
+        if [ -n "$warp_country" ] && [[ "$warp_country" =~ ^[A-Z]{2}$ ]]; then
+            local wflag
+            wflag=$(python3 -c "c='${warp_country}'; print(''.join(chr(0x1F1E6 + ord(ch) - ord('A')) for ch in c))" 2>/dev/null)
+            [ -n "$wflag" ] && suffix="$suffix ☁️$wflag"
+        else
+            suffix="$suffix ☁️"
+        fi
+    fi
+    
+    # Psiphon: 🔱 + флаг страны
+    if [ "$psiphon_global" = true ]; then
+        if [ -n "$psiphon_country" ] && [[ "$psiphon_country" =~ ^[A-Z]{2}$ ]]; then
+            local pflag
+            pflag=$(python3 -c "c='${psiphon_country}'; print(''.join(chr(0x1F1E6 + ord(ch) - ord('A')) for ch in c))" 2>/dev/null)
+            [ -n "$pflag" ] && suffix="$suffix 🔱$pflag"
+        else
+            suffix="$suffix 🔱"
+        fi
+    fi
+    
+    # Relay: 🌉 + флаг страны
+    if [ "$relay_global" = true ]; then
+        if [ -n "$relay_country" ] && [[ "$relay_country" =~ ^[A-Z]{2}$ ]]; then
+            local rflag
+            rflag=$(python3 -c "c='${relay_country}'; print(''.join(chr(0x1F1E6 + ord(ch) - ord('A')) for ch in c))" 2>/dev/null)
+            [ -n "$rflag" ] && suffix="$suffix 🌉$rflag"
+        else
+            suffix="$suffix 🌉"
+        fi
+    fi
+    
+    # TOR: 🧅 + флаг страны
+    if [ "$tor_global" = true ]; then
+        if [ -n "$tor_country" ] && [[ "$tor_country" =~ ^[A-Z]{2}$ ]]; then
+            local tflag
+            tflag=$(python3 -c "c='${tor_country}'; print(''.join(chr(0x1F1E6 + ord(ch) - ord('A')) for ch in c))" 2>/dev/null)
+            [ -n "$tflag" ] && suffix="$suffix 🧅$tflag"
+        else
+            suffix="$suffix 🧅"
+        fi
+    fi
+    
+    # Убираем лишние пробелы
+    echo "$suffix" | sed 's/^ *//;s/ *$//;s/  */ /g'
+}
+
+# Формирует красивое имя конфига: 🇩🇪 VL-WS | label 🇩🇪 🌐🧅
 # Аргументы: тип (WS|Reality), label, [ip]
 _getConfigName() {
     local type="$1"
@@ -33,10 +138,12 @@ _getConfigName() {
     local ip="${3:-$(getServerIP)}"
     local flag
     flag=$(_getCountryFlag "$ip")
+    local modes
+    modes=$(_getActiveModesSuffix)
     case "$type" in
-        WS)       echo "${flag} VL-WS | ${label} ${flag}" ;;
-        Reality)  echo "${flag} VL-Reality | ${label} ${flag}" ;;
-        *)        echo "${flag} VL-${type} | ${label} ${flag}" ;;
+        WS)       echo "${flag} VL-WS | ${label} ${flag}${modes}" ;;
+        Reality)  echo "${flag} VL-Reality | ${label} ${flag}${modes}" ;;
+        *)        echo "${flag} VL-${type} | ${label} ${flag}${modes}" ;;
     esac
 }
 
@@ -68,6 +175,15 @@ writeXrayConfig() {
         "error": "/var/log/xray/error.log",
         "loglevel": "error"
     },
+    "dns": {
+        "servers": [
+            {
+                "address": "https://9.9.9.9/dns-query",
+                "port": 443
+            }
+        ],
+        "queryStrategy": "UseIPv4"
+    },
     "inbounds": [{
         "port": $xrayPort,
         "listen": "127.0.0.1",
@@ -80,18 +196,22 @@ writeXrayConfig() {
             "network": "ws",
             "wsSettings": {
                 "path": "$wsPath",
-                "host": "$domain",
-                "heartbeatPeriod": 30
+                "host": "$domain"
             },
             "sockopt": {
-                "tcpKeepAliveIdle": 100,
+                "tcpKeepAliveIdle": 60,
                 "tcpKeepAliveInterval": 10,
-                "tcpKeepAliveRetry": 3
+                "tcpKeepAliveRetry": 3,
+                "tcpFastOpen": true
             }
         },
-        "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "metadataOnly": false, "routeOnly": true}
+        "sniffing": {"enabled": true, "destOverride": ["http", "tls"], "routeOnly": true}
     }],
     "outbounds": [
+        {
+            "tag": "dns-out",
+            "protocol": "dns"
+        },
         {
             "tag": "free",
             "protocol": "freedom",
@@ -147,10 +267,11 @@ writeXrayConfig() {
     "policy": {
         "levels": {
             "0": {
-                "handshake": 4,
-                "connIdle": 300,
-                "uplinkOnly": 2,
-                "downlinkOnly": 5
+                "handshake": 10,
+                "connIdle": 600,
+                "uplinkOnly": 5,
+                "downlinkOnly": 10,
+                "bufferSize": 512
             }
         }
     }
@@ -278,7 +399,7 @@ getQrCode() {
 
     if [ -n "$sub_url" ]; then
         echo -e "${cyan}[ Subscription URL ]${reset}"
-        qrencode -s 1 -m 1 -t ANSIUTF8 "$sub_url" 2>/dev/null || true
+        qrencode -s 3 -m 2 -t ANSIUTF8 "$sub_url" 2>/dev/null || true
         echo -e "\n${green}${sub_url}${reset}"
         echo -e "${yellow}v2rayNG: + → Subscription group → URL${reset}"
         echo ""
@@ -484,4 +605,43 @@ updateXrayCore() {
     bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
     systemctl restart xray xray-reality 2>/dev/null || true
     echo "${green}$(msg xray_updated)${reset}"
+}
+
+rebuildXrayConfigs() {
+    local skip_sub="${1:-false}"
+    if [ ! -f "$configPath" ]; then
+        echo "${red}$(msg xray_not_installed)${reset}"; return 1;
+    fi
+
+    local xrayPort wsPath domain
+    xrayPort=$(jq -r '.inbounds[0].port // ""' "$configPath" 2>/dev/null)
+    wsPath=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // ""' "$configPath" 2>/dev/null)
+    domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // ""' "$configPath" 2>/dev/null)
+
+    if [ -z "$xrayPort" ] || [ -z "$wsPath" ] || [ -z "$domain" ]; then
+        echo "${red}$(msg xray_not_installed) (missing params)${reset}"; return 1;
+    fi
+
+    echo -e "${cyan}Rebuilding WebSocket configs...${reset}"
+
+    echo -e "  ${cyan}[1/3] config.json...${reset}"
+    writeXrayConfig "$xrayPort" "$wsPath" "$domain"
+
+    echo -e "  ${cyan}[2/3] Applying active features...${reset}"
+    [ -f "$warpDomainsFile" ] && applyWarpDomains 2>/dev/null || true
+    [ -f "$relayConfigFile" ] && applyRelayDomains 2>/dev/null || true
+    [ -f "$psiphonConfigFile" ] && applyPsiphonDomains 2>/dev/null || true
+    [ -f "$torConfigFile" ] && applyTorDomains 2>/dev/null || true
+    _adblockIsEnabled && _adblockApplyToConfig "$configPath" 2>/dev/null || true
+    _privacyIsEnabled && _xrayDisableLog "$configPath" 2>/dev/null || true
+
+    echo -e "  ${cyan}[3/3] Restarting services...${reset}"
+    nginx -t && systemctl reload nginx || {
+        echo "${red}$(msg nginx_syntax_err)${reset}"; return 1;
+    }
+    systemctl restart xray 2>/dev/null || true
+
+    $skip_sub || rebuildAllSubFiles 2>/dev/null || true
+
+    echo "${green}Done. WebSocket configs rebuilt.${reset}"
 }

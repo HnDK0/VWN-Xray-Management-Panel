@@ -134,7 +134,7 @@ setupTorService() {
 applyTorOutbound() {
     local tor_ob='{"tag":"tor","protocol":"socks","settings":{"servers":[{"address":"127.0.0.1","port":40003}]}}'
 
-    for cfg in "$configPath" "$realityConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
         [ -f "$cfg" ] || continue
         local has_ob
         has_ob=$(jq '.outbounds[] | select(.tag=="tor")' "$cfg" 2>/dev/null)
@@ -145,7 +145,7 @@ applyTorOutbound() {
         local has_rule
         has_rule=$(jq '.routing.rules[] | select(.outboundTag=="tor")' "$cfg" 2>/dev/null)
         if [ -z "$has_rule" ]; then
-            jq '.routing.rules = [.routing.rules[0]] + [{"type":"field","domain":[],"outboundTag":"tor"}] + .routing.rules[1:]' \
+            jq '.routing.rules = [.routing.rules[0]] + [{"type":"field","domain":["domain:whoer.net"],"outboundTag":"tor"}] + .routing.rules[1:]' \
                 "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
         fi
     done
@@ -165,36 +165,40 @@ applyTorDomains() {
 
     applyTorOutbound
 
-    for cfg in "$configPath" "$realityConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
         [ -f "$cfg" ] || continue
         jq "(.routing.rules[] | select(.outboundTag == \"tor\")) |= (.domain = [$domains_json] | del(.port))" \
             "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
     done
     systemctl restart xray 2>/dev/null || true
     systemctl restart xray-reality 2>/dev/null || true
+    systemctl restart xray-vision 2>/dev/null || true
     echo "${green}$(msg tor_split_ok)${reset}"
 }
 
 toggleTorGlobal() {
     applyTorOutbound
-    for cfg in "$configPath" "$realityConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
         [ -f "$cfg" ] || continue
         jq '(.routing.rules[] | select(.outboundTag == "tor")) |= (.port = "0-65535" | del(.domain))' \
             "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
     done
     systemctl restart xray 2>/dev/null || true
     systemctl restart xray-reality 2>/dev/null || true
+    systemctl restart xray-vision 2>/dev/null || true
+    rebuildAllSubFiles 2>/dev/null || true
     echo "${green}$(msg tor_global_ok)${reset}"
 }
 
 removeTorFromConfigs() {
-    for cfg in "$configPath" "$realityConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
         [ -f "$cfg" ] || continue
         jq 'del(.outbounds[] | select(.tag=="tor")) | del(.routing.rules[] | select(.outboundTag=="tor"))' \
             "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
     done
     systemctl restart xray 2>/dev/null || true
     systemctl restart xray-reality 2>/dev/null || true
+    systemctl restart xray-vision 2>/dev/null || true
 }
 
 checkTorIP() {

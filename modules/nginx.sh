@@ -67,9 +67,13 @@ http {
     tcp_nopush on;
     tcp_nodelay on;
 
-    # Keepalive — чуть больше чем у Cloudflare (70s), чтобы не рвать соединения
-    keepalive_timeout 75s;
+    # Таймауты для стабильного WebSocket
+    keepalive_timeout 65s;
     keepalive_requests 10000;
+    client_body_timeout 30s;
+    client_header_timeout 30s;
+    send_timeout 30s;
+    reset_timedout_connection on;
 
     server_tokens off;
     gzip on;
@@ -121,11 +125,18 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-        proxy_connect_timeout 10s;
+        
+        # Оптимизированные таймауты для WebSocket
+        proxy_connect_timeout 30s;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        
+        # Отключаем буферизацию для WebSocket
+        proxy_buffering off;
+        proxy_cache off;
         proxy_request_buffering off;
         proxy_socket_keepalive on;
+        
         access_log             off;
         error_log              /dev/null crit;
     }
@@ -180,6 +191,9 @@ map \$uri \$sub_label {
     default                                                    "${country_code} VLESS";
 }
 MAPEOF
+    # Сохраняем URL фейкового сайта — используется в writeVisionNginxConfig
+    vwn_conf_set STUB_URL "$proxyUrl"
+
     # Восстанавливаем реальный IP — всегда нужно при Cloudflare
     setupRealIpRestore
 
@@ -531,6 +545,35 @@ _writeStreamNginxConf() {
     local nginx_port="$2"
     local reality_port="$3"
 
+    # ── Строим map из STREAM_DOMAINS + текущего WS домена ────────────────────
+    # Формат STREAM_DOMAINS: domain1:port1,domain2:port2,...
+    local stream_domains
+    stream_domains=$(vwn_conf_get STREAM_DOMAINS 2>/dev/null || true)
+
+    # Убеждаемся что WS домен присутствует в списке
+    local ws_entry="${domain}:${nginx_port}"
+    if [ -z "$stream_domains" ]; then
+        stream_domains="$ws_entry"
+        vwn_conf_set STREAM_DOMAINS "$stream_domains"
+    elif ! echo "$stream_domains" | grep -q "^${domain}:"; then
+        stream_domains="${ws_entry},${stream_domains}"
+        vwn_conf_set STREAM_DOMAINS "$stream_domains"
+    fi
+
+    local default_port="${reality_port}"
+    vwn_conf_set STREAM_DEFAULT "$default_port"
+
+    # Генерируем строки map из STREAM_DOMAINS
+    local map_lines=""
+    IFS=',' read -ra _entries <<< "$stream_domains"
+    for _entry in "${_entries[@]}"; do
+        local _d _p
+        _d=$(echo "$_entry" | cut -d: -f1)
+        _p=$(echo "$_entry" | cut -d: -f2)
+        [ -z "$_d" ] || [ -z "$_p" ] && continue
+        map_lines="${map_lines}        ${_d}   127.0.0.1:${_p};\n"
+    done
+
     cat > /etc/nginx/nginx.conf << NGINXSTREAM
 user www-data;
 worker_processes auto;
@@ -545,20 +588,23 @@ events {
 }
 
 # ── Stream: SNI-маршрутизация на порту 443 ──────────────────────────────────
-# Ваш домен (${domain}) → nginx HTTP (${nginx_port})
-# Всё остальное (SNI чужих сайтов для Reality) → xray-reality (${reality_port})
 stream {
     map \$ssl_preread_server_name \$upstream_backend {
-        ${domain}   127.0.0.1:${nginx_port};
-        default     127.0.0.1:${reality_port};
+$(printf '%b' "$map_lines")
+        default     127.0.0.1:${default_port};
     }
+
+    # TCP оптимизации — совпадают с http блоком
+    tcp_nodelay on;
+
     server {
         listen 443;
         listen [::]:443;
         ssl_preread on;
         proxy_pass \$upstream_backend;
-        proxy_connect_timeout 10s;
+        proxy_connect_timeout 120s;
         proxy_timeout         3600s;
+        proxy_socket_keepalive on;
     }
 }
 
@@ -566,14 +612,14 @@ http {
     include /etc/nginx/mime.types;
     default_type application/octet-stream;
     sendfile on;
-    tcp_nopush on;
     tcp_nodelay on;
     keepalive_timeout 75s;
     keepalive_requests 10000;
+
     server_tokens off;
     gzip on;
     gzip_vary on;
-    gzip_proxied any;
+    gzip_proxied off;
     gzip_comp_level 6;
     gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss;
     include /etc/nginx/conf.d/*.conf;
@@ -581,9 +627,68 @@ http {
 NGINXSTREAM
 }
 
+# Добавляет домен:порт в stream map и перегенерирует nginx.conf.
+# Использование: addDomainToStream domain port
+addDomainToStream() {
+    local new_domain="$1" new_port="$2"
+    [ -z "$new_domain" ] || [ -z "$new_port" ] && return 1
+
+    local stream_domains default_port ws_domain nginx_port
+    stream_domains=$(vwn_conf_get STREAM_DOMAINS 2>/dev/null || true)
+    default_port=$(vwn_conf_get STREAM_DEFAULT 2>/dev/null || echo "10443")
+
+    # Убираем старую запись для этого домена если есть
+    local new_entry="${new_domain}:${new_port}"
+    local filtered=""
+    IFS=',' read -ra _entries <<< "$stream_domains"
+    for _e in "${_entries[@]}"; do
+        [ -z "$_e" ] && continue
+        local _ed; _ed=$(echo "$_e" | cut -d: -f1)
+        [ "$_ed" = "$new_domain" ] && continue
+        filtered="${filtered:+${filtered},}${_e}"
+    done
+    stream_domains="${filtered:+${filtered},}${new_entry}"
+    vwn_conf_set STREAM_DOMAINS "$stream_domains"
+
+    # Читаем WS домен и nginx_port для вызова _writeStreamNginxConf
+    ws_domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // empty' "$configPath" 2>/dev/null)
+    nginx_port=$(vwn_conf_get NGINX_HTTPS_PORT 2>/dev/null || echo "7443")
+    [ -z "$ws_domain" ] && ws_domain=$(vwn_conf_get DOMAIN 2>/dev/null || echo "")
+
+    _writeStreamNginxConf "$ws_domain" "$nginx_port" "$default_port"
+}
+
+# Удаляет домен из stream map и перегенерирует nginx.conf.
+# Использование: removeDomainFromStream domain
+removeDomainFromStream() {
+    local rem_domain="$1"
+    [ -z "$rem_domain" ] && return 1
+
+    local stream_domains default_port ws_domain nginx_port
+    stream_domains=$(vwn_conf_get STREAM_DOMAINS 2>/dev/null || true)
+    default_port=$(vwn_conf_get STREAM_DEFAULT 2>/dev/null || echo "10443")
+
+    local filtered=""
+    IFS=',' read -ra _entries <<< "$stream_domains"
+    for _e in "${_entries[@]}"; do
+        [ -z "$_e" ] && continue
+        local _ed; _ed=$(echo "$_e" | cut -d: -f1)
+        [ "$_ed" = "$rem_domain" ] && continue
+        filtered="${filtered:+${filtered},}${_e}"
+    done
+    vwn_conf_set STREAM_DOMAINS "$filtered"
+
+    ws_domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // empty' "$configPath" 2>/dev/null)
+    nginx_port=$(vwn_conf_get NGINX_HTTPS_PORT 2>/dev/null || echo "7443")
+    [ -z "$ws_domain" ] && ws_domain=$(vwn_conf_get DOMAIN 2>/dev/null || echo "")
+
+    _writeStreamNginxConf "$ws_domain" "$nginx_port" "$default_port"
+}
+
 setupStreamSNI() {
     local nginx_port="${1:-7443}"
     local reality_port="${2:-10443}"
+    local _stream_was_active=false
 
     # ── Предварительные проверки ─────────────────────────────────────────────
 
@@ -653,6 +758,7 @@ setupStreamSNI() {
 
     # 8. Stream SNI уже активен?
     if grep -q "ssl_preread on" /etc/nginx/nginx.conf 2>/dev/null; then
+        _stream_was_active=true
         echo "${yellow}$(msg stream_sni_already_active)${reset}"
         local cur_np cur_rp
         cur_np=$(vwn_conf_get NGINX_HTTPS_PORT)
@@ -678,6 +784,15 @@ setupStreamSNI() {
     echo -e "${cyan}$(msg stream_sni_setup): ${domain}${reset}"
     echo -e "  nginx   → 127.0.0.1:${nginx_port}"
     echo -e "  reality → 127.0.0.1:${reality_port}"
+
+    # Save the original external Reality port for disable rollback.
+    if [ -f "$realityConfigPath" ] && ! $_stream_was_active; then
+        local reality_orig_port
+        reality_orig_port=$(jq -r '.inbounds[0].port // empty' "$realityConfigPath" 2>/dev/null)
+        if [[ "$reality_orig_port" =~ ^[0-9]+$ ]]; then
+            vwn_conf_set REALITY_ORIG_PORT "$reality_orig_port"
+        fi
+    fi
 
     vwn_conf_set NGINX_HTTPS_PORT      "$nginx_port"
     vwn_conf_set REALITY_INTERNAL_PORT "$reality_port"
@@ -742,33 +857,84 @@ setupStreamSNI() {
 # Внутренняя функция — выполняет откат без подтверждения
 # Вызывается из disableStreamSNI (интерактив) и removeReality (автомат)
 _doDisableStreamSNI() {
-    local domain xray_port proxy_url ws_path
+    local domain xray_port proxy_url ws_path reality_restore_port
     domain=$(vwn_conf_get DOMAIN)
     xray_port=$(jq -r '.inbounds[0].port // empty' "$configPath" 2>/dev/null)
     proxy_url=$(grep -o 'proxy_pass [^;]*' "$nginxPath" 2>/dev/null | tail -1 | awk '{print $2}')
     ws_path=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // empty' "$configPath" 2>/dev/null)
+    reality_restore_port=$(vwn_conf_get REALITY_ORIG_PORT 2>/dev/null || true)
 
+    # ── 1. Отключаем Vision если установлен ──────────────────────────────────
+    local vision_domain
+    vision_domain=$(vwn_conf_get VISION_DOMAIN 2>/dev/null || true)
+    if [ -n "$vision_domain" ]; then
+        echo -e "${yellow}Отключаю Vision (зависит от Stream SNI)...${reset}"
+        # Останавливаем сервис
+        systemctl stop xray-vision 2>/dev/null || true
+        systemctl disable xray-vision 2>/dev/null || true
+        # Удаляем сервисный файл
+        rm -f /etc/systemd/system/xray-vision.service
+        systemctl daemon-reload
+        # Удаляем конфиг и nginx блок
+        rm -f "$visionConfigPath"
+        rm -f /etc/nginx/conf.d/vision.conf
+        # Чистим vwn.conf
+        vwn_conf_del VISION_DOMAIN
+        vwn_conf_del VISION_UUID
+        vwn_conf_del vision_port
+        vwn_conf_del VISION_H1_PORT
+        vwn_conf_del VISION_H2_PORT
+        echo -e "${green}Vision отключён.${reset}"
+    fi
+
+    # ── 2. Восстанавливаем nginx без stream блока ────────────────────────────
     NGINX_HTTPS_PORT=443 \
         writeNginxConfig "$xray_port" "$domain" "$proxy_url" "$ws_path"
 
+    # ── 3. Чистим vwn.conf от stream параметров ──────────────────────────────
     vwn_conf_del NGINX_HTTPS_PORT
     vwn_conf_del REALITY_INTERNAL_PORT
+    vwn_conf_del REALITY_ORIG_PORT
+    vwn_conf_del STREAM_DOMAINS
+    vwn_conf_del STREAM_DEFAULT
 
-    # Возвращаем Reality на 0.0.0.0 и его оригинальный порт
+    # ── 4. Возвращаем Reality на 0.0.0.0 и его оригинальный порт ─────────────
     # При setupStreamSNI Reality был переведён на 127.0.0.1:internal_port
     if [ -f "$realityConfigPath" ]; then
-        local reality_orig_port
-        reality_orig_port=$(jq -r '.inbounds[0].port' "$realityConfigPath" 2>/dev/null)
-        jq '.inbounds[0].listen = "0.0.0.0"' \
+        if ! [[ "$reality_restore_port" =~ ^[0-9]+$ ]]; then
+            reality_restore_port=$(jq -r '.inbounds[0].port // empty' "$realityConfigPath" 2>/dev/null)
+        fi
+        if ! [[ "$reality_restore_port" =~ ^[0-9]+$ ]]; then
+            reality_restore_port=8443
+        fi
+        jq --argjson p "$reality_restore_port" '.inbounds[0].listen = "0.0.0.0" | .inbounds[0].port = $p' \
             "$realityConfigPath" > "${realityConfigPath}.tmp" \
             && mv "${realityConfigPath}.tmp" "$realityConfigPath"
         systemctl restart xray-reality 2>/dev/null || true
+        echo -e "${green}Reality возвращён на порт $reality_restore_port.${reset}"
     fi
 
+    # ── 5. UFW: открываем orig_port, удаляем правило 443 SNI ─────────────────
+    if [[ "$reality_restore_port" =~ ^[0-9]+$ ]]; then
+        ufw allow "$reality_restore_port"/tcp comment 'Xray Reality' &>/dev/null || true
+        # Удаляем правила SNI (443/tcp и 443/udp)
+        ufw status numbered 2>/dev/null | grep 'HTTPS+Reality SNI' \
+            | awk -F"[][]" '{print $2}' | sort -rn | while read -r n; do
+            echo "y" | ufw delete "$n" &>/dev/null || true
+        done
+        echo -e "${green}UFW обновлён: порт $reality_restore_port открыт.${reset}"
+    fi
+
+    # ── 6. Обновляем reality_client.txt с правильным портом ──────────────────
+    if [ -f /usr/local/etc/xray/reality_client.txt ]; then
+        sed -i "s/^Port:.*/Port:       $reality_restore_port/" /usr/local/etc/xray/reality_client.txt
+    fi
+
+    # ── 7. Перезагружаем nginx ───────────────────────────────────────────────
     nginx -t && systemctl reload nginx
     echo "${green}$(msg stream_sni_disabled)${reset}"
 
-    # Перегенерируем подписки: Reality снова на своём прямом порту
+    # ── 8. Перегенерируем подписки: Reality снова на своём прямом порту ──────
     rebuildAllSubFiles 2>/dev/null || true
 }
 
@@ -777,4 +943,61 @@ disableStreamSNI() {
     read -r confirm
     [[ "$confirm" != "y" ]] && return
     _doDisableStreamSNI
+}
+
+manageStreamSNI() {
+    set +e
+    while true; do
+        clear
+        local s_stream s_np s_rp s_domain
+        if grep -q "ssl_preread on" /etc/nginx/nginx.conf 2>/dev/null; then
+            s_stream="${green}ON${reset}"
+        else
+            s_stream="${red}OFF${reset}"
+        fi
+        s_np=$(vwn_conf_get NGINX_HTTPS_PORT 2>/dev/null || echo "7443")
+        s_rp=$(vwn_conf_get REALITY_INTERNAL_PORT 2>/dev/null || jq -r '.inbounds[0].port // "10443"' "$realityConfigPath" 2>/dev/null)
+        s_domain=$(vwn_conf_get DOMAIN 2>/dev/null || echo "")
+        [ -z "$s_domain" ] && s_domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // "—"' "$configPath" 2>/dev/null)
+
+        echo -e "${cyan}================================================================${reset}"
+        printf "   ${red}Stream SNI${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
+        echo -e "${cyan}----------------------------------------------------------------${reset}"
+        echo -e "  Status: $s_stream"
+        echo -e "  Domain: ${green}${s_domain:-—}${reset}"
+        echo -e "  nginx internal:   ${green}${s_np}${reset}"
+        echo -e "  reality internal: ${green}${s_rp}${reset}"
+        echo -e "${cyan}----------------------------------------------------------------${reset}"
+        echo -e "  ${green}1.${reset} $(msg menu_stream_sni)"
+        echo -e "  ${green}2.${reset} $(msg menu_stream_sni_disable)"
+        echo -e "  ${green}3.${reset} $(msg stream_sni_reconfigure)"
+        echo -e "  ${green}0.${reset} $(msg back)"
+        echo -e "${cyan}================================================================${reset}"
+
+        read -rp "$(msg choose)" _sni_choice
+        case "$_sni_choice" in
+            1) setupStreamSNI ;;
+            2) disableStreamSNI ;;
+            3)
+                local new_np new_rp
+                read -rp "Nginx internal port [${s_np}]: " new_np
+                read -rp "Reality internal port [${s_rp}]: " new_rp
+                [ -z "$new_np" ] && new_np="$s_np"
+                [ -z "$new_rp" ] && new_rp="$s_rp"
+                if ! [[ "$new_np" =~ ^[0-9]+$ ]] || [ "$new_np" -lt 1 ] || [ "$new_np" -gt 65535 ]; then
+                    echo "${red}$(msg invalid_port)${reset}"
+                elif ! [[ "$new_rp" =~ ^[0-9]+$ ]] || [ "$new_rp" -lt 1 ] || [ "$new_rp" -gt 65535 ]; then
+                    echo "${red}$(msg invalid_port)${reset}"
+                else
+                    setupStreamSNI "$new_np" "$new_rp"
+                fi
+                ;;
+            0) break ;;
+            *) echo -e "${red}$(msg invalid)${reset}" ;;
+        esac
+
+        [ "$_sni_choice" = "0" ] && continue
+        echo -e "\n${cyan}$(msg press_enter)${reset}"
+        read -r
+    done
 }

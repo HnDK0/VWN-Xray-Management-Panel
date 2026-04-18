@@ -241,12 +241,103 @@ _diagWarp() {
 
     # Проверяем что SOCKS5 реально работает
     local warp_ip
-    warp_ip=$(curl -s --connect-timeout 8 -x socks5://127.0.0.1:40000 https://api.ipify.org 2>/dev/null)
-    if [ -n "$warp_ip" ]; then
+    warp_ip=$(curl -s --connect-timeout 10 --max-time 15 -x socks5://127.0.0.1:40000 https://api.ipify.org 2>/dev/null | tr -d '[:space:]')
+    if [ -n "$warp_ip" ] && [[ "$warp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         _pass "$(msg diag_warp_socks_ok): $warp_ip"
     else
-        _fail "$(msg diag_warp_socks_fail)"
+        # Пробуем альтернативный сервис
+        warp_ip=$(curl -s --connect-timeout 10 --max-time 15 -x socks5://127.0.0.1:40000 https://ipv4.wtfismyip.com/text 2>/dev/null | tr -d '[:space:]')
+        if [ -n "$warp_ip" ] && [[ "$warp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            _pass "$(msg diag_warp_socks_ok): $warp_ip"
+        else
+            _fail "$(msg diag_warp_socks_fail)"
+        fi
     fi
+    echo ""
+}
+
+_diagFail2Ban() {
+    echo -e "${cyan}[ Fail2Ban & Web-Jail ]${reset}"
+
+    if ! command -v fail2ban-client &>/dev/null; then
+        _skip "Fail2Ban not installed"
+        echo ""
+        return
+    fi
+
+    if ! command -v iptables &>/dev/null; then
+        _fail "iptables not found — fail2ban cannot ban IPs"
+    else
+        _pass "iptables found"
+    fi
+
+    # Проверяем banaction в конфиге
+    local ban_action
+    ban_action=$(grep -E '^banaction\s*=' /etc/fail2ban/jail.local 2>/dev/null | awk '{print $3}' | head -1)
+    if [ "$ban_action" = "iptables-multiport" ]; then
+        _pass "banaction = iptables-multiport"
+    elif [ -n "$ban_action" ]; then
+        _warn "banaction = $ban_action (may fail if nftables not installed)"
+    else
+        _warn "banaction not set in jail.local (using default)"
+    fi
+
+    # Проверяем ignoreip (Cloudflare whitelist)
+    local ignore_ip
+    ignore_ip=$(grep -E '^ignoreip\s*=' /etc/fail2ban/jail.local 2>/dev/null | cut -d= -f2- | head -1)
+    if echo "$ignore_ip" | grep -q "127.0.0.1"; then
+        _pass "ignoreip configured"
+    else
+        _warn "ignoreip not set — localhost may get banned"
+    fi
+
+    # Fail2Ban сервис
+    if systemctl is-active --quiet fail2ban 2>/dev/null; then
+        _pass "fail2ban service running"
+    else
+        _fail "fail2ban service stopped"
+        echo ""
+        return
+    fi
+
+    # SSH jail
+    if fail2ban-client status sshd &>/dev/null; then
+        local ssh_banned
+        ssh_banned=$(fail2ban-client status sshd 2>/dev/null | grep "Currently banned" | awk '{print $NF}' || echo "?")
+        _pass "sshd jail active ($ssh_banned banned IPs)"
+    else
+        _fail "sshd jail not active"
+    fi
+
+    # Web-Jail (nginx-probe)
+    if [ -f /etc/fail2ban/filter.d/nginx-probe.conf ]; then
+        if fail2ban-client status nginx-probe &>/dev/null; then
+            local probe_banned
+            probe_banned=$(fail2ban-client status nginx-probe 2>/dev/null | grep "Currently banned" | awk '{print $NF}' || echo "?")
+            local max_retry
+            max_retry=$(grep -A10 '\[nginx-probe\]' /etc/fail2ban/jail.local 2>/dev/null | grep 'maxretry' | awk '{print $3}' | head -1)
+            _pass "nginx-probe jail active ($probe_banned banned, maxretry=$max_retry)"
+
+            # Проверка что maxretry не слишком низкий
+            if [ "${max_retry:-5}" -lt 10 ] 2>/dev/null; then
+                _warn "nginx-probe maxretry=$max_retry — may cause false bans with Stream SNI"
+            fi
+        else
+            _warn "nginx-probe filter exists but jail not active"
+        fi
+    else
+        _skip "Web-Jail (nginx-probe) not installed"
+    fi
+
+    # Проверяем iptables rules
+    local f2b_rules
+    f2b_rules=$(iptables -L -n 2>/dev/null | grep -c "f2b" || echo "0")
+    if [ "$f2b_rules" -gt 0 ]; then
+        _pass "iptables f2b chains: $f2b_rules rules"
+    else
+        _warn "no iptables f2b rules found — bans may not work"
+    fi
+
     echo ""
 }
 
@@ -317,6 +408,75 @@ _diagConnectivity() {
     echo ""
 }
 
+_diagVision() {
+    echo -e "${cyan}[ $(msg diag_section_vision) ]${reset}"
+
+    if [ ! -f "$visionConfigPath" ]; then
+        _skip "Vision $(msg diag_not_installed)"
+        echo ""
+        return
+    fi
+
+    # Валидность конфига
+    if xray -test -config "$visionConfigPath" &>/dev/null; then
+        _pass "$(msg diag_vision_config_ok)"
+    else
+        _fail "$(msg diag_vision_config_bad)"
+        xray -test -config "$visionConfigPath" 2>&1 | head -5 | sed 's/^/      /'
+    fi
+
+    # Сервис запущен
+    if systemctl is-active --quiet xray-vision 2>/dev/null; then
+        _pass "$(msg diag_vision_running)"
+    else
+        _fail "$(msg diag_vision_stopped)"
+    fi
+
+    # Порт слушается
+    local vision_port
+    vision_port=$(jq -r '.inbounds[0].port // empty' "$visionConfigPath" 2>/dev/null)
+    if [ -n "$vision_port" ] && ss -tlnp 2>/dev/null | grep -q ":${vision_port}"; then
+        _pass "$(msg diag_port_listen): $vision_port (internal)"
+    else
+        _fail "$(msg diag_port_not_listen): ${vision_port:-?}"
+    fi
+
+    # SSL сертификат Vision
+    if [ -f /etc/nginx/cert/vision.pem ]; then
+        local expire_date expire_epoch now_epoch days_left
+        expire_date=$(openssl x509 -enddate -noout -in /etc/nginx/cert/vision.pem 2>/dev/null | cut -d= -f2)
+        expire_epoch=$(date -d "$expire_date" +%s 2>/dev/null)
+        now_epoch=$(date +%s)
+        days_left=$(( (expire_epoch - now_epoch) / 86400 ))
+        if [ "$days_left" -le 0 ]; then
+            _fail "$(msg diag_ssl_expired)"
+        elif [ "$days_left" -lt 15 ]; then
+            _warn "$(msg diag_ssl_expiring): $days_left $(msg diag_days)"
+        else
+            _pass "$(msg diag_vision_ssl_ok): $days_left $(msg diag_days)"
+        fi
+    else
+        _fail "$(msg diag_vision_ssl_missing)"
+    fi
+
+    # DNS резолвинг домена Vision
+    local vision_domain
+    vision_domain=$(vwn_conf_get VISION_DOMAIN 2>/dev/null || true)
+    if [ -n "$vision_domain" ]; then
+        local resolved_ip server_ip
+        resolved_ip=$(getent hosts "$vision_domain" 2>/dev/null | awk '{print $1}' | head -1)
+        server_ip=$(getServerIP)
+        if [ -z "$resolved_ip" ]; then
+            _fail "$(msg diag_dns_fail): $vision_domain"
+        elif [ "$resolved_ip" = "$server_ip" ]; then
+            _pass "$(msg diag_dns_ok): $vision_domain → $resolved_ip"
+        else
+            _warn "$(msg diag_dns_mismatch): $vision_domain → $resolved_ip ($(msg diag_server_ip): $server_ip)"
+        fi
+    fi
+    echo ""
+}
+
 # ── Публичные функции ─────────────────────────────────────────────
 
 runFullDiag() {
@@ -329,8 +489,10 @@ runFullDiag() {
 
     _diagSystem
     _diagXray
+    _diagVision
     _diagNginx
     _diagWarp
+    _diagFail2Ban
     _diagTunnels
     _diagConnectivity
 
@@ -358,10 +520,12 @@ manageDiag() {
         echo -e "${green}1.${reset} $(msg diag_run_full)"
         echo -e "${green}2.${reset} $(msg diag_run_system)"
         echo -e "${green}3.${reset} $(msg diag_run_xray)"
-        echo -e "${green}4.${reset} $(msg diag_run_nginx)"
-        echo -e "${green}5.${reset} $(msg diag_run_warp)"
-        echo -e "${green}6.${reset} $(msg diag_run_tunnels)"
-        echo -e "${green}7.${reset} $(msg diag_run_connect)"
+        echo -e "${green}4.${reset} $(msg diag_run_vision)"
+        echo -e "${green}5.${reset} $(msg diag_run_nginx)"
+        echo -e "${green}6.${reset} $(msg diag_run_warp)"
+        echo -e "${green}7.${reset} Fail2Ban & Web-Jail"
+        echo -e "${green}8.${reset} $(msg diag_run_tunnels)"
+        echo -e "${green}9.${reset} $(msg diag_run_connect)"
         echo -e "${green}0.${reset} $(msg back)"
         echo ""
         read -rp "$(msg choose)" choice
@@ -369,10 +533,12 @@ manageDiag() {
             1) runFullDiag ;;
             2) clear; _DIAG_ISSUES=(); _diagSystem ;;
             3) clear; _DIAG_ISSUES=(); _diagXray ;;
-            4) clear; _DIAG_ISSUES=(); _diagNginx ;;
-            5) clear; _DIAG_ISSUES=(); _diagWarp ;;
-            6) clear; _DIAG_ISSUES=(); _diagTunnels ;;
-            7) clear; _DIAG_ISSUES=(); _diagConnectivity ;;
+            4) clear; _DIAG_ISSUES=(); _diagVision ;;
+            5) clear; _DIAG_ISSUES=(); _diagNginx ;;
+            6) clear; _DIAG_ISSUES=(); _diagWarp ;;
+            7) clear; _DIAG_ISSUES=(); _diagFail2Ban ;;
+            8) clear; _DIAG_ISSUES=(); _diagTunnels ;;
+            9) clear; _DIAG_ISSUES=(); _diagConnectivity ;;
             0) break ;;
         esac
         [ "$choice" = "0" ] && continue
