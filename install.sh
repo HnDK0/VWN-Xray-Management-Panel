@@ -1216,9 +1216,7 @@ main() {
         fi
         install_vwn_binary
 
-        # Системный DNS — предотвращает утечку через DNS хостера
         _load_modules
-        setupSystemDNS
 
         echo -e "\n${green}================================================================${reset}"
         echo -e "   $(msg install_done) $VWN_LIB"

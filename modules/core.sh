@@ -103,6 +103,11 @@ psiphonDomainsFile='/usr/local/etc/xray/psiphon_domains.txt'
 
 # ── Системный DNS — предотвращает утечку через DNS хостера ─────────
 setupSystemDNS() {
+    # ✅ Защита от повторного запуска
+    if [ -f "/usr/local/etc/xray/.dns_configured" ]; then
+        return 0
+    fi
+
     # Используем Quad9 + Google DNS вместо DNS хостера
     local dns_servers="9.9.9.9 8.8.8.8"
     local resolv_conf="/etc/resolv.conf"
@@ -144,6 +149,10 @@ RESOLVEOF
     chmod 644 "$resolv_conf"
     
     echo "✅ resolv.conf overwritten successfully"
+    
+    # ✅ Маркируем что уже сделано - больше никогда не запустимся автоматически
+    mkdir -p /usr/local/etc/xray
+    touch "/usr/local/etc/xray/.dns_configured"
 }
 
 unlockSystemDNS() {
