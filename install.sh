@@ -132,16 +132,37 @@ VWN_BIN="/usr/local/bin/vwn"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GITHUB_RAW="https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main"
 
-# ✅ Автоматический фикс apt зеркал если основной тупит
+# Автоматический фикс apt зеркал если основной тупит
+_kill_apt() {
+    # Убиваем все висящие процессы apt/dpkg и снимаем локи
+    kill -9 $(lsof /var/lib/dpkg/lock-frontend 2>/dev/null | awk 'NR>1{print $2}') 2>/dev/null || true
+    kill -9 $(lsof /var/lib/dpkg/lock 2>/dev/null | awk 'NR>1{print $2}') 2>/dev/null || true
+    killall -9 apt apt-get dpkg unattended-upgrades 2>/dev/null || true
+    fuser -kk /var/lib/dpkg/lock* /var/cache/apt/archives/lock /var/lib/apt/lists/lock* 2>/dev/null || true
+    sleep 0.5
+    rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/cache/apt/archives/lock /var/lib/apt/lists/lock*
+    dpkg --configure -a --force-confold --force-confdef 2>/dev/null || true
+}
+
 fix_apt_mirrors() {
     command -v apt &>/dev/null || return 0
 
-    # Проверяем работает ли стандартный репозиторий
-    if apt update -qq 2>/dev/null; then
+    # Сначала убиваем всё что могло остаться висеть
+    _kill_apt
+
+    # Проверяем работает ли стандартный репозиторий (с таймаутом)
+    if timeout 30 apt-get -o Acquire::ForceIPv4=true -o Acquire::http::Timeout=15 \
+            update -qq 2>/dev/null; then
         return 0
     fi
 
-    echo -e "${yellow}⚠️  Основной репозиторий не отвечает, пробуем резервные зеркала...${reset}"
+    local _y _r _rst
+    _y=$(tput setaf 3 2>/dev/null || true)
+    _r=$(tput setaf 1 2>/dev/null || true)
+    _g=$(tput setaf 2 2>/dev/null || true)
+    _rst=$(tput sgr0 2>/dev/null || true)
+
+    echo -e "${_y}⚠️  Основной репозиторий не отвечает, пробуем резервные зеркала...${_rst}"
 
     # Бэкап оригинала
     cp -a /etc/apt/sources.list /etc/apt/sources.list.vwn_backup 2>/dev/null
@@ -163,18 +184,23 @@ fix_apt_mirrors() {
             /etc/apt/sources.list > /etc/apt/sources.list.tmp
         mv /etc/apt/sources.list.tmp /etc/apt/sources.list
 
-        # Отключаем ip6 при обновлении на проблемных хостерах
-        if apt -o Acquire::ForceIPv4=true update -qq 2>/dev/null; then
-            echo -e "${green}OK${reset}"
+        _kill_apt
+        # Каждую попытку ограничиваем жёстким таймаутом
+        if timeout 30 apt-get \
+                -o Acquire::ForceIPv4=true \
+                -o Acquire::http::Timeout=15 \
+                update -qq 2>/dev/null; then
+            echo -e "${_g}OK${_rst}"
             return 0
         else
-            echo -e "${red}FAIL${reset}"
+            echo -e "${_r}FAIL${_rst}"
         fi
     done
 
     # Если все упали — возвращаем как было
     mv /etc/apt/sources.list.vwn_backup /etc/apt/sources.list 2>/dev/null
-    echo -e "${red}Все зеркала недоступны, оставляем стандартный${reset}"
+    _kill_apt
+    echo -e "${_r}Все зеркала недоступны, оставляем стандартный${_rst}"
 }
 
 MODULES="lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision xhttp menu"
@@ -499,14 +525,18 @@ prepareApt() {
 
 install_deps() {
     echo -e "${cyan}$(msg install_deps)${reset}"
-    
-    prepareApt
+
+    _kill_apt
     fix_apt_mirrors
-    
+
+    export DEBIAN_FRONTEND=noninteractive
     if command -v apt &>/dev/null; then
-        apt update -qq 2>/dev/null || true
-        # jq из репозитория — fallback если скачать не удастся
-        yes '' | apt install -y curl jq bash coreutils cron 2>/dev/null || true
+        # apt update уже сделан внутри fix_apt_mirrors — повторно не нужен
+        yes '' | apt-get install -y -q \
+            -o Dpkg::Lock::Timeout=60 \
+            -o Dpkg::Options::="--force-confdef" \
+            -o Dpkg::Options::="--force-confold" \
+            curl jq bash coreutils cron 2>/dev/null || true
         systemctl enable --now cron 2>/dev/null || true
     elif command -v dnf &>/dev/null; then
         yes '' | dnf install -y curl jq bash cronie 2>/dev/null || true
@@ -970,20 +1000,13 @@ _run_auto() {
     echo -e "${cyan}━━━ System packages ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
     identifyOS
 
-    # Чистим dpkg один раз перед свопом
-    fuser -kk /var/lib/dpkg/lock* 2>/dev/null || true
-    rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/cache/apt/archives/lock 2>/dev/null
-    pkill -9 apt apt-get dpkg 2>/dev/null || true
-    sleep 1
-
+    _kill_apt
     setupSwap
 
-    # Один раз готовим apt и обновляем индексы — перед всем циклом пакетов
-    echo -e "${cyan}Preparing apt...${reset}"
-    prepareApt
-    export DEBIAN_FRONTEND=noninteractive
+    # Один apt update перед всем циклом пакетов
     echo -e "${cyan}Updating package lists...${reset}"
-    timeout 120 ${PACKAGE_MANAGEMENT_UPDATE} >/dev/null 2>&1 || true
+    export DEBIAN_FRONTEND=noninteractive
+    timeout 60 ${PACKAGE_MANAGEMENT_UPDATE} >/dev/null 2>&1 || true
 
     echo -e "${cyan}Installing base packages...${reset}"
     for p in tar gpg unzip jq nano ufw socat curl qrencode python3; do
