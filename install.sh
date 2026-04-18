@@ -514,15 +514,15 @@ install_deps() {
     fix_apt_mirrors
     
     if command -v apt &>/dev/null; then
-        ${PACKAGE_MANAGEMENT_UPDATE} -qq 2>/dev/null || true
+        apt update -qq 2>/dev/null || true
         # jq из репозитория — fallback если скачать не удастся
-        yes '' | ${PACKAGE_MANAGEMENT_INSTALL} curl jq bash coreutils cron 2>/dev/null || true
+        yes '' | apt install -y curl jq bash coreutils cron 2>/dev/null || true
         systemctl enable --now cron 2>/dev/null || true
     elif command -v dnf &>/dev/null; then
-        yes '' | ${PACKAGE_MANAGEMENT_INSTALL} curl jq bash cronie 2>/dev/null || true
+        yes '' | dnf install -y curl jq bash cronie 2>/dev/null || true
         systemctl enable --now crond 2>/dev/null || true
     elif command -v yum &>/dev/null; then
-        yes '' | ${PACKAGE_MANAGEMENT_INSTALL} curl jq bash cronie 2>/dev/null || true
+        yes '' | yum install -y curl jq bash cronie 2>/dev/null || true
         systemctl enable --now crond 2>/dev/null || true
     fi
     # Устанавливаем фиксированную версию jq поверх системной
