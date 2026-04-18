@@ -437,8 +437,7 @@ _writeSubMapConf() {
 setupRealIpRestore() {
     echo -e "${cyan}$(msg cf_ips_setup)${reset}"
     local tmp
-    tmp=$(mktemp) || return 1
-    trap 'rm -f "$tmp"' RETURN
+    tmp=$(mktemp) || return 0
 
     printf '# Cloudflare real IP restore — auto-generated\n' > "$tmp"
 
@@ -453,7 +452,11 @@ setupRealIpRestore() {
         done < <(echo "$result" | grep -E '^[0-9a-fA-F:.]+(/[0-9]+)?$')
     done
 
-    [ "$ok" -eq 0 ] && { echo "${red}$(msg cf_ips_fail)${reset}"; return 1; }
+    if [ "$ok" -eq 0 ]; then
+        echo "${yellow}Warning: Could not fetch Cloudflare IPs, skipping real_ip_restore${reset}"
+        rm -f "$tmp"
+        return 0
+    fi
 
     printf 'real_ip_header CF-Connecting-IP;\nreal_ip_recursive on;\n' >> "$tmp"
 

@@ -138,7 +138,9 @@ installVision() {
     local auto_mode=false
     [ "${1:-}" = "--auto" ] && auto_mode=true
 
-    clear
+    if ! $auto_mode; then
+        clear
+    fi
     echo -e "${cyan}================================================================${reset}"
     echo -e "   $(msg vision_title)"
     echo -e "${cyan}================================================================${reset}"

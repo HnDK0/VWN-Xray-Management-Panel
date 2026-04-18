@@ -532,11 +532,14 @@ install_deps() {
     export DEBIAN_FRONTEND=noninteractive
     if command -v apt &>/dev/null; then
         # apt update уже сделан внутри fix_apt_mirrors — повторно не нужен
+        # Отключаем pipefail чтобы yes | apt не роняло скрипт при любой ошибке apt
+        set +o pipefail
         yes '' | apt-get install -y -q \
             -o Dpkg::Lock::Timeout=60 \
             -o Dpkg::Options::="--force-confdef" \
             -o Dpkg::Options::="--force-confold" \
             curl jq bash coreutils cron 2>/dev/null || true
+        set -o pipefail
         systemctl enable --now cron 2>/dev/null || true
     elif command -v dnf &>/dev/null; then
         yes '' | dnf install -y curl jq bash cronie 2>/dev/null || true
@@ -763,6 +766,7 @@ _auto_install_ws() {
     echo -e "${cyan}[2/6] Nginx config...${reset}"
     writeNginxConfigBase "$OPT_PORT" "$OPT_DOMAIN" "$OPT_STUB" "$wsPath"
     systemctl enable nginx 2>/dev/null || true
+    # nginx стартует в шаге 6, после выпуска SSL сертификата
 
     if ! $OPT_NO_WARP; then
         echo -e "${cyan}[3/6] WARP...${reset}"
@@ -800,8 +804,16 @@ _auto_install_ws() {
     setupSslCron
 
     echo -e "${cyan}[6/6] Starting Xray...${reset}"
-    systemctl enable --now xray
-    systemctl restart xray nginx
+    if systemctl enable xray 2>/dev/null && systemctl restart xray 2>/dev/null; then
+        echo "${green}xray started successfully.${reset}"
+    else
+        echo "${red}WARNING: xray.service failed to start. Check: journalctl -u xray -n 30${reset}"
+    fi
+    if systemctl restart nginx 2>/dev/null; then
+        echo "${green}nginx started successfully.${reset}"
+    else
+        echo "${red}WARNING: nginx failed to start. Check: journalctl -u nginx -n 30${reset}"
+    fi
 
     echo -e "${green}WS+TLS done.${reset}"
 }
@@ -812,9 +824,19 @@ _auto_install_ws() {
 _auto_install_reality() {
     echo -e "\n${cyan}━━━ Reality ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
 
+    # Reality требует рабочий xray для генерации x25519 ключей
+    local xray_bin
+    for _b in /usr/local/bin/xray /usr/bin/xray; do
+        [ -x "$_b" ] && xray_bin="$_b" && break
+    done
+    if [ -z "$xray_bin" ]; then
+        echo "${yellow}Xray не найден, пробуем установить...${reset}"
+        installXray || { echo "${red}Xray install failed. Reality skipped.${reset}"; return 1; }
+    fi
+
     ufw allow "$OPT_REALITY_PORT"/tcp comment 'Xray Reality' &>/dev/null || true
 
-    writeRealityConfig "$OPT_REALITY_PORT" "$OPT_REALITY_DEST"
+    writeRealityConfig "$OPT_REALITY_PORT" "$OPT_REALITY_DEST" || { echo "${red}writeRealityConfig failed${reset}"; return 1; }
     setupRealityService
 
     if ! $OPT_NO_WARP && [ -f "${warpDomainsFile:-/usr/local/etc/xray/warp_domains.txt}" ]; then

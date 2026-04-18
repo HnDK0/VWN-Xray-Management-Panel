@@ -301,7 +301,8 @@ installPackage() {
     fi
 
     export DEBIAN_FRONTEND=noninteractive
-    if timeout 120 ${PACKAGE_MANAGEMENT_INSTALL} "$pkg" >/dev/null 2>&1; then
+    # Используем PACKAGE_MANAGEMENT_INSTALL напрямую — он уже содержит timeout 300
+    if ${PACKAGE_MANAGEMENT_INSTALL} "$pkg" >/dev/null 2>&1; then
         echo "${green}OK${reset}"
         return 0
     fi
@@ -309,9 +310,9 @@ installPackage() {
     # При ошибке — чиним apt и пробуем ещё раз
     echo "${yellow}RETRY${reset}"
     prepareApt
-    timeout 120 ${PACKAGE_MANAGEMENT_UPDATE} >/dev/null 2>&1 || true
+    ${PACKAGE_MANAGEMENT_UPDATE} >/dev/null 2>&1 || true
 
-    if timeout 180 ${PACKAGE_MANAGEMENT_INSTALL} "$pkg" >/dev/null 2>&1; then
+    if ${PACKAGE_MANAGEMENT_INSTALL} "$pkg" >/dev/null 2>&1; then
         echo "${green}OK (retry)${reset}"
         return 0
     else

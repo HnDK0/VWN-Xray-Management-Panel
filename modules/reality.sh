@@ -64,22 +64,40 @@ writeRealityConfig() {
         return 1
     fi
 
-    # Генерируем конфиг из шаблона через jq
-    jq \
-        --arg port "$realityPort" \
-        --arg dest "$dest" \
-        --arg host "$destHost" \
-        --arg privKey "$privKey" \
-        --arg shortId "$shortId" \
-        --arg uuid "$new_uuid" \
-        '
-            .inbounds[0].port = ($port | tonumber)
-            | .inbounds[0].streamSettings.realitySettings.dest = $dest
-            | .inbounds[0].streamSettings.realitySettings.serverNames[0] = $host
-            | .inbounds[0].streamSettings.realitySettings.privateKey = $privKey
-            | .inbounds[0].streamSettings.realitySettings.shortIds[0] = $shortId
-            | .inbounds[0].settings.clients[0].id = $uuid
-        ' "$VWN_CONFIG_DIR/xray_reality.json" > "$realityConfigPath"
+    # Автодетект формата шаблона — плейсхолдеры или валидный JSON
+    if grep -qE '__UUID__|__PORT__|__PRIVKEY__|__SHORTID__|__DEST__|__HOST__' \
+            "$VWN_CONFIG_DIR/xray_reality.json" 2>/dev/null; then
+        render_config "$VWN_CONFIG_DIR/xray_reality.json" "$realityConfigPath" \
+            UUID     "$new_uuid" \
+            PORT     "$realityPort" \
+            PRIVKEY  "$privKey" \
+            SHORTID  "$shortId" \
+            DEST     "$dest" \
+            HOST     "$destHost"
+    else
+        # Генерируем конфиг из шаблона через jq
+        jq \
+            --arg port     "$realityPort" \
+            --arg dest     "$dest" \
+            --arg host     "$destHost" \
+            --arg privKey  "$privKey" \
+            --arg shortId  "$shortId" \
+            --arg uuid     "$new_uuid" \
+            '
+                .inbounds[0].port = ($port | tonumber)
+                | .inbounds[0].streamSettings.realitySettings.dest = $dest
+                | .inbounds[0].streamSettings.realitySettings.serverNames[0] = $host
+                | .inbounds[0].streamSettings.realitySettings.privateKey = $privKey
+                | .inbounds[0].streamSettings.realitySettings.shortIds[0] = $shortId
+                | .inbounds[0].settings.clients[0].id = $uuid
+            ' "$VWN_CONFIG_DIR/xray_reality.json" > "$realityConfigPath"
+    fi
+
+    # Валидация результата
+    if ! jq . "$realityConfigPath" >/dev/null 2>&1; then
+        echo "error: writeRealityConfig produced invalid JSON at $realityConfigPath" >&2
+        return 1
+    fi
 
     cat > /usr/local/etc/xray/reality_client.txt << EOF
 === Reality параметры для клиента ===

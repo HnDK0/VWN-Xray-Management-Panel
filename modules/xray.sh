@@ -149,16 +149,123 @@ _getConfigName() {
 
 installXray() {
     command -v xray &>/dev/null && { echo "info: xray already installed."; return; }
-    
-    # Предварительно ставим unzip чтобы убрать ложную ошибку в официальном скрипте
-    installPackage "unzip"
-    
+
+    # Предварительно ставим unzip — официальный скрипт Xray требует его для распаковки
+    installPackage "unzip" || true
+
     # Запускаем официальный установщик
-    bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
-    
+    local install_ok=false
+    if bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install 2>&1; then
+        command -v xray &>/dev/null && install_ok=true
+    fi
+
+    # Восстанавливаем терминал — официальный скрипт Xray ломает tty (убирает переносы строк)
+    stty sane 2>/dev/null || true
+
+    if ! $install_ok; then
+        echo "${yellow}Official Xray installer failed, trying direct download...${reset}"
+        _installXrayDirect || { echo "${red}Xray installation failed.${reset}"; return 1; }
+    fi
+
     create_xray_user
     fix_xray_service
     setup_xray_logs
+    _ensureXrayService
+}
+
+# Прямая загрузка бинаря Xray с GitHub Releases — fallback при недоступности официального установщика
+_installXrayDirect() {
+    local ARCH ARCH_TAG
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        x86_64)  ARCH_TAG="64" ;;
+        aarch64) ARCH_TAG="arm64-v8a" ;;
+        armv7l)  ARCH_TAG="arm32-v7a" ;;
+        *)       echo "${red}Unsupported arch: $ARCH${reset}"; return 1 ;;
+    esac
+
+    # Получаем последний тег версии
+    local version
+    version=$(curl -fsSL --connect-timeout 15 \
+        "https://api.github.com/repos/XTLS/Xray-core/releases/latest" 2>/dev/null \
+        | grep '"tag_name"' | head -1 | grep -oE 'v[0-9]+\.[0-9.]+')
+    [ -z "$version" ] && version="v24.12.31"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    # shellcheck disable=SC2064
+    trap "rm -rf '$tmpdir'" RETURN
+
+    local zip_url="https://github.com/XTLS/Xray-core/releases/download/${version}/Xray-linux-${ARCH_TAG}.zip"
+    echo "info: Downloading Xray ${version} (${ARCH_TAG})..."
+
+    if curl -fsSL --connect-timeout 30 --retry 2 "$zip_url" -o "$tmpdir/xray.zip" 2>/dev/null; then
+        # Распаковываем: сначала unzip, потом python3 как fallback
+        if command -v unzip &>/dev/null; then
+            unzip -q -o "$tmpdir/xray.zip" xray -d "$tmpdir/" 2>/dev/null || \
+            unzip -q -o "$tmpdir/xray.zip" -d "$tmpdir/" 2>/dev/null || true
+        else
+            python3 -c "
+import zipfile, sys
+with zipfile.ZipFile(sys.argv[1]) as z:
+    z.extractall(sys.argv[2])
+" "$tmpdir/xray.zip" "$tmpdir/" 2>/dev/null || true
+        fi
+    fi
+
+    local xray_bin="$tmpdir/xray"
+    if [ ! -f "$xray_bin" ] || [ ! -s "$xray_bin" ]; then
+        echo "${red}Direct download failed: could not extract xray binary${reset}"
+        return 1
+    fi
+
+    install -m 755 "$xray_bin" /usr/local/bin/xray
+    echo "${green}Xray ${version} installed to /usr/local/bin/xray${reset}"
+
+    # Скачиваем geo-базы
+    mkdir -p /usr/local/share/xray
+    for dat in geoip.dat geosite.dat; do
+        curl -fsSL --connect-timeout 15 \
+            "https://github.com/v2fly/geoip/releases/latest/download/${dat}" \
+            -o "/usr/local/share/xray/${dat}" 2>/dev/null || true
+    done
+    return 0
+}
+
+# Создаёт xray.service если официальный установщик его не создал
+_ensureXrayService() {
+    local svc_found=false
+    for f in /etc/systemd/system/xray.service /usr/lib/systemd/system/xray.service /lib/systemd/system/xray.service; do
+        [ -f "$f" ] && svc_found=true && break
+    done
+
+    if ! $svc_found; then
+        echo "info: Creating xray.service manually..."
+        cat > /etc/systemd/system/xray.service << 'EOF'
+[Unit]
+Description=Xray Service
+Documentation=https://github.com/xtls
+After=network.target nss-lookup.target
+
+[Service]
+User=xray
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ExecStart=/usr/local/bin/xray run -config /usr/local/etc/xray/config.json
+Restart=on-failure
+RestartPreventExitStatus=23
+LimitNOFILE=infinity
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        systemctl daemon-reload
+        echo "info: xray.service created."
+    fi
+
+    # Убеждаемся что директория конфига существует
+    mkdir -p /usr/local/etc/xray
 }
 
 writeXrayConfig() {
@@ -182,18 +289,35 @@ writeXrayConfig() {
         return 1
     fi
 
-    # Генерируем конфиг из шаблона через jq
-    jq \
-        --arg port "$xrayPort" \
-        --arg path "$wsPath" \
-        --arg domain "$domain" \
-        --arg uuid "$new_uuid" \
-        '
-            .inbounds[0].port = ($port | tonumber)
-            | .inbounds[0].streamSettings.wsSettings.path = $path
-            | .inbounds[0].streamSettings.wsSettings.host = $domain
-            | .inbounds[0].settings.clients[0].id = $uuid
-        ' "$VWN_CONFIG_DIR/xray_ws.json" > "$configPath"
+    # Автодетект формата шаблона:
+    # Если шаблон содержит плейсхолдеры __UUID__ / __PORT__ — используем render_config (текстовая замена).
+    # Если шаблон — валидный JSON с числовыми значениями — используем jq.
+    if grep -qE '__UUID__|__PORT__|__PATH__|__DOMAIN__' "$VWN_CONFIG_DIR/xray_ws.json" 2>/dev/null; then
+        render_config "$VWN_CONFIG_DIR/xray_ws.json" "$configPath" \
+            UUID    "$new_uuid" \
+            PORT    "$xrayPort" \
+            PATH    "$wsPath" \
+            DOMAIN  "$domain"
+    else
+        jq \
+            --arg port   "$xrayPort" \
+            --arg path   "$wsPath" \
+            --arg domain "$domain" \
+            --arg uuid   "$new_uuid" \
+            '
+                .inbounds[0].port = ($port | tonumber)
+                | .inbounds[0].streamSettings.wsSettings.path = $path
+                | .inbounds[0].streamSettings.wsSettings.host = $domain
+                | .inbounds[0].settings.clients[0].id = $uuid
+            ' "$VWN_CONFIG_DIR/xray_ws.json" > "$configPath"
+    fi
+
+    # Валидация результата
+    if ! jq . "$configPath" >/dev/null 2>&1; then
+        echo "error: writeXrayConfig produced invalid JSON at $configPath" >&2
+        cat "$configPath" >&2
+        return 1
+    fi
 }
 
 getConfigInfo() {
