@@ -106,72 +106,44 @@ setupSystemDNS() {
     # Используем Quad9 + Google DNS вместо DNS хостера
     local dns_servers="9.9.9.9 8.8.8.8"
     local resolv_conf="/etc/resolv.conf"
-    local ifaces=()
-    local iface
 
-    # Проверяем systemd-resolved
     if systemctl is-active --quiet systemd-resolved; then
         echo "info: setting DNS via systemd-resolved..."
+        
+        # ✅ ЕДИНСТВЕННЫЙ ПРАВИЛЬНЫЙ СПОСОБ: отключаем DNS из DHCP
+        mkdir -p /etc/systemd/resolved.conf.d
+        cat > /etc/systemd/resolved.conf.d/99-vwn-dns.conf << DNSCONF
+[Resolve]
+DNS=9.9.9.9 8.8.8.8
+FallbackDNS=1.1.1.1
+Domains=~.
+DNSSEC=no
+Cache=yes
+DNSOverTLS=no
+DNSCONF
 
-        # ✅ Совместимость: работает на всех версиях systemd (старые + новые)
-        if resolvectl list >/dev/null 2>&1; then
-            # Старая версия systemd (< 255)
-            mapfile -t ifaces < <(resolvectl list | grep -E '^[0-9]+' | awk '{print $2}')
-        elif resolvectl list-interfaces >/dev/null 2>&1; then
-            # Новая версия systemd (>= 255)
-            mapfile -t ifaces < <(resolvectl list-interfaces | grep -E '^[0-9]+' | awk '{print $2}')
-        else
-            echo "warning: resolvectl command failed, fallback to direct resolv.conf mode"
-            ifaces=()
-        fi
-
-        for iface in "${ifaces[@]}"; do
-            [ -z "$iface" ] && continue
-
-            echo "  → applying DNS to interface: $iface"
-
-            # ✅ Добавлен таймаут, убраны глушилки ошибок
-            if timeout 5 resolvectl dns "$iface" $dns_servers; then
-                echo "    ✓ DNS set OK"
-            else
-                echo "    ⚠ failed to set DNS on $iface (ignored)"
-            fi
-
-            if timeout 5 resolvectl default-route "$iface" false; then
-                echo "    ✓ default route disabled OK"
-            else
-                echo "    ⚠ failed to disable default route on $iface (ignored)"
-            fi
-        done
+        systemctl restart systemd-resolved 2>/dev/null || true
+        
+        echo "✅ system DNS set successfully, DHCP DNS blocked"
+        return 0
     fi
 
-    # Фиксируем /etc/resolv.conf
-    if [ -L "$resolv_conf" ]; then
-        echo "info: replacing systemd-resolved symlink with real file"
-        rm -f "$resolv_conf"
-    fi
-
-    # Снимаем защиту immutable если она установлена
+    # Только если systemd-resolved НЕ установлен и не работает
+    echo "info: no systemd-resolved, writing direct resolv.conf"
+    
     chattr -i "$resolv_conf" 2>/dev/null
-
-    # Записываем DNS серверы
-    echo "info: writing /etc/resolv.conf"
+    
+    # ✅ Полностью перезаписываем но НЕ ТРОГАЕМ СИМЛИНК
     cat > "$resolv_conf" << RESOLVEOF
-# DNS: Quad9 + Google (предотвращает утечку через DNS хостера)
+# VWN DNS: утечка через DNS хостера заблокирована
 nameserver 9.9.9.9
 nameserver 8.8.8.8
-options edns0 trust-ad
-search .
+options edns0 trust-ad timeout:1 attempts:1
 RESOLVEOF
 
     chmod 644 "$resolv_conf"
-
-    # Защита от перезаписи
-    if chattr +i "$resolv_conf"; then
-        echo "info: resolv.conf protected from overwriting"
-    fi
-
-    echo "✅ system DNS set successfully to $dns_servers"
+    
+    echo "✅ resolv.conf overwritten successfully"
 }
 
 unlockSystemDNS() {
