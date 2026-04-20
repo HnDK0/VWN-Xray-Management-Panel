@@ -107,8 +107,8 @@ setupSystemDNS() {
         return 0
     fi
 
-    # Используем Quad9 + Google DNS вместо DNS хостера
-    local dns_servers="9.9.9.9 8.8.8.8"
+    # Используем Quad9 + Cloudflare DNS вместо DNS хостера
+    local dns_servers="9.9.9.9 1.1.1.1"
     local resolv_conf="/etc/resolv.conf"
 
     if systemctl is-active --quiet systemd-resolved; then
@@ -141,7 +141,7 @@ DNSCONF
     cat > "$resolv_conf" << RESOLVEOF
 # VWN DNS: утечка через DNS хостера заблокирована
 nameserver 9.9.9.9
-nameserver 8.8.8.8
+nameserver 1.1.1.1
 options edns0 trust-ad timeout:1 attempts:1
 RESOLVEOF
 
