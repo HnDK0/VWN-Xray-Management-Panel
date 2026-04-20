@@ -26,10 +26,11 @@
                 "host": "__DOMAIN__"
             },
             "sockopt": {
+                "tcpFastOpen": true,
+                "tcpNoDelay": true,
                 "tcpKeepAliveIdle": 60,
                 "tcpKeepAliveInterval": 10,
-                "tcpKeepAliveRetry": 3,
-                "tcpFastOpen": true
+                "tcpKeepAliveRetry": 3
             }
         },
         "sniffing": {
@@ -102,10 +103,10 @@
     "policy": {
         "levels": {
             "0": {
-                "handshake": 10,
-                "connIdle": 600,
-                "uplinkOnly": 5,
-                "downlinkOnly": 10,
+                "handshake": 8,
+                "connIdle": 300,
+                "uplinkOnly": 3,
+                "downlinkOnly": 5,
                 "bufferSize": 512
             }
         }

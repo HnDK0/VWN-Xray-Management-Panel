@@ -1201,7 +1201,7 @@ _run_auto() {
         _auto_install_ws
         local _ws_rc=$?
         set -e
-        if (( _ws_rc != 0 )); then
+        if [ "$_ws_rc" -ne 0 ]; then
             warn "WS установка завершилась с ошибкой (rc=${_ws_rc}), продолжаем..."
             log_warn "WS install rc=${_ws_rc}"
         fi
@@ -1223,7 +1223,7 @@ _run_auto() {
         _auto_install_xhttp
         local _xhttp_rc=$?
         set -e
-        if (( _xhttp_rc != 0 )); then
+        if [ "$_xhttp_rc" -ne 0 ]; then
             warn "XHTTP установка завершилась с ошибкой (rc=${_xhttp_rc}), продолжаем..."
             log_warn "XHTTP install rc=${_xhttp_rc}"
         fi

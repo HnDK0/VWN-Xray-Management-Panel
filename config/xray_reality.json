@@ -4,9 +4,9 @@
         "error": "/var/log/xray/reality-error.log"
     },
     "dns": {
-    "servers": ["127.0.0.53", "1.1.1.1"],
-    "queryStrategy": "UseIPv4"
-  },
+        "servers": ["127.0.0.53", "1.1.1.1"],
+        "queryStrategy": "UseIPv4"
+    },
     "inbounds": [{
         "port": __PORT__,
         "listen": "0.0.0.0",
@@ -27,6 +27,13 @@
                 "serverNames": ["__HOST__"],
                 "privateKey": "__PRIVKEY__",
                 "shortIds": ["__SHORTID__"]
+            },
+            "sockopt": {
+                "tcpFastOpen": true,
+                "tcpNoDelay": true,
+                "tcpKeepAliveIdle": 60,
+                "tcpKeepAliveInterval": 10,
+                "tcpKeepAliveRetry": 3
             }
         },
         "sniffing": {
@@ -99,10 +106,11 @@
     "policy": {
         "levels": {
             "0": {
-                "handshake": 10,
-                "connIdle": 600,
-                "uplinkOnly": 5,
-                "downlinkOnly": 10
+                "handshake": 8,
+                "connIdle": 300,
+                "uplinkOnly": 3,
+                "downlinkOnly": 5,
+                "bufferSize": 512
             }
         }
     }

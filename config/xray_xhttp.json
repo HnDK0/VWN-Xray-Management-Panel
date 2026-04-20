@@ -4,9 +4,9 @@
         "error": "/var/log/xray/xhttp-error.log"
     },
     "dns": {
-    "servers": ["127.0.0.53", "1.1.1.1"],
-    "queryStrategy": "UseIPv4"
-  },
+        "servers": ["127.0.0.53", "1.1.1.1"],
+        "queryStrategy": "UseIPv4"
+    },
     "inbounds": [{
         "listen": "127.0.0.1",
         "port": __PORT__,
@@ -21,6 +21,13 @@
             "xhttpSettings": {
                 "path": "__PATH__",
                 "mode": "auto"
+            },
+            "sockopt": {
+                "tcpFastOpen": true,
+                "tcpNoDelay": true,
+                "tcpKeepAliveIdle": 60,
+                "tcpKeepAliveInterval": 10,
+                "tcpKeepAliveRetry": 3
             }
         },
         "sniffing": {
@@ -93,10 +100,11 @@
     "policy": {
         "levels": {
             "0": {
-                "handshake": 10,
-                "connIdle": 600,
-                "uplinkOnly": 5,
-                "downlinkOnly": 10
+                "handshake": 8,
+                "connIdle": 300,
+                "uplinkOnly": 3,
+                "downlinkOnly": 5,
+                "bufferSize": 512
             }
         }
     }

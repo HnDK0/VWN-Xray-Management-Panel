@@ -149,10 +149,18 @@ installXhttp() {
         return 1
     fi
 
-    # Генерируем собственный UUID независимо от других модулей
-    xhttp_uuid=$(cat /proc/sys/kernel/random/uuid 2>/dev/null \
-        || uuidgen 2>/dev/null \
-        || python3 -c "import uuid; print(uuid.uuid4())")
+    # Берём UUID из основного WS конфига чтобы все транспорты использовали один UUID
+    # (пользователи хранятся в users.conf с UUID из WS конфига)
+    xhttp_uuid=""
+    if [ -f "$configPath" ]; then
+        xhttp_uuid=$(jq -r '.inbounds[0].settings.clients[0].id // ""' "$configPath" 2>/dev/null || true)
+    fi
+    # Если WS конфига нет или UUID пуст — генерируем новый
+    if [ -z "$xhttp_uuid" ] || [ "$xhttp_uuid" = "null" ]; then
+        xhttp_uuid=$(cat /proc/sys/kernel/random/uuid 2>/dev/null \
+            || uuidgen 2>/dev/null \
+            || python3 -c "import uuid; print(uuid.uuid4())")
+    fi
 
     # Генерируем уникальный путь
     xhttp_path="/api/v2/$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)"
@@ -317,7 +325,15 @@ rebuildXhttpConfigs() {
     fi
 
     local xhttp_uuid xhttp_path xhttp_domain xhttp_lport
-    xhttp_uuid=$(vwn_conf_get XHTTP_UUID  || true)
+    # Берём UUID из WS конфига (единый UUID для всех транспортов)
+    xhttp_uuid=""
+    if [ -f "$configPath" ]; then
+        xhttp_uuid=$(jq -r '.inbounds[0].settings.clients[0].id // ""' "$configPath" 2>/dev/null || true)
+    fi
+    # Fallback: берём из vwn.conf если WS конфига нет
+    if [ -z "$xhttp_uuid" ] || [ "$xhttp_uuid" = "null" ]; then
+        xhttp_uuid=$(vwn_conf_get XHTTP_UUID || true)
+    fi
     xhttp_path=$(vwn_conf_get XHTTP_PATH  || echo "/xhttp")
     xhttp_domain=$(vwn_conf_get DOMAIN    || true)
     xhttp_lport=$(vwn_conf_get XHTTP_LPORT || true)
