@@ -4,9 +4,13 @@
 # =================================================================
 
 installWarp() {
-    command -v warp-cli &>/dev/null && { echo "info: warp-cli already installed."; return; }
+    command -v warp-cli && { echo "info: warp-cli already installed."; return; }
     [ -z "${PACKAGE_MANAGEMENT_INSTALL:-}" ] && identifyOS
-    if command -v apt &>/dev/null; then
+    
+    # Сбросить блокировки и исправить состояние apt перед установкой
+    prepareApt
+    
+    if command -v apt; then
         curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg \
             | gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp.gpg
         echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" \
@@ -15,7 +19,7 @@ installWarp() {
         curl -fsSL https://pkg.cloudflareclient.com/cloudflare-warp-ascii.repo \
             | tee /etc/yum.repos.d/cloudflare-warp.repo
     fi
-    ${PACKAGE_MANAGEMENT_UPDATE} &>/dev/null
+    ${PACKAGE_MANAGEMENT_UPDATE}
     installPackage "cloudflare-warp"
 }
 
@@ -30,11 +34,12 @@ _warp_cmd() {
 }
 
 configWarp() {
+    command -v warp-cli || return 0
     systemctl enable --now warp-svc
     sleep 3
 
-    if ! _warp_cmd registration show &>/dev/null; then
-        _warp_cmd registration delete &>/dev/null || true
+    if ! _warp_cmd registration show; then
+        _warp_cmd registration delete || true
         local attempts=0
         while [ $attempts -lt 3 ]; do
             _warp_cmd registration new && break
@@ -44,13 +49,13 @@ configWarp() {
     fi
 
     _warp_cmd mode proxy
-    _warp_cmd set-proxy-port 40000 2>/dev/null || true
+    _warp_cmd set-proxy-port 40000 || true
     _warp_cmd connect
     sleep 5
 
     local warp_check
     warp_check=$(curl -s --connect-timeout 8 -x socks5://127.0.0.1:40000 \
-        https://www.cloudflare.com/cdn-cgi/trace/ 2>/dev/null | grep 'warp=')
+        https://www.cloudflare.com/cdn-cgi/trace/ | grep 'warp=')
     if [[ "$warp_check" == *"warp=on"* ]] || [[ "$warp_check" == *"warp=plus"* ]]; then
         echo "${green}$(msg warp_connected)${reset}"
     else
@@ -59,16 +64,16 @@ configWarp() {
 }
 
 applyWarpDomains() {
-    [ ! -f "$warpDomainsFile" ] && printf 'openai.com\nchatgpt.com\noaistatic.com\noaiusercontent.com\nauth0.openai.com\n' > "$warpDomainsFile"
+    [ ! -f "$warpDomainsFile" ] && printf 'test.com\n' > "$warpDomainsFile"
     local domains_json
     domains_json=$(domainsToJson "$warpDomainsFile")
 
     local warp_rule="{\"type\":\"field\",\"domain\":[$domains_json],\"outboundTag\":\"warp\"}"
 
-    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath" "$xhttpConfigPath"; do
         [ -f "$cfg" ] || continue
         local has_rule
-        has_rule=$(jq '.routing.rules[] | select(.outboundTag=="warp")' "$cfg" 2>/dev/null)
+        has_rule=$(jq '.routing.rules[] | select(.outboundTag=="warp")' "$cfg")
         if [ -z "$has_rule" ]; then
             # Правила нет — вставляем после block (индекс 0)
             jq --argjson r "$warp_rule" \
@@ -81,9 +86,9 @@ applyWarpDomains() {
                 "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
         fi
     done
-    systemctl restart xray 2>/dev/null || true
-    systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
+    systemctl restart xray || true
+    systemctl restart xray-reality || true
+    systemctl restart xray-xhttp || true
 }
 
 toggleWarpMode() {
@@ -97,10 +102,10 @@ toggleWarpMode() {
     case "$warp_mode" in
         1)
             local warp_global='{"type":"field","port":"0-65535","outboundTag":"warp"}'
-            for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+            for cfg in "$configPath" "$realityConfigPath" "$xhttpConfigPath"; do
                 [ -f "$cfg" ] || continue
                 local has_rule
-                has_rule=$(jq '.routing.rules[] | select(.outboundTag=="warp")' "$cfg" 2>/dev/null)
+                has_rule=$(jq '.routing.rules[] | select(.outboundTag=="warp")' "$cfg")
                 if [ -z "$has_rule" ]; then
                     jq --argjson r "$warp_global" \
                         '.routing.rules = [.routing.rules[0]] + [$r] + .routing.rules[1:]' \
@@ -111,25 +116,25 @@ toggleWarpMode() {
                 fi
             done
             echo "${green}$(msg warp_global_ok)${reset}"
-            systemctl restart xray 2>/dev/null || true
-            systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
-            rebuildAllSubFiles 2>/dev/null || true
+            systemctl restart xray || true
+            systemctl restart xray-reality || true
+            systemctl restart xray-xhttp || true
+            rebuildAllSubFiles || true
             ;;
         2)
             applyWarpDomains
             echo "${green}$(msg warp_split_ok)${reset}"
             ;;
         3)
-            for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+            for cfg in "$configPath" "$realityConfigPath" "$xhttpConfigPath"; do
                 [ -f "$cfg" ] || continue
                 jq 'del(.routing.rules[] | select(.outboundTag == "warp"))' \
                     "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
             done
             echo "${green}$(msg warp_off_ok)${reset}"
-            systemctl restart xray 2>/dev/null || true
-            systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
+            systemctl restart xray || true
+            systemctl restart xray-reality || true
+            systemctl restart xray-xhttp || true
             ;;
         0) return 0 ;;
         *) echo "${red}$(msg cancel)${reset}" ;;
@@ -145,14 +150,14 @@ checkWarpStatus() {
     echo "$(msg warp_real_ip) : $real_ip"
 
     # Проверяем, установлен ли WARP
-    if ! command -v warp-cli &>/dev/null; then
+    if ! command -v warp-cli; then
         echo "$(msg warp_ip) : ${red}WARP not installed${reset}"
         echo "--------------------------------------------------"
         return
     fi
 
     # Проверяем статус сервиса WARP
-    if ! systemctl is-active --quiet warp-svc 2>/dev/null; then
+    if ! systemctl is-active --quiet warp-svc; then
         echo "$(msg warp_ip) : ${red}warp-svc not running${reset}"
         echo "--------------------------------------------------"
         return
@@ -160,7 +165,7 @@ checkWarpStatus() {
 
     # Проверяем подключение WARP
     local warp_status
-    warp_status=$(warp-cli --accept-tos status 2>/dev/null || warp-cli status 2>/dev/null)
+    warp_status=$(warp-cli --accept-tos status || warp-cli status)
     if ! echo "$warp_status" | grep -q "Connected"; then
         echo "$(msg warp_ip) : ${yellow}WARP not connected ($warp_status)${reset}"
         echo "--------------------------------------------------"
@@ -168,13 +173,13 @@ checkWarpStatus() {
     fi
 
     # Пробуем получить IP через WARP SOCKS5 (несколько попыток с увеличенным таймаутом)
-    warp_ip=$(curl -s --connect-timeout 10 --max-time 15 -x socks5://127.0.0.1:40000 https://api.ipify.org 2>/dev/null | tr -d '[:space:]')
+    warp_ip=$(curl -s --connect-timeout 10 --max-time 15 -x socks5://127.0.0.1:40000 https://api.ipify.org | tr -d '[:space:]')
     
     if [ -n "$warp_ip" ] && [[ "$warp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         echo "$(msg warp_ip) : ${green}$warp_ip${reset}"
     else
         # Пробуем альтернативный сервис для проверки
-        warp_ip=$(curl -s --connect-timeout 10 --max-time 15 -x socks5://127.0.0.1:40000 https://ipv4.wtfismyip.com/text 2>/dev/null | tr -d '[:space:]')
+        warp_ip=$(curl -s --connect-timeout 10 --max-time 15 -x socks5://127.0.0.1:40000 https://ipv4.wtfismyip.com/text | tr -d '[:space:]')
         if [ -n "$warp_ip" ] && [[ "$warp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "$(msg warp_ip) : ${green}$warp_ip${reset}"
         else
@@ -223,7 +228,7 @@ installWarpInteractive() {
     echo -e "${cyan}================================================================${reset}"
     echo ""
     
-    if command -v warp-cli &>/dev/null; then
+    if command -v warp-cli; then
         echo "${yellow}$(msg warp_already_installed)${reset}"
         echo ""
         echo -e "${green}1.${reset} $(msg warp_reinstall)"
@@ -258,7 +263,7 @@ removeWarpInteractive() {
     echo -e "${cyan}================================================================${reset}"
     echo ""
     
-    if ! command -v warp-cli &>/dev/null; then
+    if ! command -v warp-cli; then
         echo "${yellow}$(msg warp_not_installed)${reset}"
         echo -e "\n${cyan}$(msg press_enter)${reset}"
         read -r
@@ -272,14 +277,14 @@ removeWarpInteractive() {
     echo -e "${cyan}$(msg warp_removing)${reset}"
     
     # Останавливаем и отключаем сервис
-    systemctl stop warp-svc 2>/dev/null || true
-    systemctl disable warp-svc 2>/dev/null || true
+    systemctl stop warp-svc || true
+    systemctl disable warp-svc || true
     
     # Отключаемся
-    warp-cli disconnect 2>/dev/null || true
+    warp-cli disconnect || true
     
     # Удаляем правило маршрутизации из конфигов Xray
-    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath" "$xhttpConfigPath"; do
         if [ -f "$cfg" ]; then
             jq 'del(.routing.rules[] | select(.outboundTag == "warp"))' \
                 "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
@@ -287,19 +292,19 @@ removeWarpInteractive() {
     done
     
     # Удаляем пакет
-    if command -v apt &>/dev/null; then
-        apt-get remove -y cloudflare-warp 2>/dev/null || true
+    if command -v apt; then
+        apt-get remove -y cloudflare-warp || true
         rm -f /etc/apt/sources.list.d/cloudflare-client.list
         rm -f /usr/share/keyrings/cloudflare-warp.gpg
-    elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
-        ${PACKAGE_MANAGEMENT_REMOVE} -y cloudflare-warp 2>/dev/null || true
+    elif command -v dnf || command -v yum; then
+        ${PACKAGE_MANAGEMENT_REMOVE} -y cloudflare-warp || true
         rm -f /etc/yum.repos.d/cloudflare-warp.repo
     fi
     
     # Перезапускаем сервисы
-    systemctl restart xray 2>/dev/null || true
-    systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
+    systemctl restart xray || true
+    systemctl restart xray-reality || true
+    systemctl restart xray-xhttp || true
     
     # Удаляем файл доменов
     rm -f "$warpDomainsFile"

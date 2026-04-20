@@ -12,7 +12,7 @@ getRelayStatus() {
     local mode="маршрут OFF"
     if [ -f "$configPath" ]; then
         local relay_rule
-        relay_rule=$(jq -r '.routing.rules[] | select(.outboundTag=="relay") | if .port == "0-65535" then "Global" elif (.domain | length) > 0 then "Split" else "OFF" end' "$configPath" 2>/dev/null | head -1)
+        relay_rule=$(jq -r '.routing.rules[] | select(.outboundTag=="relay") | if .port == "0-65535" then "Global" elif (.domain | length) > 0 then "Split" else "OFF" end' "$configPath" | head -1)
         [ -n "$relay_rule" ] && mode="$relay_rule"
     fi
     case "$mode" in
@@ -38,7 +38,7 @@ parseRelayUrl() {
             pbk=$(echo "$url" | grep -oP "(?<=pbk=)[^&#]+")
             sid=$(echo "$url" | grep -oP "(?<=sid=)[^&#]+")
             net_type=$(echo "$url" | grep -oP "(?<=type=)[^&#]+")
-            path=$(python3 -c "import urllib.parse,re; m=re.search(r'path=([^&#]+)', '$url'); print(urllib.parse.unquote(m.group(1))) if m else print('/')" 2>/dev/null)
+            path=$(python3 -c "import urllib.parse,re; m=re.search(r'path=([^&#]+)', '$url'); print(urllib.parse.unquote(m.group(1))) if m else print('/')")
             ws_host=$(echo "$url" | grep -oP "(?<=host=)[^&#]+")
             ;;
         socks5|socks)
@@ -50,18 +50,18 @@ parseRelayUrl() {
         vmess)
             local b64 json
             b64=$(echo "$url" | sed 's|vmess://||')
-            json=$(echo "$b64" | base64 -d 2>/dev/null)
-            if [ -z "$json" ] || ! echo "$json" | python3 -c "import sys,json; json.load(sys.stdin)" &>/dev/null; then
+            json=$(echo "$b64" | base64 -d)
+            if [ -z "$json" ] || ! echo "$json" | python3 -c "import sys,json; json.load(sys.stdin)"; then
                 echo "${red}$(msg relay_parse_fail) (invalid VMess base64)${reset}"; return 1
             fi
-            host=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('add',''))" 2>/dev/null)
-            port=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('port',''))" 2>/dev/null)
-            uuid=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
-            sni=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('sni',''))" 2>/dev/null)
-            net_type=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('net','tcp'))" 2>/dev/null)
-            path=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('path','/'))" 2>/dev/null)
-            ws_host=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('host',''))" 2>/dev/null)
-            security=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tls','none'))" 2>/dev/null)
+            host=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('add',''))")
+            port=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('port',''))")
+            uuid=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")
+            sni=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('sni',''))")
+            net_type=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('net','tcp'))")
+            path=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('path','/'))")
+            ws_host=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('host',''))")
+            security=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tls','none'))")
             ;;
         *)
             echo "${red}$(msg relay_unknown_proto): $protocol${reset}"; return 1 ;;
@@ -122,10 +122,10 @@ applyRelayToConfigs() {
     local relay_outbound
     relay_outbound=$(buildRelayOutbound) || return 1
 
-    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath" "$xhttpConfigPath"; do
         [ -f "$cfg" ] || continue
         local has_relay
-        has_relay=$(jq '.outbounds[] | select(.tag=="relay")' "$cfg" 2>/dev/null)
+        has_relay=$(jq '.outbounds[] | select(.tag=="relay")' "$cfg")
         if [ -z "$has_relay" ]; then
             jq --argjson ob "$relay_outbound" '.outbounds += [$ob]' \
                 "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
@@ -134,9 +134,9 @@ applyRelayToConfigs() {
                 "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
         fi
         local has_rule
-        has_rule=$(jq '.routing.rules[] | select(.outboundTag=="relay")' "$cfg" 2>/dev/null)
+        has_rule=$(jq '.routing.rules[] | select(.outboundTag=="relay")' "$cfg")
         if [ -z "$has_rule" ]; then
-            jq '.routing.rules = [.routing.rules[0]] + [{"type":"field","domain":["domain:whoer.net"],"outboundTag":"relay"}] + .routing.rules[1:]' \
+            jq '.routing.rules = [.routing.rules[0]] + [{"type":"field","domain":["domain:test.com"],"outboundTag":"relay"}] + .routing.rules[1:]' \
                 "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
         fi
     done
@@ -156,40 +156,40 @@ applyRelayDomains() {
     fi
 
     applyRelayToConfigs || return 1
-    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath" "$xhttpConfigPath"; do
         [ -f "$cfg" ] || continue
         jq "(.routing.rules[] | select(.outboundTag == \"relay\")) |= (.domain = [$domains_json] | del(.port))" \
             "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
     done
-    systemctl restart xray 2>/dev/null || true
-    systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
+    systemctl restart xray || true
+    systemctl restart xray-reality || true
+    systemctl restart xray-xhttp || true
     echo "${green}$(msg relay_split_ok)${reset}"
 }
 
 toggleRelayGlobal() {
     applyRelayToConfigs || return 1
-    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath" "$xhttpConfigPath"; do
         [ -f "$cfg" ] || continue
         jq '(.routing.rules[] | select(.outboundTag == "relay")) |= (.port = "0-65535" | del(.domain))' \
             "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
     done
-    systemctl restart xray 2>/dev/null || true
-    systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
-    rebuildAllSubFiles 2>/dev/null || true
+    systemctl restart xray || true
+    systemctl restart xray-reality || true
+    systemctl restart xray-xhttp || true
+    rebuildAllSubFiles || true
     echo "${green}$(msg relay_global_ok)${reset}"
 }
 
 removeRelayFromConfigs() {
-    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath" "$xhttpConfigPath"; do
         [ -f "$cfg" ] || continue
         jq 'del(.outbounds[] | select(.tag=="relay")) | del(.routing.rules[] | select(.outboundTag=="relay"))' \
             "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
     done
-    systemctl restart xray 2>/dev/null || true
-    systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
+    systemctl restart xray || true
+    systemctl restart xray-reality || true
+    systemctl restart xray-xhttp || true
 }
 
 checkRelayIP() {
@@ -200,7 +200,7 @@ checkRelayIP() {
 
     local relay_ip
     if [ "$RELAY_PROTOCOL" = "socks" ]; then
-        relay_ip=$(curl -s --connect-timeout 8 -x "socks5://$RELAY_HOST:$RELAY_PORT" https://api.ipify.org 2>/dev/null || echo "$(msg unavailable)")
+        relay_ip=$(curl -s --connect-timeout 8 -x "socks5://$RELAY_HOST:$RELAY_PORT" https://api.ipify.org || echo "$(msg unavailable)")
     else
         local relay_outbound
         relay_outbound=$(buildRelayOutbound)
@@ -215,11 +215,11 @@ checkRelayIP() {
     "outbounds": [$relay_outbound]
 }
 TESTEOF
-        /usr/local/bin/xray run -config /tmp/relay_test.json &>/dev/null &
+        /usr/local/bin/xray run -config /tmp/relay_test.json &
         local xray_pid=$!
         sleep 3
-        relay_ip=$(curl -s --connect-timeout 10 -x socks5://127.0.0.1:19999 https://api.ipify.org 2>/dev/null || echo "$(msg unavailable)")
-        kill $xray_pid 2>/dev/null
+        relay_ip=$(curl -s --connect-timeout 10 -x socks5://127.0.0.1:19999 https://api.ipify.org || echo "$(msg unavailable)")
+        kill $xray_pid
         rm -f /tmp/relay_test.json
     fi
     echo "$(msg relay_ip) : $relay_ip"

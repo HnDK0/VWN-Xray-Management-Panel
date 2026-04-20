@@ -1,13 +1,13 @@
 #!/bin/bash
 # =================================================================
-# menu.sh — Главное меню и функция установки
+# menu.sh — Главное меню и функции установки
 # =================================================================
 
 prepareSoftware() {
     identifyOS
     echo "--- [1/3] $(msg install_deps) ---"
     run_task "Swap-файл"        setupSwap
-    run_task "Чистка пакетов"   "rm -f /var/lib/dpkg/lock* && dpkg --configure -a 2>/dev/null || true"
+    run_task "Чистка пакетов"   "rm -f /var/lib/dpkg/lock* && dpkg --configure -a || true"
     run_task "Обновление репозиториев" "$PACKAGE_MANAGEMENT_UPDATE"
 
     echo "--- [2/3] $(msg install_deps) ---"
@@ -19,28 +19,34 @@ prepareSoftware() {
 }
 
 _installNginxMainline() {
-    local cur_ver cur_minor
+    local cur_ver cur_minor cur_patch
     cur_ver=$(nginx -v 2>&1 | grep -oP '\d+\.\d+\.\d+' | head -1)
     cur_minor=$(echo "$cur_ver" | cut -d. -f2)
-    if [ -n "$cur_ver" ] && [ "${cur_minor:-0}" -ge 19 ]; then
-        echo "info: nginx $cur_ver already sufficient (>= 1.19), skipping."
-        return 0
+    cur_patch=$(echo "$cur_ver" | cut -d. -f3)
+    # Требуем nginx >= 1.25.1 (http2 on с ALPN появился в 1.25.1)
+    if [ -n "$cur_ver" ]; then
+        if [ "${cur_minor:-0}" -gt 25 ] || \
+           { [ "${cur_minor:-0}" -eq 25 ] && [ "${cur_patch:-0}" -ge 1 ]; } || \
+           [ "${cur_minor:-0}" -ge 26 ]; then
+            echo "info: nginx $cur_ver already sufficient (>= 1.25.1), skipping."
+            return 0
+        fi
     fi
     echo -e "${cyan}nginx ${cur_ver:-not installed} — installing mainline from nginx.org...${reset}"
-    if command -v apt &>/dev/null; then
+    if command -v apt; then
         installPackage gnupg2 || true
         curl -fsSL https://nginx.org/keys/nginx_signing.key \
-            | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg 2>/dev/null
+            | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg
         local codename
-        codename=$(lsb_release -cs 2>/dev/null || . /etc/os-release && echo "$VERSION_CODENAME")
+        codename=$(lsb_release -cs || . /etc/os-release && echo "$VERSION_CODENAME")
         echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/mainline/ubuntu ${codename} nginx" \
             > /etc/apt/sources.list.d/nginx-mainline.list
         printf 'Package: *\nPin: origin nginx.org\nPin-Priority: 900\n' \
             > /etc/apt/preferences.d/99nginx
-        apt-get update -qq 2>/dev/null
-        apt-get remove -y nginx nginx-common nginx-core 2>/dev/null || true
+        apt-get update -qq
+        apt-get remove -y nginx nginx-common nginx-core || true
         apt-get install -y nginx
-    elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
+    elif command -v dnf || command -v yum; then
         cat > /etc/yum.repos.d/nginx-mainline.repo << 'YUMEOF'
 [nginx-mainline]
 name=nginx mainline repo
@@ -96,7 +102,7 @@ installWsTls() {
     while true; do
         read -rp "$(msg enter_xray_port)" xrayPort
         [ -z "$xrayPort" ] && xrayPort=16500
-        if ! _validatePort "$xrayPort" &>/dev/null; then
+        if ! _validatePort "$xrayPort"; then
             echo "${red}$(msg invalid_port) (1024-65535)${reset}"; continue
         fi
         break
@@ -151,13 +157,13 @@ installWsTls() {
 
     echo -e "\n${green}---${reset}"
     run_task "Создание конфига Xray"   "writeXrayConfig '$xrayPort' '$wsPath' '$userDomain'"
-    run_task "Создание конфига Nginx"  "writeNginxConfig '$xrayPort' '$userDomain' '$proxyUrl' '$wsPath'"
+    run_task "Создание конфига Nginx"  "writeNginxConfigBase '$xrayPort' '$userDomain' '$proxyUrl' '$wsPath'"
     # Записываем домен как адрес подключения — иначе подписки генерируются по IP
     echo "$userDomain" > /usr/local/etc/xray/connect_host
 
     # Запускаем nginx ДО выпуска SSL — acme.sh делает reload по окончании
     systemctl enable --now nginx
-    systemctl start nginx 2>/dev/null || true
+    systemctl start nginx || true
 
     run_task "Настройка WARP"          configWarp
     run_task "Выпуск SSL"              "userDomain='$userDomain' configCert"
@@ -172,7 +178,7 @@ installWsTls() {
     # Устанавливаем Reality если выбрано
     if $install_reality; then
         echo -e "\n${cyan}--- Reality ---${reset}"
-        ufw allow "$realityPort"/tcp comment 'Xray Reality' 2>/dev/null || true
+        ufw allow "$realityPort"/tcp comment 'Xray Reality' || true
         REALITY_INTERNAL_PORT=$realityPort
         run_task "Конфиг Reality"  "writeRealityConfig '$realityPort' '$realityDest'"
         run_task "Сервис Reality"  setupRealityService
@@ -217,13 +223,13 @@ fullRemove() {
     echo -e "${red}$(msg remove_confirm) $(msg yes_no)${reset}"
     read -r confirm
     if [[ "$confirm" == "y" ]]; then
-        systemctl stop nginx xray xray-reality warp-svc psiphon tor 2>/dev/null || true
-        warp-cli disconnect 2>/dev/null || true
+        systemctl stop nginx xray xray-reality warp-svc psiphon tor || true
+        warp-cli disconnect || true
         [ -z "${PACKAGE_MANAGEMENT_REMOVE:-}" ] && identifyOS
         uninstallPackage 'nginx*' || true
         uninstallPackage 'cloudflare-warp' || true
         bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove || true
-        systemctl disable xray-reality psiphon 2>/dev/null || true
+        systemctl disable xray-reality psiphon || true
         rm -f /etc/systemd/system/xray-reality.service
         rm -f /etc/systemd/system/psiphon.service
         rm -f "$torDomainsFile"
@@ -242,8 +248,8 @@ removeWs() {
     echo -e "${red}$(msg remove_confirm) $(msg yes_no)${reset}"
     read -r confirm
     [[ "$confirm" != "y" ]] && return 0
-    systemctl stop nginx xray 2>/dev/null || true
-    systemctl disable nginx xray 2>/dev/null || true
+    systemctl stop nginx xray || true
+    systemctl disable nginx xray || true
     [ -z "${PACKAGE_MANAGEMENT_REMOVE:-}" ] && identifyOS
     uninstallPackage 'nginx*' || true
     bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove || true
@@ -265,10 +271,10 @@ manageWs() {
         s_ssl=$(checkCertExpiry)
         s_cfguard=$(getCfGuardStatus)
         s_warp=$(getWarpStatus)
-        s_domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // .inbounds[0].streamSettings.xhttpSettings.host // "—"' "$configPath" 2>/dev/null)
-        s_connect=$(cat "$CONNECT_HOST_FILE" 2>/dev/null | tr -d '[:space:]')
-        s_port=$(jq -r '.inbounds[0].port // "—"' "$configPath" 2>/dev/null)
-        s_path=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // .inbounds[0].streamSettings.xhttpSettings.path // "—"' "$configPath" 2>/dev/null)
+        s_domain=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // .inbounds[0].streamSettings.xhttpSettings.host // "—"' "$configPath")
+        s_connect=$(cat "$CONNECT_HOST_FILE" | tr -d '[:space:]')
+        s_port=$(jq -r '.inbounds[0].port // "—"' "$configPath")
+        s_path=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // .inbounds[0].streamSettings.xhttpSettings.path // "—"' "$configPath")
         # Обрезаем длинные значения
         [ ${#s_connect} -gt 35 ] && s_connect="${s_connect:0:32}..."
         [ ${#s_domain} -gt 30 ]  && s_domain="${s_domain:0:27}..."
@@ -328,15 +334,16 @@ manageWs() {
 
 menu() {
     set +e
-    # Первичная очистка экрана
-    clear
+    # Обработка Ctrl+C - возврат в меню вместо выхода из скрипта
+    trap 'echo; echo -e "${yellow}Отмена${reset}"; read -rp "Нажмите Enter чтобы продолжить... "; return' INT
+
     while true; do
-        local s_nginx s_ws s_reality s_vision s_warp s_ssl s_bbr s_f2b s_jail s_cfguard s_relay s_psiphon s_tor s_connect
+        local s_nginx s_ws s_reality s_xhttp s_warp s_ssl s_bbr s_f2b s_jail s_cfguard s_relay s_psiphon s_tor s_connect
         clear
         s_nginx=$(getServiceStatus nginx)
         s_ws=$(getServiceStatus xray)
         s_reality=$(getServiceStatus xray-reality)
-        s_vision=$(getServiceStatus xray-vision)
+        s_xhttp=$(getXhttpStatus)
         s_warp=$(getWarpStatus)
         s_ssl=$(checkCertExpiry)
         s_bbr=$(getBbrStatus)
@@ -346,7 +353,7 @@ menu() {
         s_relay=$(getRelayStatus)
         s_psiphon=$(getPsiphonStatus)
         s_tor=$(getTorStatus)
-        s_connect=$(cat "$CONNECT_HOST_FILE" 2>/dev/null | tr -d '[:space:]')
+        s_connect=$(cat "$CONNECT_HOST_FILE" | tr -d '[:space:]')
         [ ${#s_connect} -gt 35 ] && s_connect="${s_connect:0:32}..."
         # Чистые версии (без ANSI) для printf %-Ns выравнивания
         _strip() { printf '%s' "$1" | sed 's/\[[0-9;]*[mABCDJKHf]//g; s/(B//g'; }
@@ -357,7 +364,6 @@ menu() {
         }
         s_ws_c=$(_pval "$s_ws" 7)
         s_reality_c=$(_pval "$s_reality" 7)
-        s_vision_c=$(_pval "$s_vision" 7)
         s_nginx_c=$(_pval "$s_nginx" 7)
         # Чистые значения для правой колонки и туннелей (без ANSI — printf %-Ns не считает escape)
         _plain() { printf '%s' "$1" | sed 's/\[[0-9;]*[mABCDJKHf]//g; s/(B//g'; }
@@ -376,14 +382,14 @@ menu() {
         echo -e "${cyan}================================================================${reset}"
         printf "   ${red}VWN — Xray Management Panel${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
         echo -e "${cyan}================================================================${reset}"
-        echo -e "  ${cyan}── $(msg menu_sep_proto_short) ──────────────────────────────────────────${reset}"
+        echo -e "  ${cyan}── $(msg menu_sep_proto_short) ───────────────────────────────────────────────${reset}"
         echo -e "  $(printf "%-9s" "WS:")$s_ws_c,  Nginx: $s_nginx_c"
         echo -e "  $(printf "%-9s" "Reality:")$s_reality_c,  SSL: $s_ssl"
-        echo -e "  $(printf "%-9s" "Vision:")$s_vision_c,  CF Guard: $s_cfguard"
+        echo -e "  $(printf "%-9s" "XHTTP:")$s_xhttp,  CF Guard: $s_cfguard"
         [ -n "$s_connect" ] && echo -e "  CDN: ${green}${s_connect}${reset}"
-        echo -e "  ${cyan}── $(msg menu_sep_tun_short) ───────────────────────────────────────────${reset}"
+        echo -e "  ${cyan}── $(msg menu_sep_tun_short) ───────────────────────────────────────────────${reset}"
         echo -e "  WARP: $s_warp,  Relay: $s_relay,  Psiphon: $s_psiphon,  Tor: $s_tor"
-        echo -e "  ${cyan}── $(msg menu_sep_sec_short) ────────────────────────────────────────────${reset}"
+        echo -e "  ${cyan}── $(msg menu_sep_sec_short) ─────────────────────────────────────────────────${reset}"
         echo -e "  BBR: $s_bbr,  F2B: $s_f2b,  Jail: $s_jail,  IPv6: $(getIPv6Status),  CPU Guard: $(getCpuGuardStatus),  Adblock: $s_adblock,  Privacy: $s_privacy"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
 
@@ -392,7 +398,7 @@ menu() {
         echo -e "  $(msg menu_sep_proto)"
         echo -e "  ${green}3.${reset}  $(msg menu_ws)"
         echo -e "  ${green}4.${reset}  $(msg menu_reality)"
-        echo -e "  ${green}5.${reset}  $(msg menu_vision)"
+        echo -e "  ${green}5.${reset}  $(msg menu_xhttp)"
         echo -e "  $(msg menu_sep_tun)"
         echo -e "  ${green}6.${reset}  $(msg menu_warp)"
         echo -e "  ${green}7.${reset}  $(msg menu_relay)"
@@ -422,7 +428,6 @@ menu() {
         echo -e "  ${green}28.${reset} $(msg menu_backup)"
         echo -e "  ${green}29.${reset} $(msg menu_lang)"
         echo -e "  ${green}30.${reset} $(msg menu_remove)"
-        echo -e "  ${green}31.${reset} $(msg menu_stream_sni_manage)"
         echo -e "  $(msg menu_sep_exit)"
         echo -e "  ${green}0.${reset}  $(msg menu_exit)"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
@@ -433,7 +438,7 @@ menu() {
             2)  manageUsers ;;
             3)  manageWs ;;
             4)  manageReality ;;
-            5)  manageVision ;;
+            5)  manageXhttp ;;
             6)  manageWarp ;;
             7)  manageRelay ;;
             8)  managePsiphon ;;
@@ -446,13 +451,13 @@ menu() {
             15) toggleIPv6 ;;
             16) setupCpuGuard ;;
             17) manageAdblock ;;
-            18) tail -n 80 /var/log/xray/access.log 2>/dev/null || echo "$(msg no_logs)" ;;
-            19) tail -n 80 /var/log/xray/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
-            20) tail -n 80 /var/log/nginx/access.log 2>/dev/null || echo "$(msg no_logs)" ;;
-            21) tail -n 80 /var/log/nginx/error.log 2>/dev/null || echo "$(msg no_logs)" ;;
+            18) tail -n 80 /var/log/xray/access.log || echo "$(msg no_logs)" ;;
+            19) tail -n 80 /var/log/xray/error.log || echo "$(msg no_logs)" ;;
+            20) tail -n 80 /var/log/nginx/access.log || echo "$(msg no_logs)" ;;
+            21) tail -n 80 /var/log/nginx/error.log || echo "$(msg no_logs)" ;;
             22) clearLogs ;;
             23) managePrivacy ;;
-            24) systemctl restart xray xray-reality xray-vision nginx warp-svc psiphon tor 2>/dev/null || true
+            24) systemctl restart xray xray-reality xray-xhttp nginx warp-svc psiphon tor || true
                 echo "${green}$(msg all_services_restarted)${reset}" ;;
             25) updateXrayCore ;;
             26) rebuildAllConfigs ;;
@@ -460,7 +465,6 @@ menu() {
             28) manageBackup ;;
             29) selectLang; _initLang ;;
             30) fullRemove ;;
-            31) manageStreamSNI ;;
             0)  exit 0 ;;
             *)  echo -e "${red}$(msg invalid)${reset}"; sleep 1 ;;
         esac

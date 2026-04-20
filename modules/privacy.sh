@@ -79,7 +79,7 @@ _systemdRestoreOutput() {
     local override="/etc/systemd/system/${svc}.service.d/no-journal.conf"
     rm -f "$override"
     # Удаляем пустую директорию если больше нет файлов
-    rmdir "/etc/systemd/system/${svc}.service.d" 2>/dev/null || true
+    rmdir "/etc/systemd/system/${svc}.service.d" || true
 }
 
 # ── tmpfs для /var/log/xray ──────────────────────────────────────
@@ -106,20 +106,20 @@ Options=defaults,noatime,size=32m,mode=750
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
-    systemctl enable --now var-log-xray.mount 2>/dev/null || true
+    systemctl enable --now var-log-xray.mount || true
     # Пересоздаём пустые лог-файлы в tmpfs
-    touch /var/log/xray/error.log /var/log/xray/reality-error.log 2>/dev/null || true
-    chown -R xray:xray /var/log/xray 2>/dev/null || true
+    touch /var/log/xray/error.log /var/log/xray/reality-error.log || true
+    chown -R xray:xray /var/log/xray || true
 }
 
 _disableXrayLogTmpfs() {
-    systemctl disable --now var-log-xray.mount 2>/dev/null || true
+    systemctl disable --now var-log-xray.mount || true
     rm -f "$_XRAY_LOG_TMPFS_MARKER"
     systemctl daemon-reload
     # Воссоздаём постоянную директорию
     mkdir -p /var/log/xray
-    touch /var/log/xray/error.log /var/log/xray/reality-error.log 2>/dev/null || true
-    chown -R xray:xray /var/log/xray 2>/dev/null || true
+    touch /var/log/xray/error.log /var/log/xray/reality-error.log || true
+    chown -R xray:xray /var/log/xray || true
 }
 
 # ── Очистка существующих логов ────────────────────────────────────
@@ -129,7 +129,7 @@ _shredCurrentLogs() {
 
     # Предупреждение: ext4 с журналированием не даёт 100% гарантий уничтожения
     local fs_type
-    fs_type=$(df -T /var/log 2>/dev/null | awk 'NR==2{print $2}')
+    fs_type=$(df -T /var/log | awk 'NR==2{print $2}')
     if [[ "$fs_type" == "ext4" || "$fs_type" == "ext3" ]]; then
         echo -e "${yellow}$(msg privacy_shred_ext4_warn)${reset}"
     fi
@@ -138,32 +138,31 @@ _shredCurrentLogs() {
         /var/log/xray/access.log
         /var/log/xray/error.log
         /var/log/xray/reality-error.log
-        /var/log/xray/vision-error.log
         /var/log/nginx/access.log
         /var/log/nginx/error.log
     )
     for f in "${_files[@]}"; do
         [ -f "$f" ] || continue
         # shred — перезаписывает блоки случайными данными перед удалением
-        if command -v shred &>/dev/null; then
-            shred -u "$f" 2>/dev/null && touch "$f" || : > "$f"
+        if command -v shred; then
+            shred -u "$f" && touch "$f" || : > "$f"
         else
             : > "$f"
         fi
     done
 
     # journald — удаляем старые записи
-    journalctl --rotate &>/dev/null
-    journalctl --vacuum-time=1s &>/dev/null
+    journalctl --rotate
+    journalctl --vacuum-time=1s
 
     # ext4: принудительный сброс journal чтобы старые данные не остались в нём
     if [[ "$fs_type" == "ext4" || "$fs_type" == "ext3" ]]; then
         local dev
-        dev=$(df /var/log 2>/dev/null | awk 'NR==2{print $1}')
-        if [ -n "$dev" ] && command -v tune2fs &>/dev/null; then
+        dev=$(df /var/log | awk 'NR==2{print $1}')
+        if [ -n "$dev" ] && command -v tune2fs; then
             # Флашим journal — перезаписываем его блоки
-            tune2fs -E journal_data_writeback "$dev" 2>/dev/null || true
-            tune2fs -E journal_data_ordered "$dev" 2>/dev/null || true
+            tune2fs -E journal_data_writeback "$dev" || true
+            tune2fs -E journal_data_ordered "$dev" || true
         fi
         # sync гарантирует что все грязные страницы сброшены на диск
         sync
@@ -180,20 +179,20 @@ enablePrivacyMode() {
     # 1. Xray конфиги
     _xrayDisableLog "$configPath"
     _xrayDisableLog "$realityConfigPath"
-    _xrayDisableLog "$visionConfigPath"
+    _xrayDisableLog "$xhttpConfigPath"
 
     # 2. Nginx
     _nginxDisableAccessLog
-    nginx -t &>/dev/null && systemctl reload nginx 2>/dev/null || true
+    nginx -t && systemctl reload nginx || true
 
     # 3. Подавляем journald для xray-сервисов
-    for svc in xray xray-reality xray-vision; do
+    for svc in xray xray-reality xray-xhttp; do
         _systemdDisableOutput "$svc"
     done
     systemctl daemon-reload
-    systemctl restart xray 2>/dev/null || true
-    systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
+    systemctl restart xray || true
+    systemctl restart xray-reality || true
+    systemctl restart xray-xhttp || true
 
     # 4. tmpfs для каталога логов xray (логи в RAM)
     _enableXrayLogTmpfs
@@ -222,20 +221,20 @@ disablePrivacyMode() {
     # 1. Xray конфиги — возвращаем error-логи
     _xrayRestoreLog "$configPath" "/var/log/xray/error.log"
     _xrayRestoreLog "$realityConfigPath" "/var/log/xray/reality-error.log"
-    _xrayRestoreLog "$visionConfigPath" "/var/log/xray/vision-error.log"
+    _xrayRestoreLog "$xhttpConfigPath" "/var/log/xray/xhttp-error.log"
 
     # 2. Nginx — возвращаем access_log
     _nginxRestoreAccessLog
-    nginx -t &>/dev/null && systemctl reload nginx 2>/dev/null || true
+    nginx -t && systemctl reload nginx || true
 
     # 3. Возвращаем journald
-    for svc in xray xray-reality xray-vision; do
+    for svc in xray xray-reality xray-xhttp; do
         _systemdRestoreOutput "$svc"
     done
     systemctl daemon-reload
-    systemctl restart xray 2>/dev/null || true
-    systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
+    systemctl restart xray || true
+    systemctl restart xray-reality || true
+    systemctl restart xray-xhttp || true
 
     # 4. Убираем tmpfs
     _disableXrayLogTmpfs
@@ -266,8 +265,8 @@ showPrivacyStatus() {
 
     # Xray WS
     if [ -f "$configPath" ]; then
-        xray_acc=$(jq -r '.log.access // "—"' "$configPath" 2>/dev/null)
-        xray_lvl=$(jq -r '.log.loglevel // "—"' "$configPath" 2>/dev/null)
+        xray_acc=$(jq -r '.log.access // "—"' "$configPath")
+        xray_lvl=$(jq -r '.log.loglevel // "—"' "$configPath")
         [ "$xray_acc" = "none" ] && [ "$xray_lvl" = "none" ] \
             && echo -e "  ${green}✓${reset}  Xray WS:      access=none, loglevel=none" \
             || echo -e "  ${red}✗${reset}  Xray WS:      access=${xray_acc}, loglevel=${xray_lvl}"
@@ -275,8 +274,8 @@ showPrivacyStatus() {
 
     # Xray Reality
     if [ -f "$realityConfigPath" ]; then
-        xray_acc=$(jq -r '.log.access // "—"' "$realityConfigPath" 2>/dev/null)
-        xray_lvl=$(jq -r '.log.loglevel // "—"' "$realityConfigPath" 2>/dev/null)
+        xray_acc=$(jq -r '.log.access // "—"' "$realityConfigPath")
+        xray_lvl=$(jq -r '.log.loglevel // "—"' "$realityConfigPath")
         [ "$xray_acc" = "none" ] && [ "$xray_lvl" = "none" ] \
             && echo -e "  ${green}✓${reset}  Xray Reality: access=none, loglevel=none" \
             || echo -e "  ${red}✗${reset}  Xray Reality: access=${xray_acc}, loglevel=${xray_lvl}"
@@ -290,22 +289,22 @@ showPrivacyStatus() {
             || echo -e "  ${red}✗${reset}  Nginx:        $nginx_acc"
     fi
 
-    # Xray Vision
-    if [ -f "$visionConfigPath" ]; then
-        xray_acc=$(jq -r '.log.access // "—"' "$visionConfigPath" 2>/dev/null)
-        xray_lvl=$(jq -r '.log.loglevel // "—"' "$visionConfigPath" 2>/dev/null)
+    # Xray XHTTP
+    if [ -f "$xhttpConfigPath" ]; then
+        xray_acc=$(jq -r '.log.access // "—"' "$xhttpConfigPath")
+        xray_lvl=$(jq -r '.log.loglevel // "—"' "$xhttpConfigPath")
         [ "$xray_acc" = "none" ] && [ "$xray_lvl" = "none" ] \
-            && echo -e "  ${green}✓${reset}  Xray Vision: access=none, loglevel=none" \
-            || echo -e "  ${red}✗${reset}  Xray Vision: access=${xray_acc}, loglevel=${xray_lvl}"
+            && echo -e "  ${green}✓${reset}  Xray XHTTP:  access=none, loglevel=none" \
+            || echo -e "  ${red}✗${reset}  Xray XHTTP:  access=${xray_acc}, loglevel=${xray_lvl}"
     fi
 
     # journald override
     [ -f "/etc/systemd/system/xray.service.d/no-journal.conf" ] \
-        && echo -e "  ${green}✓${reset}  journald:     stdout/stderr → null (xray, xray-reality, xray-vision)" \
+        && echo -e "  ${green}✓${reset}  journald:     stdout/stderr → null (xray, xray-reality, xray-xhttp)" \
         || echo -e "  ${red}✗${reset}  journald:     stdout/stderr → journal (xray)"
 
     # tmpfs
-    systemctl is-active --quiet var-log-xray.mount 2>/dev/null \
+    systemctl is-active --quiet var-log-xray.mount \
         && echo -e "  ${green}✓${reset}  /var/log/xray: tmpfs (RAM)" \
         || echo -e "  ${red}✗${reset}  /var/log/xray: disk"
 

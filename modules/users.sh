@@ -10,7 +10,7 @@ SUB_DIR="/usr/local/etc/xray/sub"
 
 # ── Утилиты ───────────────────────────────────────────────────────
 
-_usersCount() { [ -f "$USERS_FILE" ] && grep -c '.' "$USERS_FILE" 2>/dev/null || echo 0; }
+_usersCount() { [ -f "$USERS_FILE" ] && grep -c '.' "$USERS_FILE" || echo 0; }
 _uuidByLine()  { sed -n "${1}p" "$USERS_FILE" | cut -d'|' -f1; }
 _labelByLine() { sed -n "${1}p" "$USERS_FILE" | cut -d'|' -f2; }
 _tokenByLine() { sed -n "${1}p" "$USERS_FILE" | cut -d'|' -f3; }
@@ -27,8 +27,8 @@ _subFilename() {
 _getCachedFlag() {
     if [ -z "${_VWN_FLAG_CACHE:-}" ]; then
         local ip
-        ip=$(getServerIP 2>/dev/null)
-        _VWN_FLAG_CACHE=$(_getCountryFlag "$ip" 2>/dev/null || echo "🌐")
+        ip=$(getServerIP)
+        _VWN_FLAG_CACHE=$(_getCountryFlag "$ip" || echo "🌐")
         export _VWN_FLAG_CACHE
     fi
     echo "$_VWN_FLAG_CACHE"
@@ -38,7 +38,7 @@ _getCachedFlag() {
 _getDomain() {
     local d=""
     [ -f "$configPath" ] && \
-        d=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // .inbounds[0].streamSettings.xhttpSettings.host // ""' "$configPath" 2>/dev/null)
+        d=$(jq -r '.inbounds[0].streamSettings.wsSettings.host // .inbounds[0].streamSettings.xhttpSettings.host // ""' "$configPath")
     echo "$d"
 }
 
@@ -67,15 +67,14 @@ _applyUsersToConfigs() {
         jq --argjson c "$clients_r" '.inbounds[0].settings.clients = $c' \
             "$realityConfigPath" > "${realityConfigPath}.tmp" && mv "${realityConfigPath}.tmp" "$realityConfigPath"
     fi
-    # Vision использует flow xtls-rprx-vision — тот же формат clients что у Reality
-    if [ -f "$visionConfigPath" ]; then
-        jq --argjson c "$clients_r" '.inbounds[0].settings.clients = $c' \
-            "$visionConfigPath" > "${visionConfigPath}.tmp" && mv "${visionConfigPath}.tmp" "$visionConfigPath"
+    if [ -f "$xhttpConfigPath" ]; then
+        jq --argjson c "$clients_x" '.inbounds[0].settings.clients = $c' \
+            "$xhttpConfigPath" > "${xhttpConfigPath}.tmp" && mv "${xhttpConfigPath}.tmp" "$xhttpConfigPath"
     fi
 
-    systemctl restart xray 2>/dev/null || true
-    systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
+    systemctl restart xray || true
+    systemctl restart xray-reality || true
+    systemctl restart xray-xhttp || true
 }
 
 # ── Инициализация ─────────────────────────────────────────────────
@@ -86,12 +85,12 @@ _initUsersFile() {
 
     local existing_uuid=""
     if [ -f "$configPath" ]; then
-        existing_uuid=$(jq -r '.inbounds[0].settings.clients[0].id // ""' "$configPath" 2>/dev/null)
+        existing_uuid=$(jq -r '.inbounds[0].settings.clients[0].id // ""' "$configPath")
     fi
     # Если в WS нет UUID — берём из Reality
     if [ -z "$existing_uuid" ] || [ "$existing_uuid" = "null" ]; then
         if [ -f "$realityConfigPath" ]; then
-            existing_uuid=$(jq -r '.inbounds[0].settings.clients[0].id // ""' "$realityConfigPath" 2>/dev/null)
+            existing_uuid=$(jq -r '.inbounds[0].settings.clients[0].id // ""' "$realityConfigPath")
         fi
     fi
 
@@ -101,8 +100,8 @@ _initUsersFile() {
         echo "${existing_uuid}|default|${token}" > "$USERS_FILE"
         echo "${green}$(msg users_migrated): $existing_uuid${reset}"
         # Синхронизируем UUID в оба конфига
-        _applyUsersToConfigs 2>/dev/null || true
-        buildUserSubFile "$existing_uuid" "default" "$token" 2>/dev/null || true
+        _applyUsersToConfigs || true
+        buildUserSubFile "$existing_uuid" "default" "$token" || true
     fi
 }
 
@@ -111,7 +110,7 @@ _initUsersFile() {
 buildUserSubFile() {
     local uuid="$1" label="$2" token="$3"
     mkdir -p "$SUB_DIR"
-    applyNginxSub 2>/dev/null || true
+    applyNginxSub || true
 
     local domain lines="" server_ip flag
     domain=$(_getDomain)
@@ -120,12 +119,12 @@ buildUserSubFile() {
 
     if [ -f "$configPath" ] && [ -n "$domain" ]; then
         local wp wep name encoded_name connect_host
-        wp=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // .inbounds[0].streamSettings.xhttpSettings.path // ""' "$configPath" 2>/dev/null)
-        wep=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$wp" 2>/dev/null || echo "$wp")
-        connect_host=$(getConnectHost 2>/dev/null || echo "$domain")
+        wp=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // .inbounds[0].streamSettings.xhttpSettings.path // ""' "$configPath")
+        wep=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$wp" || echo "$wp")
+        connect_host=$(getConnectHost || echo "$domain")
         [ -z "$connect_host" ] && connect_host="$domain"
         name=$(_getConfigName "WS" "$label" "$server_ip")
-        encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$name" 2>/dev/null || echo "$name")
+        encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$name" || echo "$name")
         lines+="vless://${uuid}@${connect_host}:443?encryption=none&security=tls&sni=${domain}&fp=chrome&type=ws&host=${domain}&path=${wep}#${encoded_name}"$'\n'
     fi
 
@@ -135,36 +134,29 @@ buildUserSubFile() {
         # Если не найден (старая установка без мульти-юзеров) — берём первого
         r_uuid=$(jq -r --arg u "$uuid" \
             '.inbounds[0].settings.clients[] | select(.id==$u) | .id' \
-            "$realityConfigPath" 2>/dev/null | head -1)
+            "$realityConfigPath" | head -1)
         [ -z "$r_uuid" ] && \
-            r_uuid=$(jq -r '.inbounds[0].settings.clients[0].id' "$realityConfigPath" 2>/dev/null)
-        # Если stream SNI активен — Reality снаружи доступен на 443, а не на внутреннем порту
-        if grep -q "ssl_preread on" /etc/nginx/nginx.conf 2>/dev/null; then
-            r_port=443
-        else
-            r_port=$(jq -r '.inbounds[0].port' "$realityConfigPath" 2>/dev/null)
-        fi
-        r_shortId=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0]' "$realityConfigPath" 2>/dev/null)
-        r_destHost=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0]' "$realityConfigPath" 2>/dev/null)
-        r_pubKey=$(vwn_conf_get REALITY_PUBKEY 2>/dev/null)
-        [ -z "$r_pubKey" ] && r_pubKey=$(grep "PublicKey:" /usr/local/etc/xray/reality_client.txt 2>/dev/null | awk '{print $NF}')
+            r_uuid=$(jq -r '.inbounds[0].settings.clients[0].id' "$realityConfigPath")
+        r_port=$(jq -r '.inbounds[0].port' "$realityConfigPath")
+        r_shortId=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0]' "$realityConfigPath")
+        r_destHost=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0]' "$realityConfigPath")
+        r_pubKey=$(vwn_conf_get REALITY_PUBKEY)
+        [ -z "$r_pubKey" ] && r_pubKey=$(grep "PublicKey:" /usr/local/etc/xray/reality_client.txt | awk '{print $NF}')
         r_name=$(_getConfigName "Reality" "$label" "$server_ip")
-        r_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$r_name" 2>/dev/null || echo "$r_name")
+        r_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$r_name" || echo "$r_name")
         lines+="vless://${r_uuid}@${server_ip}:${r_port}?encryption=none&security=reality&sni=${r_destHost}&fp=chrome&pbk=${r_pubKey}&sid=${r_shortId}&type=tcp&flow=xtls-rprx-vision#${r_encoded_name}"$'\n'
     fi
 
-    if [ -f "$visionConfigPath" ]; then
-        local v_domain v_uuid v_name v_encoded_name
-        v_domain=$(vwn_conf_get VISION_DOMAIN 2>/dev/null || true)
-        v_uuid=$(jq -r --arg u "$uuid" \
-            '.inbounds[0].settings.clients[] | select(.id==$u) | .id' \
-            "$visionConfigPath" 2>/dev/null | head -1)
-        [ -z "$v_uuid" ] && \
-            v_uuid=$(jq -r '.inbounds[0].settings.clients[0].id' "$visionConfigPath" 2>/dev/null)
-        if [ -n "$v_domain" ] && [ -n "$v_uuid" ] && [ "$v_uuid" != "null" ]; then
-            v_name=$(_getConfigName "Vision" "$label" "$server_ip")
-            v_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$v_name" 2>/dev/null || echo "$v_name")
-            lines+="vless://${v_uuid}@${v_domain}:443?security=tls&flow=xtls-rprx-vision&type=tcp&sni=${v_domain}&fp=chrome&allowInsecure=0#${v_encoded_name}"$'\n'
+    if [ -f "$xhttpConfigPath" ]; then
+        local x_domain x_uuid x_path x_enc_path x_name x_encoded_name
+        x_domain=$(vwn_conf_get DOMAIN || true)
+        x_uuid=$(vwn_conf_get XHTTP_UUID || true)
+        x_path=$(vwn_conf_get XHTTP_PATH || true)
+        if [ -n "$x_domain" ] && [ -n "$x_uuid" ] && [ -n "$x_path" ]; then
+            x_enc_path=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$x_path" || echo "$x_path")
+            x_name=$(_getConfigName "XHTTP" "$label" "$server_ip")
+            x_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$x_name" || echo "$x_name")
+            lines+="vless://${x_uuid}@${connect_host}:443?security=tls&type=xhttp&path=${x_enc_path}&sni=${x_domain}&fp=chrome&allowInsecure=0#${x_encoded_name}"$'\n'
         fi
     fi
 
@@ -175,7 +167,7 @@ buildUserSubFile() {
     rm -f "${SUB_DIR}/${safe}_"*.txt "${SUB_DIR}/${safe}_"*.html
     printf '%s' "$lines" | base64 -w 0 > "${SUB_DIR}/${filename}"
     chmod 644 "${SUB_DIR}/${filename}"
-    buildUserHtmlPage "$uuid" "$label" "$token" "$lines" 2>/dev/null || true
+    buildUserHtmlPage "$uuid" "$label" "$token" "$lines" || true
 }
 
 # Конвертирует vless:// URL в Clash YAML блок
@@ -246,7 +238,7 @@ try:
         print(f'  flow: xtls-rprx-vision')
 except Exception as e:
     pass
-" "$url" 2>/dev/null
+" "$url"
 }
 
 buildUserHtmlPage() {
@@ -404,12 +396,16 @@ SUBEOF
 
 rebuildAllSubFiles() {
     [ ! -f "$USERS_FILE" ] && return 0
-    applyNginxSub 2>/dev/null || true
+    applyNginxSub || true
     local count=0
     while IFS='|' read -r uuid label token; do
         [ -z "$uuid" ] && continue
         buildUserSubFile "$uuid" "$label" "$token" && count=$((count+1))
     done < "$USERS_FILE"
+
+    # Перезапускаем сервисы ОДИН раз в самом конце а не на каждого пользователя
+    systemctl try-restart xray xray-reality xray-xhttp || true
+
     echo "${green}$(msg done) ($count)${reset}"
 }
 
@@ -452,7 +448,7 @@ addUser() {
     token=$(_genToken)
     echo "${uuid}|${label}|${token}" >> "$USERS_FILE"
     _applyUsersToConfigs
-    buildUserSubFile "$uuid" "$label" "$token" 2>/dev/null || true
+    buildUserSubFile "$uuid" "$label" "$token" || true
     echo "${green}$(msg users_added): $label ($uuid)${reset}"
 }
 
@@ -501,7 +497,7 @@ renameUser() {
     rm -f "${SUB_DIR}/${old_safe}_"*.txt "${SUB_DIR}/${old_safe}_"*.html
     sed -i "${num}s/.*/${uuid}|${new_label}|${token}/" "$USERS_FILE"
     _applyUsersToConfigs
-    buildUserSubFile "$uuid" "$new_label" "$token" 2>/dev/null || true
+    buildUserSubFile "$uuid" "$new_label" "$token" || true
     echo "${green}$(msg saved): $old_label → $new_label${reset}"
 }
 
@@ -527,14 +523,14 @@ showUserQR() {
     domain=$(_getDomain)
 
     # Пересоздаём файлы подписки (txt + html)
-    buildUserSubFile "$uuid" "$label" "$token" 2>/dev/null || true
+    buildUserSubFile "$uuid" "$label" "$token" || true
 
     local sub_url safe html_url
     sub_url=$(getSubUrl "$label" "$token")
     safe=$(_safeLabel "$label")
     html_url="https://${domain}/sub/${safe}_${token}.html"
 
-    command -v qrencode &>/dev/null || installPackage "qrencode"
+    command -v qrencode || installPackage "qrencode"
 
     echo -e "${cyan}================================================================${reset}"
     echo -e "   $(_getCachedFlag) ${label}"
@@ -542,12 +538,12 @@ showUserQR() {
     echo ""
     if [ -n "$sub_url" ]; then
         echo -e "${cyan}[ Subscription URL ]${reset}"
-        qrencode -s 3 -m 2 -t ANSIUTF8 "$sub_url" 2>/dev/null || true
+        qrencode -s 3 -m 2 -t ANSIUTF8 "$sub_url" || true
         echo -e "\n${green}${sub_url}${reset}"
         echo -e "${yellow}v2rayNG: + → Subscription group → URL${reset}"
         # Дополнительная ссылка по IP (когда домен ещё не проброшен через CDN)
         local server_ip
-        server_ip=$(getServerIP 2>/dev/null)
+        server_ip=$(getServerIP)
         if [ -n "$server_ip" ] && [ "$server_ip" != "$domain" ]; then
             local ip_url ip_html_url
             ip_url="https://${server_ip}/sub/$(_subFilename "$label" "$token")"

@@ -17,7 +17,7 @@ _BACKUP_PATHS=(
     /etc/sysctl.d/99-xray.conf
     /etc/fail2ban/jail.local
     /etc/fail2ban/filter.d/nginx-probe.conf
-    /etc/systemd/system/xray-vision.service
+    /etc/systemd/system/xray-xhttp.service
 )
 
 createBackup() {
@@ -39,7 +39,7 @@ createBackup() {
         return 1
     fi
 
-    if tar -czf "$archive" "${existing_paths[@]}" 2>/dev/null; then
+    if tar -czf "$archive" "${existing_paths[@]}"; then
         local size
         size=$(du -sh "$archive" | cut -f1)
         echo "${green}$(msg backup_done): $archive ($size)${reset}"
@@ -51,7 +51,7 @@ createBackup() {
 }
 
 listBackups() {
-    if [ ! -d "$BACKUP_DIR" ] || [ -z "$(ls -A "$BACKUP_DIR" 2>/dev/null)" ]; then
+    if [ ! -d "$BACKUP_DIR" ] || [ -z "$(ls -A "$BACKUP_DIR")" ]; then
         echo "${yellow}$(msg backup_list_empty)${reset}"
         return 1
     fi
@@ -64,7 +64,7 @@ listBackups() {
         date_str=$(basename "$f" | sed 's/vwn-backup-//;s/\.tar\.gz//' | tr '_' ' ')
         printf "  ${green}%2d.${reset} %s  [%s]\n" "$i" "$date_str" "$size"
         i=$((i + 1))
-    done < <(ls -t "$BACKUP_DIR"/vwn-backup-*.tar.gz 2>/dev/null)
+    done < <(ls -t "$BACKUP_DIR"/vwn-backup-*.tar.gz)
     echo ""
 }
 
@@ -74,7 +74,7 @@ restoreBackup() {
     local files=()
     while IFS= read -r f; do
         files+=("$f")
-    done < <(ls -t "$BACKUP_DIR"/vwn-backup-*.tar.gz 2>/dev/null)
+    done < <(ls -t "$BACKUP_DIR"/vwn-backup-*.tar.gz)
 
     [ ${#files[@]} -eq 0 ] && return 1
 
@@ -91,15 +91,15 @@ restoreBackup() {
     echo -e "${cyan}$(msg backup_restoring)...${reset}"
 
     # Останавливаем сервисы перед восстановлением
-    systemctl stop xray xray-reality nginx 2>/dev/null || true
+    systemctl stop xray xray-reality nginx || true
 
-    if tar -xzf "$archive" -C / 2>/dev/null; then
+    if tar -xzf "$archive" -C /; then
         systemctl daemon-reload
-        systemctl restart xray xray-reality nginx 2>/dev/null || true
+        systemctl restart xray xray-reality nginx || true
         echo "${green}$(msg backup_restored)${reset}"
     else
         echo "${red}$(msg backup_restore_fail)${reset}"
-        systemctl start xray xray-reality nginx 2>/dev/null || true
+        systemctl start xray xray-reality nginx || true
         return 1
     fi
 }
@@ -110,7 +110,7 @@ deleteBackup() {
     local files=()
     while IFS= read -r f; do
         files+=("$f")
-    done < <(ls -t "$BACKUP_DIR"/vwn-backup-*.tar.gz 2>/dev/null)
+    done < <(ls -t "$BACKUP_DIR"/vwn-backup-*.tar.gz)
 
     [ ${#files[@]} -eq 0 ] && return 1
 
@@ -136,7 +136,7 @@ manageBackup() {
         echo ""
         # Показываем сколько бэкапов есть
         local count=0
-        [ -d "$BACKUP_DIR" ] && count=$(ls "$BACKUP_DIR"/vwn-backup-*.tar.gz 2>/dev/null | wc -l)
+        [ -d "$BACKUP_DIR" ] && count=$(ls "$BACKUP_DIR"/vwn-backup-*.tar.gz | wc -l)
         echo -e "  $(msg backup_dir): ${green}$BACKUP_DIR${reset}"
         echo -e "  $(msg backup_count): ${green}$count${reset}"
         echo ""

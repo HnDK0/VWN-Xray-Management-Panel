@@ -20,16 +20,16 @@ clearLogs() {
     local total_before=0 total_after=0 f size
     for f in "${_LOG_FILES[@]}"; do
         [ -f "$f" ] || continue
-        size=$(stat -c%s "$f" 2>/dev/null || echo 0)
+        size=$(stat -c%s "$f" || echo 0)
         total_before=$((total_before + size))
         : > "$f"
     done
-    journalctl --vacuum-size=50M &>/dev/null
-    journalctl --vacuum-time=7d &>/dev/null
+    journalctl --vacuum-size=50M
+    journalctl --vacuum-time=7d
     total_after=0
     for f in "${_LOG_FILES[@]}"; do
         [ -f "$f" ] || continue
-        size=$(stat -c%s "$f" 2>/dev/null || echo 0)
+        size=$(stat -c%s "$f" || echo 0)
         total_after=$((total_after + size))
     done
     local freed=$(( (total_before - total_after) / 1024 ))
@@ -48,8 +48,8 @@ setupLogrotate() {
     dateext
     sharedscripts
     postrotate
-        systemctl kill -s USR1 xray 2>/dev/null || true
-        systemctl kill -s USR1 xray-reality 2>/dev/null || true
+        systemctl kill -s USR1 xray || true
+        systemctl kill -s USR1 xray-reality || true
     endscript
 }
 
@@ -63,7 +63,7 @@ setupLogrotate() {
     dateext
     sharedscripts
     postrotate
-        systemctl reload nginx 2>/dev/null || true
+        systemctl reload nginx || true
     endscript
 }
 
@@ -113,7 +113,7 @@ manageSslCron() {
         case $choice in
             1) setupSslCron; read -r ;;
             2) removeSslCron; read -r ;;
-            3) cat /etc/cron.d/acme-renew 2>/dev/null || echo "$(msg cron_no_task)"; read -r ;;
+            3) cat /etc/cron.d/acme-renew || echo "$(msg cron_no_task)"; read -r ;;
             0) break ;;
         esac
     done
@@ -134,8 +134,8 @@ for f in \
     /var/log/acme_cron.log; do
     [ -f "$f" ] && : > "$f"
 done
-journalctl --vacuum-size=50M &>/dev/null
-journalctl --vacuum-time=7d &>/dev/null
+journalctl --vacuum-size=50M
+journalctl --vacuum-time=7d
 EOF
     chmod +x /usr/local/bin/clear-logs.sh
 
@@ -170,7 +170,7 @@ manageLogClearCron() {
         case $choice in
             1) setupLogClearCron; read -r ;;
             2) removeLogClearCron; read -r ;;
-            3) cat /etc/cron.d/clear-logs 2>/dev/null || echo "$(msg cron_no_task)"; read -r ;;
+            3) cat /etc/cron.d/clear-logs || echo "$(msg cron_no_task)"; read -r ;;
             0) break ;;
         esac
     done

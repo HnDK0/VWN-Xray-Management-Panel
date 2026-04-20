@@ -53,10 +53,10 @@ _diagSystem() {
 
     # Время — важно для TLS
     local time_offset
-    time_offset=$(timedatectl 2>/dev/null | grep "System clock" | grep -c "yes" || echo 0)
+    time_offset=$(timedatectl | grep "System clock" | grep -c "yes" || echo 0)
     if [ "$time_offset" -eq 0 ]; then
         # Проверяем через другой способ
-        if timedatectl 2>/dev/null | grep -q "synchronized: yes"; then
+        if timedatectl | grep -q "synchronized: yes"; then
             _pass "$(msg diag_time_ok)"
         else
             _warn "$(msg diag_time_warn)"
@@ -70,23 +70,23 @@ _diagSystem() {
 _diagXray() {
     echo -e "${cyan}[ $(msg diag_section_xray) ]${reset}"
 
-    if ! command -v xray &>/dev/null; then
+    if ! command -v xray; then
         _fail "$(msg diag_xray_missing)"
         echo ""
         return
     fi
-    _pass "$(msg diag_xray_installed): $(xray version 2>/dev/null | head -1 | grep -oP 'Xray \S+')"
+    _pass "$(msg diag_xray_installed): $(xray version | head -1 | grep -oP 'Xray \S+')"
 
     # WS конфиг
     if [ -f "$configPath" ]; then
-        if xray -test -config "$configPath" &>/dev/null; then
+        if xray -test -config "$configPath"; then
             _pass "$(msg diag_xhttp_config_ok)"
         else
             _fail "$(msg diag_xhttp_config_bad)"
             xray -test -config "$configPath" 2>&1 | head -5 | sed 's/^/      /'
         fi
 
-        if systemctl is-active --quiet xray 2>/dev/null; then
+        if systemctl is-active --quiet xray; then
             _pass "$(msg diag_xhttp_running)"
         else
             _fail "$(msg diag_xhttp_stopped)"
@@ -94,8 +94,8 @@ _diagXray() {
 
         # Порт слушается
         local xray_port
-        xray_port=$(jq -r '.inbounds[0].port' "$configPath" 2>/dev/null)
-        if ss -tlnp 2>/dev/null | grep -q ":${xray_port}"; then
+        xray_port=$(jq -r '.inbounds[0].port' "$configPath")
+        if ss -tlnp | grep -q ":${xray_port}"; then
             _pass "$(msg diag_port_listen): $xray_port"
         else
             _fail "$(msg diag_port_not_listen): $xray_port"
@@ -106,27 +106,23 @@ _diagXray() {
 
     # Reality конфиг
     if [ -f "$realityConfigPath" ]; then
-        if xray -test -config "$realityConfigPath" &>/dev/null; then
+        if xray -test -config "$realityConfigPath"; then
             _pass "$(msg diag_reality_config_ok)"
         else
             _fail "$(msg diag_reality_config_bad)"
             xray -test -config "$realityConfigPath" 2>&1 | head -5 | sed 's/^/      /'
         fi
 
-        if systemctl is-active --quiet xray-reality 2>/dev/null; then
+        if systemctl is-active --quiet xray-reality; then
             _pass "$(msg diag_reality_running)"
         else
             _fail "$(msg diag_reality_stopped)"
         fi
 
         local reality_port
-        reality_port=$(jq -r '.inbounds[0].port' "$realityConfigPath" 2>/dev/null)
-        if ss -tlnp 2>/dev/null | grep -q ":${reality_port}"; then
-            if grep -q "ssl_preread on" /etc/nginx/nginx.conf 2>/dev/null; then
-                _pass "$(msg diag_port_listen): ${reality_port} (internal) → 443 (external via SNI)"
-            else
-                _pass "$(msg diag_port_listen): $reality_port"
-            fi
+        reality_port=$(jq -r '.inbounds[0].port' "$realityConfigPath")
+        if ss -tlnp | grep -q ":${reality_port}"; then
+            _pass "$(msg diag_port_listen): $reality_port"
         else
             _fail "$(msg diag_port_not_listen): $reality_port"
         fi
@@ -139,27 +135,27 @@ _diagXray() {
 _diagNginx() {
     echo -e "${cyan}[ $(msg diag_section_nginx) ]${reset}"
 
-    if ! command -v nginx &>/dev/null; then
+    if ! command -v nginx; then
         _skip "Nginx $(msg diag_not_installed)"
         echo ""
         return
     fi
 
-    if nginx -t &>/dev/null; then
+    if nginx -t; then
         _pass "$(msg diag_nginx_config_ok)"
     else
         _fail "$(msg diag_nginx_config_bad)"
         nginx -t 2>&1 | sed 's/^/      /'
     fi
 
-    if systemctl is-active --quiet nginx 2>/dev/null; then
+    if systemctl is-active --quiet nginx; then
         _pass "$(msg diag_nginx_running)"
     else
         _fail "$(msg diag_nginx_stopped)"
     fi
 
     # Порт 443 слушается
-    if ss -tlnp 2>/dev/null | grep -q ':443'; then
+    if ss -tlnp | grep -q ':443'; then
         _pass "$(msg diag_port_listen): 443"
     else
         _fail "$(msg diag_port_not_listen): 443"
@@ -168,8 +164,8 @@ _diagNginx() {
     # SSL сертификат
     if [ -f /etc/nginx/cert/cert.pem ]; then
         local expire_date expire_epoch now_epoch days_left
-        expire_date=$(openssl x509 -enddate -noout -in /etc/nginx/cert/cert.pem 2>/dev/null | cut -d= -f2)
-        expire_epoch=$(date -d "$expire_date" +%s 2>/dev/null)
+        expire_date=$(openssl x509 -enddate -noout -in /etc/nginx/cert/cert.pem | cut -d= -f2)
+        expire_epoch=$(date -d "$expire_date" +%s)
         now_epoch=$(date +%s)
         days_left=$(( (expire_epoch - now_epoch) / 86400 ))
         if [ "$days_left" -le 0 ]; then
@@ -182,9 +178,9 @@ _diagNginx() {
 
         # Домен совпадает с сертификатом
         local domain_in_cert
-        domain_in_cert=$(openssl x509 -noout -text -in /etc/nginx/cert/cert.pem 2>/dev/null | grep -oP '(?<=DNS:)[^,\s]+' | head -1)
+        domain_in_cert=$(openssl x509 -noout -text -in /etc/nginx/cert/cert.pem | grep -oP '(?<=DNS:)[^,\s]+' | head -1)
         local domain_in_nginx
-        domain_in_nginx=$(grep -E '^\s*server_name\s+' "$nginxPath" 2>/dev/null | grep -v '_' | awk '{print $2}' | tr -d ';' | head -1)
+        domain_in_nginx=$(grep -E '^\s*server_name\s+' "$nginxPath" | grep -v '_' | awk '{print $2}' | tr -d ';' | head -1)
         if [ -n "$domain_in_cert" ] && [ -n "$domain_in_nginx" ]; then
             if [ "$domain_in_cert" = "$domain_in_nginx" ] || [[ "$domain_in_cert" == *"${domain_in_nginx}"* ]]; then
                 _pass "$(msg diag_ssl_domain_match): $domain_in_nginx"
@@ -198,10 +194,10 @@ _diagNginx() {
 
     # DNS резолвинг домена
     local domain_in_nginx
-    domain_in_nginx=$(grep -E '^\s*server_name\s+' "$nginxPath" 2>/dev/null | grep -v '_' | awk '{print $2}' | tr -d ';' | head -1)
+    domain_in_nginx=$(grep -E '^\s*server_name\s+' "$nginxPath" | grep -v '_' | awk '{print $2}' | tr -d ';' | head -1)
     if [ -n "$domain_in_nginx" ]; then
         local resolved_ip server_ip
-        resolved_ip=$(getent hosts "$domain_in_nginx" 2>/dev/null | awk '{print $1}' | head -1)
+        resolved_ip=$(getent hosts "$domain_in_nginx" | awk '{print $1}' | head -1)
         server_ip=$(getServerIP)
         if [ -z "$resolved_ip" ]; then
             _fail "$(msg diag_dns_fail): $domain_in_nginx"
@@ -217,13 +213,13 @@ _diagNginx() {
 _diagWarp() {
     echo -e "${cyan}[ $(msg diag_section_warp) ]${reset}"
 
-    if ! command -v warp-cli &>/dev/null; then
+    if ! command -v warp-cli; then
         _skip "WARP $(msg diag_not_installed)"
         echo ""
         return
     fi
 
-    if systemctl is-active --quiet warp-svc 2>/dev/null; then
+    if systemctl is-active --quiet warp-svc; then
         _pass "$(msg diag_warp_svc_running)"
     else
         _fail "$(msg diag_warp_svc_stopped)"
@@ -232,7 +228,7 @@ _diagWarp() {
     fi
 
     local warp_status
-    warp_status=$(warp-cli --accept-tos status 2>/dev/null)
+    warp_status=$(warp-cli --accept-tos status)
     if echo "$warp_status" | grep -q "Connected"; then
         _pass "$(msg diag_warp_connected)"
     else
@@ -241,12 +237,12 @@ _diagWarp() {
 
     # Проверяем что SOCKS5 реально работает
     local warp_ip
-    warp_ip=$(curl -s --connect-timeout 10 --max-time 15 -x socks5://127.0.0.1:40000 https://api.ipify.org 2>/dev/null | tr -d '[:space:]')
+    warp_ip=$(curl -s --connect-timeout 10 --max-time 15 -x socks5://127.0.0.1:40000 https://api.ipify.org | tr -d '[:space:]')
     if [ -n "$warp_ip" ] && [[ "$warp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         _pass "$(msg diag_warp_socks_ok): $warp_ip"
     else
         # Пробуем альтернативный сервис
-        warp_ip=$(curl -s --connect-timeout 10 --max-time 15 -x socks5://127.0.0.1:40000 https://ipv4.wtfismyip.com/text 2>/dev/null | tr -d '[:space:]')
+        warp_ip=$(curl -s --connect-timeout 10 --max-time 15 -x socks5://127.0.0.1:40000 https://ipv4.wtfismyip.com/text | tr -d '[:space:]')
         if [ -n "$warp_ip" ] && [[ "$warp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             _pass "$(msg diag_warp_socks_ok): $warp_ip"
         else
@@ -259,13 +255,13 @@ _diagWarp() {
 _diagFail2Ban() {
     echo -e "${cyan}[ Fail2Ban & Web-Jail ]${reset}"
 
-    if ! command -v fail2ban-client &>/dev/null; then
+    if ! command -v fail2ban-client; then
         _skip "Fail2Ban not installed"
         echo ""
         return
     fi
 
-    if ! command -v iptables &>/dev/null; then
+    if ! command -v iptables; then
         _fail "iptables not found — fail2ban cannot ban IPs"
     else
         _pass "iptables found"
@@ -273,7 +269,7 @@ _diagFail2Ban() {
 
     # Проверяем banaction в конфиге
     local ban_action
-    ban_action=$(grep -E '^banaction\s*=' /etc/fail2ban/jail.local 2>/dev/null | awk '{print $3}' | head -1)
+    ban_action=$(grep -E '^banaction\s*=' /etc/fail2ban/jail.local | awk '{print $3}' | head -1)
     if [ "$ban_action" = "iptables-multiport" ]; then
         _pass "banaction = iptables-multiport"
     elif [ -n "$ban_action" ]; then
@@ -284,7 +280,7 @@ _diagFail2Ban() {
 
     # Проверяем ignoreip (Cloudflare whitelist)
     local ignore_ip
-    ignore_ip=$(grep -E '^ignoreip\s*=' /etc/fail2ban/jail.local 2>/dev/null | cut -d= -f2- | head -1)
+    ignore_ip=$(grep -E '^ignoreip\s*=' /etc/fail2ban/jail.local | cut -d= -f2- | head -1)
     if echo "$ignore_ip" | grep -q "127.0.0.1"; then
         _pass "ignoreip configured"
     else
@@ -292,7 +288,7 @@ _diagFail2Ban() {
     fi
 
     # Fail2Ban сервис
-    if systemctl is-active --quiet fail2ban 2>/dev/null; then
+    if systemctl is-active --quiet fail2ban; then
         _pass "fail2ban service running"
     else
         _fail "fail2ban service stopped"
@@ -301,9 +297,9 @@ _diagFail2Ban() {
     fi
 
     # SSH jail
-    if fail2ban-client status sshd &>/dev/null; then
+    if fail2ban-client status sshd; then
         local ssh_banned
-        ssh_banned=$(fail2ban-client status sshd 2>/dev/null | grep "Currently banned" | awk '{print $NF}' || echo "?")
+        ssh_banned=$(fail2ban-client status sshd | grep "Currently banned" | awk '{print $NF}' || echo "?")
         _pass "sshd jail active ($ssh_banned banned IPs)"
     else
         _fail "sshd jail not active"
@@ -311,16 +307,16 @@ _diagFail2Ban() {
 
     # Web-Jail (nginx-probe)
     if [ -f /etc/fail2ban/filter.d/nginx-probe.conf ]; then
-        if fail2ban-client status nginx-probe &>/dev/null; then
+        if fail2ban-client status nginx-probe; then
             local probe_banned
-            probe_banned=$(fail2ban-client status nginx-probe 2>/dev/null | grep "Currently banned" | awk '{print $NF}' || echo "?")
+            probe_banned=$(fail2ban-client status nginx-probe | grep "Currently banned" | awk '{print $NF}' || echo "?")
             local max_retry
-            max_retry=$(grep -A10 '\[nginx-probe\]' /etc/fail2ban/jail.local 2>/dev/null | grep 'maxretry' | awk '{print $3}' | head -1)
+            max_retry=$(grep -A10 '\[nginx-probe\]' /etc/fail2ban/jail.local | grep 'maxretry' | awk '{print $3}' | head -1)
             _pass "nginx-probe jail active ($probe_banned banned, maxretry=$max_retry)"
 
             # Проверка что maxretry не слишком низкий
-            if [ "${max_retry:-5}" -lt 10 ] 2>/dev/null; then
-                _warn "nginx-probe maxretry=$max_retry — may cause false bans with Stream SNI"
+            if [ "${max_retry:-5}" -lt 10 ]; then
+                _warn "nginx-probe maxretry=$max_retry — consider increasing to 10+"
             fi
         else
             _warn "nginx-probe filter exists but jail not active"
@@ -331,7 +327,7 @@ _diagFail2Ban() {
 
     # Проверяем iptables rules
     local f2b_rules
-    f2b_rules=$(iptables -L -n 2>/dev/null | grep -c "f2b" || echo "0")
+    f2b_rules=$(iptables -L -n | grep -c "f2b" || echo "0")
     if [ "$f2b_rules" -gt 0 ]; then
         _pass "iptables f2b chains: $f2b_rules rules"
     else
@@ -347,10 +343,10 @@ _diagTunnels() {
     if [ -f "$psiphonConfigFile" ]; then
         any=true
         echo -e "${cyan}[ $(msg diag_section_psiphon) ]${reset}"
-        if systemctl is-active --quiet psiphon 2>/dev/null; then
+        if systemctl is-active --quiet psiphon; then
             _pass "$(msg diag_psiphon_running)"
             local ps_ip
-            ps_ip=$(curl -s --connect-timeout 10 -x socks5://127.0.0.1:40002 https://api.ipify.org 2>/dev/null)
+            ps_ip=$(curl -s --connect-timeout 10 -x socks5://127.0.0.1:40002 https://api.ipify.org)
             [ -n "$ps_ip" ] && _pass "$(msg diag_psiphon_socks_ok): $ps_ip" \
                             || _warn "$(msg diag_psiphon_socks_slow)"
         else
@@ -359,10 +355,10 @@ _diagTunnels() {
         echo ""
     fi
 
-    if command -v tor &>/dev/null; then
+    if command -v tor; then
         any=true
         echo -e "${cyan}[ $(msg diag_section_tor) ]${reset}"
-        if systemctl is-active --quiet tor 2>/dev/null; then
+        if systemctl is-active --quiet tor; then
             _pass "$(msg diag_tor_running)"
         else
             _fail "$(msg diag_tor_stopped)"
@@ -373,7 +369,7 @@ _diagTunnels() {
     if [ -f "$relayConfigFile" ]; then
         any=true
         echo -e "${cyan}[ $(msg diag_section_relay) ]${reset}"
-        source "$relayConfigFile" 2>/dev/null
+        source "$relayConfigFile"
         _pass "$(msg diag_relay_configured): ${RELAY_PROTOCOL}://${RELAY_HOST}:${RELAY_PORT}"
         echo ""
     fi
@@ -383,7 +379,7 @@ _diagConnectivity() {
     echo -e "${cyan}[ $(msg diag_section_connect) ]${reset}"
 
     # Интернет
-    if curl -s --connect-timeout 5 https://api.ipify.org &>/dev/null; then
+    if curl -s --connect-timeout 5 https://api.ipify.org; then
         local pub_ip
         pub_ip=$(getServerIP)
         _pass "$(msg diag_internet_ok): $pub_ip"
@@ -393,10 +389,10 @@ _diagConnectivity() {
 
     # Доступность домена снаружи (если есть nginx и домен)
     local domain_in_nginx
-    domain_in_nginx=$(grep -E '^\s*server_name\s+' "$nginxPath" 2>/dev/null | grep -v '_' | awk '{print $2}' | tr -d ';' | head -1)
-    if [ -n "$domain_in_nginx" ] && command -v nginx &>/dev/null; then
+    domain_in_nginx=$(grep -E '^\s*server_name\s+' "$nginxPath" | grep -v '_' | awk '{print $2}' | tr -d ';' | head -1)
+    if [ -n "$domain_in_nginx" ] && command -v nginx; then
         local http_code
-        http_code=$(curl -s --connect-timeout 8 -o /dev/null -w "%{http_code}" "https://${domain_in_nginx}/" 2>/dev/null)
+        http_code=$(curl -s --connect-timeout 8 -o /dev/null -w "%{http_code}" "https://${domain_in_nginx}/")
         if [ "$http_code" = "200" ] || [ "$http_code" = "301" ] || [ "$http_code" = "302" ]; then
             _pass "$(msg diag_domain_reachable): $domain_in_nginx ($http_code)"
         elif [ "$http_code" = "000" ]; then
@@ -408,71 +404,35 @@ _diagConnectivity() {
     echo ""
 }
 
-_diagVision() {
-    echo -e "${cyan}[ $(msg diag_section_vision) ]${reset}"
+_diagXhttp() {
+    echo -e "${cyan}[ XHTTP ]${reset}"
 
-    if [ ! -f "$visionConfigPath" ]; then
-        _skip "Vision $(msg diag_not_installed)"
+    if [ ! -f "$xhttpConfigPath" ]; then
+        _skip "XHTTP $(msg diag_not_installed)"
         echo ""
         return
     fi
 
-    # Валидность конфига
-    if xray -test -config "$visionConfigPath" &>/dev/null; then
-        _pass "$(msg diag_vision_config_ok)"
+    if xray -test -config "$xhttpConfigPath" > /dev/null 2>&1; then
+        _pass "$(msg diag_xhttp_config_ok)"
     else
-        _fail "$(msg diag_vision_config_bad)"
-        xray -test -config "$visionConfigPath" 2>&1 | head -5 | sed 's/^/      /'
+        _fail "$(msg diag_xhttp_config_bad)"
+        xray -test -config "$xhttpConfigPath" 2>&1 | head -5 | sed 's/^/      /'
     fi
 
-    # Сервис запущен
-    if systemctl is-active --quiet xray-vision 2>/dev/null; then
-        _pass "$(msg diag_vision_running)"
+    if systemctl is-active --quiet xray-xhttp; then
+        _pass "$(msg diag_xhttp_running)"
     else
-        _fail "$(msg diag_vision_stopped)"
+        _fail "$(msg diag_xhttp_stopped)"
     fi
 
-    # Порт слушается
-    local vision_port
-    vision_port=$(jq -r '.inbounds[0].port // empty' "$visionConfigPath" 2>/dev/null)
-    if [ -n "$vision_port" ] && ss -tlnp 2>/dev/null | grep -q ":${vision_port}"; then
-        _pass "$(msg diag_port_listen): $vision_port (internal)"
+    local xhttp_path xhttp_lport
+    xhttp_path=$(vwn_conf_get XHTTP_PATH || echo "/xhttp")
+    xhttp_lport=$(vwn_conf_get XHTTP_LPORT || echo "?")
+    if grep -q "xray-xhttp-location" "$nginxPath" 2>/dev/null; then
+        _pass "nginx: location ${xhttp_path} → 127.0.0.1:${xhttp_lport}"
     else
-        _fail "$(msg diag_port_not_listen): ${vision_port:-?}"
-    fi
-
-    # SSL сертификат Vision
-    if [ -f /etc/nginx/cert/vision.pem ]; then
-        local expire_date expire_epoch now_epoch days_left
-        expire_date=$(openssl x509 -enddate -noout -in /etc/nginx/cert/vision.pem 2>/dev/null | cut -d= -f2)
-        expire_epoch=$(date -d "$expire_date" +%s 2>/dev/null)
-        now_epoch=$(date +%s)
-        days_left=$(( (expire_epoch - now_epoch) / 86400 ))
-        if [ "$days_left" -le 0 ]; then
-            _fail "$(msg diag_ssl_expired)"
-        elif [ "$days_left" -lt 15 ]; then
-            _warn "$(msg diag_ssl_expiring): $days_left $(msg diag_days)"
-        else
-            _pass "$(msg diag_vision_ssl_ok): $days_left $(msg diag_days)"
-        fi
-    else
-        _fail "$(msg diag_vision_ssl_missing)"
-    fi
-
-    # DNS резолвинг домена Vision
-    local vision_domain
-    vision_domain=$(vwn_conf_get VISION_DOMAIN 2>/dev/null || true)
-    if [ -n "$vision_domain" ]; then
-        local resolved_ip server_ip
-        resolved_ip=$(getent hosts "$vision_domain" 2>/dev/null | awk '{print $1}' | head -1)
-        server_ip=$(getServerIP)
-        if [ -z "$resolved_ip" ]; then
-            _fail "$(msg diag_dns_fail): $vision_domain"
-        elif [ "$resolved_ip" = "$server_ip" ]; then
-            _pass "$(msg diag_dns_ok): $vision_domain → $resolved_ip"
-        else
-            _warn "$(msg diag_dns_mismatch): $vision_domain → $resolved_ip ($(msg diag_server_ip): $server_ip)"
-        fi
+        _fail "nginx location для XHTTP не найден"
     fi
     echo ""
 }
@@ -489,7 +449,7 @@ runFullDiag() {
 
     _diagSystem
     _diagXray
-    _diagVision
+    _diagXhttp
     _diagNginx
     _diagWarp
     _diagFail2Ban
@@ -520,7 +480,7 @@ manageDiag() {
         echo -e "${green}1.${reset} $(msg diag_run_full)"
         echo -e "${green}2.${reset} $(msg diag_run_system)"
         echo -e "${green}3.${reset} $(msg diag_run_xray)"
-        echo -e "${green}4.${reset} $(msg diag_run_vision)"
+        echo -e "${green}4.${reset} $(msg diag_run_xhttp)"
         echo -e "${green}5.${reset} $(msg diag_run_nginx)"
         echo -e "${green}6.${reset} $(msg diag_run_warp)"
         echo -e "${green}7.${reset} Fail2Ban & Web-Jail"
@@ -533,7 +493,7 @@ manageDiag() {
             1) runFullDiag ;;
             2) clear; _DIAG_ISSUES=(); _diagSystem ;;
             3) clear; _DIAG_ISSUES=(); _diagXray ;;
-            4) clear; _DIAG_ISSUES=(); _diagVision ;;
+            4) clear; _DIAG_ISSUES=(); _diagXhttp ;;
             5) clear; _DIAG_ISSUES=(); _diagNginx ;;
             6) clear; _DIAG_ISSUES=(); _diagWarp ;;
             7) clear; _DIAG_ISSUES=(); _diagFail2Ban ;;

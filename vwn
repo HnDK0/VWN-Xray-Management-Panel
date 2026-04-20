@@ -20,37 +20,33 @@ case "${1:-}" in
         exit 0
         ;;
     "update")
-        bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh) --update
+        bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VWN-Xray-Management-Panel/main/install.sh) --update
         exit 0
         ;;
     "status")
-        for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision menu; do
-            [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh"
-        done
+        source "$VWN_LIB/core.sh"
+        loadAllModules
         _initLang
         runFullDiag
         exit 0
         ;;
     "backup")
-        for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision menu; do
-            [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh"
-        done
+        source "$VWN_LIB/core.sh"
+        loadAllModules
         _initLang
         createBackup
         exit 0
         ;;
     "restore")
-        for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision menu; do
-            [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh"
-        done
+        source "$VWN_LIB/core.sh"
+        loadAllModules
         _initLang
         restoreBackup
         exit 0
         ;;
     "qr")
-        for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision menu; do
-            [ -f "$VWN_LIB/${module}.sh" ] && source "$VWN_LIB/${module}.sh"
-        done
+        source "$VWN_LIB/core.sh"
+        loadAllModules
         _initLang
         getQrCode
         exit 0
@@ -58,16 +54,8 @@ case "${1:-}" in
 esac
 
 # Загружаем модули
-for module in lang core xray nginx warp reality relay psiphon tor security logs backup users diag privacy adblock vision menu; do
-    if [ -f "$VWN_LIB/${module}.sh" ]; then
-        # shellcheck source=/dev/null
-        source "$VWN_LIB/${module}.sh"
-    else
-        echo "ERROR: Module ${module}.sh not found in $VWN_LIB"
-        echo "Reinstall: bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VLESS-WebSocket-TLS-Nginx-WARP/main/install.sh)"
-        exit 1
-    fi
-done
+source "$VWN_LIB/core.sh"
+loadAllModules
 
 # Выбор языка при первом запуске (и всегда вызываем _initLang для обновления MSG)
 VWN_CONF="/usr/local/etc/xray/vwn.conf"

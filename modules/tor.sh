@@ -10,16 +10,16 @@ TOR_CONFIG="/etc/tor/torrc"
 torDomainsFile='/usr/local/etc/xray/tor_domains.txt'
 
 getTorStatus() {
-    if systemctl is-active --quiet tor 2>/dev/null; then
+    if systemctl is-active --quiet tor; then
         local country=""
-        if grep -q "^ExitNodes" "$TOR_CONFIG" 2>/dev/null; then
+        if grep -q "^ExitNodes" "$TOR_CONFIG"; then
             country=$(grep "^ExitNodes" "$TOR_CONFIG" | grep -oP '\{[A-Z]+\}' | tr -d '{}' | head -1)
         fi
         # Определяем режим по конфигу Xray
         local mode="маршрут OFF"
         if [ -f "$configPath" ]; then
             local tor_rule
-            tor_rule=$(jq -r '.routing.rules[] | select(.outboundTag=="tor") | if .port == "0-65535" then "Global" elif (.domain | length) > 0 then "Split" else "OFF" end' "$configPath" 2>/dev/null | head -1)
+            tor_rule=$(jq -r '.routing.rules[] | select(.outboundTag=="tor") | if .port == "0-65535" then "Global" elif (.domain | length) > 0 then "Split" else "OFF" end' "$configPath" | head -1)
             [ -n "$tor_rule" ] && mode="$tor_rule"
         fi
         local country_str="${country:+, $country}"
@@ -34,7 +34,7 @@ getTorStatus() {
 }
 
 installTor() {
-    if command -v tor &>/dev/null; then
+    if command -v tor; then
         echo "info: $(msg tor_already)"; return 0
     fi
     echo -e "${cyan}$(msg tor_installing)${reset}"
@@ -42,16 +42,16 @@ installTor() {
 
     # Официальный репозиторий torproject.org — актуальная версия (0.4.8+)
     # Стандартный Ubuntu репо даёт устаревший 0.4.6 без поддержки FlowCtrl=2/Relay=4
-    if command -v apt &>/dev/null; then
+    if command -v apt; then
         local codename
-        codename=$(lsb_release -sc 2>/dev/null || . /etc/os-release && echo "$VERSION_CODENAME")
+        codename=$(lsb_release -sc || . /etc/os-release && echo "$VERSION_CODENAME")
         if [ -n "$codename" ]; then
             echo -e "${cyan}$(msg tor_adding_repo)${reset}"
-            ${PACKAGE_MANAGEMENT_INSTALL} apt-transport-https gpg &>/dev/null || true
-            curl -fsSL https://deb.torproject.org/torproject.org/A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89.asc                 | gpg --dearmor -o /usr/share/keyrings/tor-archive-keyring.gpg 2>/dev/null || true
+            ${PACKAGE_MANAGEMENT_INSTALL} apt-transport-https gpg || true
+            curl -fsSL https://deb.torproject.org/torproject.org/A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89.asc                 | gpg --dearmor -o /usr/share/keyrings/tor-archive-keyring.gpg || true
             echo "deb [signed-by=/usr/share/keyrings/tor-archive-keyring.gpg] https://deb.torproject.org/torproject.org $codename main"                 > /etc/apt/sources.list.d/tor.list
             echo "deb-src [signed-by=/usr/share/keyrings/tor-archive-keyring.gpg] https://deb.torproject.org/torproject.org $codename main"                 >> /etc/apt/sources.list.d/tor.list
-            apt-get update -qq 2>/dev/null || true
+            apt-get update -qq || true
             ${PACKAGE_MANAGEMENT_INSTALL} tor deb.torproject.org-keyring || {
                 # Fallback: стандартный репо
                 echo "${yellow}$(msg tor_repo_fail_fallback)${reset}"
@@ -66,7 +66,7 @@ installTor() {
     fi
 
     # GeoIP — нужен для ExitNodes по странам
-    ${PACKAGE_MANAGEMENT_INSTALL} tor-geoipdb 2>/dev/null ||     ${PACKAGE_MANAGEMENT_INSTALL} geoip-database 2>/dev/null || true
+    ${PACKAGE_MANAGEMENT_INSTALL} tor-geoipdb ||     ${PACKAGE_MANAGEMENT_INSTALL} geoip-database || true
 
     echo "${green}$(msg tor_installed)${reset}"
 }
@@ -76,25 +76,25 @@ upgradeTor() {
     [ -z "${PACKAGE_MANAGEMENT_INSTALL:-}" ] && identifyOS
 
     # Добавляем официальный репо если ещё нет
-    if command -v apt &>/dev/null && [ ! -f /etc/apt/sources.list.d/tor.list ]; then
+    if command -v apt && [ ! -f /etc/apt/sources.list.d/tor.list ]; then
         local codename
-        codename=$(lsb_release -sc 2>/dev/null || . /etc/os-release && echo "$VERSION_CODENAME")
+        codename=$(lsb_release -sc || . /etc/os-release && echo "$VERSION_CODENAME")
         if [ -n "$codename" ]; then
-            curl -fsSL https://deb.torproject.org/torproject.org/A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89.asc                 | gpg --dearmor -o /usr/share/keyrings/tor-archive-keyring.gpg 2>/dev/null || true
+            curl -fsSL https://deb.torproject.org/torproject.org/A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89.asc                 | gpg --dearmor -o /usr/share/keyrings/tor-archive-keyring.gpg || true
             echo "deb [signed-by=/usr/share/keyrings/tor-archive-keyring.gpg] https://deb.torproject.org/torproject.org $codename main"                 > /etc/apt/sources.list.d/tor.list
-            apt-get update -qq 2>/dev/null || true
+            apt-get update -qq || true
         fi
     fi
 
-    if command -v apt &>/dev/null; then
-        apt-get install -y --only-upgrade tor tor-geoipdb 2>/dev/null ||         apt-get install -y tor tor-geoipdb 2>/dev/null || true
+    if command -v apt; then
+        apt-get install -y --only-upgrade tor tor-geoipdb ||         apt-get install -y tor tor-geoipdb || true
     else
         ${PACKAGE_MANAGEMENT_INSTALL} tor || true
     fi
 
     systemctl restart tor
     local ver
-    ver=$(tor --version 2>/dev/null | head -1)
+    ver=$(tor --version | head -1)
     echo "${green}$(msg tor_upgraded): ${ver}${reset}"
 }
 
@@ -124,7 +124,7 @@ setupTorService() {
     systemctl restart tor
     sleep 5
 
-    if curl -s --connect-timeout 10 -x socks5://127.0.0.1:${TOR_PORT} https://api.ipify.org &>/dev/null; then
+    if curl -s --connect-timeout 10 -x socks5://127.0.0.1:${TOR_PORT} https://api.ipify.org; then
         echo "${green}$(msg tor_running)${reset}"
     else
         echo "${yellow}$(msg tor_started)${reset}"
@@ -134,18 +134,18 @@ setupTorService() {
 applyTorOutbound() {
     local tor_ob='{"tag":"tor","protocol":"socks","settings":{"servers":[{"address":"127.0.0.1","port":40003}]}}'
 
-    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath" "$xhttpConfigPath"; do
         [ -f "$cfg" ] || continue
         local has_ob
-        has_ob=$(jq '.outbounds[] | select(.tag=="tor")' "$cfg" 2>/dev/null)
+        has_ob=$(jq '.outbounds[] | select(.tag=="tor")' "$cfg")
         if [ -z "$has_ob" ]; then
             jq --argjson ob "$tor_ob" '.outbounds += [$ob]' \
                 "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
         fi
         local has_rule
-        has_rule=$(jq '.routing.rules[] | select(.outboundTag=="tor")' "$cfg" 2>/dev/null)
+        has_rule=$(jq '.routing.rules[] | select(.outboundTag=="tor")' "$cfg")
         if [ -z "$has_rule" ]; then
-            jq '.routing.rules = [.routing.rules[0]] + [{"type":"field","domain":["domain:whoer.net"],"outboundTag":"tor"}] + .routing.rules[1:]' \
+            jq '.routing.rules = [.routing.rules[0]] + [{"type":"field","domain":["domain:test.com"],"outboundTag":"tor"}] + .routing.rules[1:]' \
                 "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
         fi
     done
@@ -165,40 +165,40 @@ applyTorDomains() {
 
     applyTorOutbound
 
-    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath" "$xhttpConfigPath"; do
         [ -f "$cfg" ] || continue
         jq "(.routing.rules[] | select(.outboundTag == \"tor\")) |= (.domain = [$domains_json] | del(.port))" \
             "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
     done
-    systemctl restart xray 2>/dev/null || true
-    systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
+    systemctl restart xray || true
+    systemctl restart xray-reality || true
+    systemctl restart xray-xhttp || true
     echo "${green}$(msg tor_split_ok)${reset}"
 }
 
 toggleTorGlobal() {
     applyTorOutbound
-    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath" "$xhttpConfigPath"; do
         [ -f "$cfg" ] || continue
         jq '(.routing.rules[] | select(.outboundTag == "tor")) |= (.port = "0-65535" | del(.domain))' \
             "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
     done
-    systemctl restart xray 2>/dev/null || true
-    systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
-    rebuildAllSubFiles 2>/dev/null || true
+    systemctl restart xray || true
+    systemctl restart xray-reality || true
+    systemctl restart xray-xhttp || true
+    rebuildAllSubFiles || true
     echo "${green}$(msg tor_global_ok)${reset}"
 }
 
 removeTorFromConfigs() {
-    for cfg in "$configPath" "$realityConfigPath" "$visionConfigPath"; do
+    for cfg in "$configPath" "$realityConfigPath" "$xhttpConfigPath"; do
         [ -f "$cfg" ] || continue
         jq 'del(.outbounds[] | select(.tag=="tor")) | del(.routing.rules[] | select(.outboundTag=="tor"))' \
             "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
     done
-    systemctl restart xray 2>/dev/null || true
-    systemctl restart xray-reality 2>/dev/null || true
-    systemctl restart xray-vision 2>/dev/null || true
+    systemctl restart xray || true
+    systemctl restart xray-reality || true
+    systemctl restart xray-xhttp || true
 }
 
 checkTorIP() {
@@ -206,11 +206,11 @@ checkTorIP() {
     local ip attempts=3 i=1
     while [ $i -le $attempts ]; do
         echo -n "$(msg tor_checking) ($i/$attempts)... "
-        ip=$(curl -s --connect-timeout 5 -x socks5://127.0.0.1:${TOR_PORT} https://api.ipify.org 2>/dev/null)
+        ip=$(curl -s --connect-timeout 5 -x socks5://127.0.0.1:${TOR_PORT} https://api.ipify.org)
         if [ -n "$ip" ]; then
             echo "$ip"
             local country
-            country=$(curl -s --connect-timeout 5 -x socks5://127.0.0.1:${TOR_PORT}                 "http://ip-api.com/line/${ip}?fields=countryCode" 2>/dev/null | tr -d '[:space:]')
+            country=$(curl -s --connect-timeout 5 -x socks5://127.0.0.1:${TOR_PORT}                 "http://ip-api.com/line/${ip}?fields=countryCode" | tr -d '[:space:]')
             echo "$(msg tor_exit_country) : ${country:-$(msg unknown)}"
             return 0
         fi
@@ -222,10 +222,10 @@ checkTorIP() {
 }
 
 renewTorCircuit() {
-    if command -v tor-resolve &>/dev/null || systemctl is-active --quiet tor; then
+    if command -v tor-resolve || systemctl is-active --quiet tor; then
         echo -e "${cyan}$(msg tor_circuit_title)${reset}"
         (echo -e "AUTHENTICATE \"\"\r\nSIGNAL NEWNYM\r\nQUIT" | \
-            nc 127.0.0.1 ${TOR_CONTROL_PORT} 2>/dev/null) || true
+            nc 127.0.0.1 ${TOR_CONTROL_PORT}) || true
         echo "${green}$(msg tor_circuit_sent)${reset}"
     else
         echo "${red}$(msg tor_not_running)${reset}"
@@ -269,12 +269,12 @@ removeTor() {
     echo -e "${red}$(msg tor_remove_confirm) $(msg yes_no)${reset}"
     read -r confirm
     if [[ "$confirm" == "y" ]]; then
-        systemctl stop tor 2>/dev/null || true
-        systemctl disable tor 2>/dev/null || true
+        systemctl stop tor || true
+        systemctl disable tor || true
         removeTorFromConfigs
         rm -f "$torDomainsFile"
         [ -z "${PACKAGE_MANAGEMENT_REMOVE:-}" ] && identifyOS
-        ${PACKAGE_MANAGEMENT_REMOVE} tor 2>/dev/null || true
+        ${PACKAGE_MANAGEMENT_REMOVE} tor || true
         echo "${green}$(msg removed)${reset}"
     fi
 }
@@ -321,11 +321,11 @@ installTorFull() {
 # ------------------------------------------------------------------
 
 getTorBridgeStatus() {
-    if grep -q "^UseBridges 1" "$TOR_CONFIG" 2>/dev/null; then
+    if grep -q "^UseBridges 1" "$TOR_CONFIG"; then
         local btype
-        btype=$(grep "^ClientTransportPlugin" "$TOR_CONFIG" 2>/dev/null | awk '{print $1}' | head -1)
+        btype=$(grep "^ClientTransportPlugin" "$TOR_CONFIG" | awk '{print $1}' | head -1)
         local count
-        count=$(grep -c "^Bridge " "$TOR_CONFIG" 2>/dev/null || echo 0)
+        count=$(grep -c "^Bridge " "$TOR_CONFIG" || echo 0)
         echo "${green}ON (${count} $(msg bridges_count))${reset}"
     else
         echo "${red}OFF${reset}"
@@ -333,14 +333,14 @@ getTorBridgeStatus() {
 }
 
 installObfs4() {
-    if command -v obfs4proxy &>/dev/null; then
+    if command -v obfs4proxy; then
         echo "info: $(msg obfs4_already)"; return 0
     fi
     echo -e "${cyan}$(msg obfs4_installing)${reset}"
     [ -z "${PACKAGE_MANAGEMENT_INSTALL:-}" ] && identifyOS
-    ${PACKAGE_MANAGEMENT_INSTALL} obfs4proxy 2>/dev/null || {
+    ${PACKAGE_MANAGEMENT_INSTALL} obfs4proxy || {
         echo "${yellow}$(msg tor_obfs4_try)${reset}"
-        ${PACKAGE_MANAGEMENT_INSTALL} lyrebird 2>/dev/null || {
+        ${PACKAGE_MANAGEMENT_INSTALL} lyrebird || {
             echo "${red}$(msg tor_obfs4_fail)${reset}"; return 1
         }
     }
@@ -376,7 +376,7 @@ addTorBridges() {
 
     if [ "$transport" = "snowflake" ]; then
         [ -z "${PACKAGE_MANAGEMENT_INSTALL:-}" ] && identifyOS
-        ${PACKAGE_MANAGEMENT_INSTALL} snowflake-client 2>/dev/null ||         ${PACKAGE_MANAGEMENT_INSTALL} tor-geoipdb 2>/dev/null || true
+        ${PACKAGE_MANAGEMENT_INSTALL} snowflake-client ||         ${PACKAGE_MANAGEMENT_INSTALL} tor-geoipdb || true
     fi
 
     echo ""
@@ -435,8 +435,8 @@ manageTor() {
         clear
         local s_tor s_country="$(msg auto)" s_bridges="" s_domains=""
         s_tor=$(getTorStatus)
-        if command -v tor &>/dev/null; then
-            grep -q "^ExitNodes" "$TOR_CONFIG" 2>/dev/null &&                 s_country=$(grep "^ExitNodes" "$TOR_CONFIG" | grep -oP '\{[A-Z]+\}' | tr -d '{}' | head -1)
+        if command -v tor; then
+            grep -q "^ExitNodes" "$TOR_CONFIG" &&                 s_country=$(grep "^ExitNodes" "$TOR_CONFIG" | grep -oP '\{[A-Z]+\}' | tr -d '{}' | head -1)
             s_bridges=$(getTorBridgeStatus)
             [ -f "$torDomainsFile" ] && s_domains=$(wc -l < "$torDomainsFile")
         fi
@@ -444,7 +444,7 @@ manageTor() {
         printf "   ${red}$(msg tor_title)${reset}  %s\n" "$(date +'%d.%m.%Y %H:%M')"
         echo -e "${cyan}----------------------------------------------------------------${reset}"
         echo -e "  $(msg status): $s_tor"
-        if command -v tor &>/dev/null; then
+        if command -v tor; then
             echo -e "  $(msg country): ${green}${s_country}${reset},  $(msg tor_bridges_status): $s_bridges,  SOCKS5: 127.0.0.1:$TOR_PORT,  $(msg domains_count): ${green}${s_domains:-0}${reset}"
         fi
         echo -e "${cyan}----------------------------------------------------------------${reset}"
@@ -469,7 +469,7 @@ manageTor() {
         case $choice in
             1)  installTorFull ;;
             2)
-                ! command -v tor &>/dev/null && { echo "${red}$(msg tor_not_installed)${reset}"; read -r; continue; }
+                ! command -v tor && { echo "${red}$(msg tor_not_installed)${reset}"; read -r; continue; }
                 echo "$(msg tor_mode_1)"
                 echo "$(msg tor_mode_2)"
                 echo "$(msg tor_mode_3)"
@@ -483,7 +483,7 @@ manageTor() {
                 esac
                 ;;
             3)
-                ! command -v tor &>/dev/null && { echo "${red}$(msg tor_not_installed)${reset}"; read -r; continue; }
+                ! command -v tor && { echo "${red}$(msg tor_not_installed)${reset}"; read -r; continue; }
                 read -rp "$(msg tor_domain_prompt)" domain
                 [ -z "$domain" ] && continue
                 echo "$domain" >> "$torDomainsFile"
@@ -506,7 +506,7 @@ manageTor() {
             7)  checkTorIP ;;
             8)  renewTorCircuit ;;
             9)  systemctl restart tor && echo "${green}$(msg restarted)${reset}" ;;
-            10) tail -n 50 /var/log/tor/notices.log 2>/dev/null || journalctl -u tor -n 50 --no-pager ;;
+            10) tail -n 50 /var/log/tor/notices.log || journalctl -u tor -n 50 --no-pager ;;
             11) addTorBridges ;;
             12) removeTorBridges ;;
             13) removeTor ;;
