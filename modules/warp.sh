@@ -49,7 +49,7 @@ configWarp() {
     fi
 
     _warp_cmd mode proxy
-    _warp_cmd set-proxy-port 40000 || true
+    _warp_cmd proxy port 40000 || _warp_cmd set-proxy-port 40000 || true
     _warp_cmd connect
     sleep 5
 

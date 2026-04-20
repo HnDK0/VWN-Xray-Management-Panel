@@ -1078,7 +1078,7 @@ _auto_change_ssh_port() {
     local new_port="$1"
     local old_port
     old_port=$(grep -E "^Port " /etc/ssh/sshd_config \
-               | awk '{print $2}' | head -1)
+               | awk '{print $2}' | head -1 || true)
     old_port="${old_port:-22}"
 
     info "SSH: ${old_port} → ${new_port}"
@@ -1086,7 +1086,9 @@ _auto_change_ssh_port() {
 
     soft_step "UFW: новый SSH порт" ufw allow "${new_port}/tcp" comment 'SSH'
     step "sshd_config" \
-        sed -i "s/^#\?Port [0-9]*/Port ${new_port}/" /etc/ssh/sshd_config
+        bash -c "grep -qE '^#?Port ' /etc/ssh/sshd_config \
+            && sed -i \"s/^#\\?Port [0-9]*/Port ${new_port}/\" /etc/ssh/sshd_config \
+            || echo \"Port ${new_port}\" >> /etc/ssh/sshd_config"
     step "Перезапуск sshd" \
         bash -c "systemctl restart sshd || systemctl restart ssh"
 

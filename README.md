@@ -194,6 +194,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VWN-Xray-Management-Pa
 bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VWN-Xray-Management-Panel/main/install.sh) \
   --auto \
   --domain vpn.example.com \
+  --stub https://www.openstreetmap.org/ \  
   --skip-xhttp
 ```
 
@@ -212,6 +213,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VWN-Xray-Management-Pa
 bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VWN-Xray-Management-Panel/main/install.sh) \
   --auto \
   --domain vpn.example.com \
+  --stub https://www.openstreetmap.org/ \ 
   --cert-method cf --cf-email me@example.com --cf-key AbCd1234567890 \
   --reality --reality-dest apple.com:443 \
   --bbr --fail2ban
@@ -223,6 +225,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VWN-Xray-Management-Pa
 bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VWN-Xray-Management-Panel/main/install.sh) \
   --auto \
   --domain vpn.example.com \
+  --stub https://www.openstreetmap.org/ \ 
   --psiphon --psiphon-country NL \
   --ssh-port 2222 \
   --bbr --adblock
@@ -234,6 +237,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VWN-Xray-Management-Pa
 bash <(curl -fsSL https://raw.githubusercontent.com/HnDK0/VWN-Xray-Management-Panel/main/install.sh) \
   --auto \
   --domain vpn.example.com \
+  --stub https://www.openstreetmap.org/ \ 
   --cert-method cf --cf-email me@example.com --cf-key AbCd1234567890 \
   --reality --reality-dest apple.com:443 \
   --psiphon --psiphon-country DE \

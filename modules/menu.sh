@@ -38,7 +38,7 @@ _installNginxMainline() {
         curl -fsSL https://nginx.org/keys/nginx_signing.key \
             | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg
         local codename
-        codename=$(lsb_release -cs || . /etc/os-release && echo "$VERSION_CODENAME")
+        codename=$(lsb_release -cs 2>/dev/null || (. /etc/os-release && echo "${VERSION_CODENAME:-}"))
         echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/mainline/ubuntu ${codename} nginx" \
             > /etc/apt/sources.list.d/nginx-mainline.list
         printf 'Package: *\nPin: origin nginx.org\nPin-Priority: 900\n' \

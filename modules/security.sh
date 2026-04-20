@@ -18,11 +18,13 @@ changeSshPort() {
     fi
 
     local old_ssh_port
-    old_ssh_port=$(grep -E "^Port " /etc/ssh/sshd_config | awk '{print $2}' | head -1)
+    old_ssh_port=$(grep -E "^Port " /etc/ssh/sshd_config | awk '{print $2}' | head -1 || true)
     old_ssh_port="${old_ssh_port:-22}"
 
     ufw allow "$new_ssh_port"/tcp comment 'SSH'
-    sed -i "s/^#\?Port [0-9]*/Port $new_ssh_port/" /etc/ssh/sshd_config
+    grep -qE '^#?Port ' /etc/ssh/sshd_config \
+        && sed -i "s/^#\?Port [0-9]*/Port $new_ssh_port/" /etc/ssh/sshd_config \
+        || echo "Port $new_ssh_port" >> /etc/ssh/sshd_config
     systemctl restart sshd || systemctl restart ssh
     
     # Проверяем что sshd запустился успешно
@@ -30,7 +32,9 @@ changeSshPort() {
     if ! systemctl is-active --quiet sshd && ! systemctl is-active --quiet ssh; then
         echo "${red}ERROR: sshd failed to start on new port! Rolling back...${reset}"
         # Откат на старый порт
-        sed -i "s/^#\?Port [0-9]*/Port $old_ssh_port/" /etc/ssh/sshd_config
+        grep -qE '^#?Port ' /etc/ssh/sshd_config \
+            && sed -i "s/^#\?Port [0-9]*/Port $old_ssh_port/" /etc/ssh/sshd_config \
+            || echo "Port $old_ssh_port" >> /etc/ssh/sshd_config
         systemctl restart sshd || systemctl restart ssh
         # Закрываем новый порт и возвращаем старый в фаерволе
         ufw delete allow "$new_ssh_port"/tcp
@@ -156,7 +160,7 @@ setupFail2Ban() {
     local ban_action="iptables-multiport"
 
     local ssh_port
-    ssh_port=$(grep -E "^Port " /etc/ssh/sshd_config | awk '{print $2}' | head -1)
+    ssh_port=$(grep -E "^Port " /etc/ssh/sshd_config | awk '{print $2}' | head -1 || true)
     ssh_port="${ssh_port:-22}"
 
     # Определяем backend: если auth.log существует — auto, иначе systemd (Ubuntu 22.04+)
@@ -306,7 +310,7 @@ rebuildFail2BanConfigs() {
 
     # Сохраняем SSH порт
     local ssh_port
-    ssh_port=$(grep -E "^Port " /etc/ssh/sshd_config | awk '{print $2}' | head -1)
+    ssh_port=$(grep -E "^Port " /etc/ssh/sshd_config | awk '{print $2}' | head -1 || true)
     ssh_port="${ssh_port:-22}"
 
     # Определяем backend
