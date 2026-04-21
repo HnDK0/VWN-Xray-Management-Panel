@@ -333,6 +333,7 @@ configCert() {
     ~/.acme.sh/acme.sh --install-cert -d "$userDomain" \
         --key-file /etc/nginx/cert/cert.key \
         --fullchain-file /etc/nginx/cert/cert.pem \
+        --ca-file /etc/nginx/cert/chain.pem \
         --reloadcmd "systemctl reload nginx"
 
     # Даём пользователю xray доступ к cert.key
