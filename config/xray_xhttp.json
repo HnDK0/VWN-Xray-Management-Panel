@@ -20,6 +20,7 @@
             "security": "none",
             "xhttpSettings": {
                 "path": "__PATH__",
+                "host": "__DOMAIN__",
                 "mode": "packet-up"
             },
             "sockopt": {
