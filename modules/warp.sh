@@ -165,7 +165,7 @@ checkWarpStatus() {
 
     # Проверяем подключение WARP
     local warp_status
-    warp_status=$(warp-cli --accept-tos status || warp-cli status)
+    warp_status=$(_warp_cmd status 2>/dev/null || warp-cli status 2>/dev/null || true)
     if ! echo "$warp_status" | grep -q "Connected"; then
         echo "$(msg warp_ip) : ${yellow}WARP not connected ($warp_status)${reset}"
         echo "--------------------------------------------------"

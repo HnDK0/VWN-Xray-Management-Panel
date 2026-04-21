@@ -596,9 +596,16 @@ modifyDomain() {
         "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
     userDomain="$new_domain"
     vwn_conf_set DOMAIN "$new_domain"
+
+    # Пересобираем xhttp конфиг если установлен — домен берётся из DOMAIN
+    if [ -f "$xhttpConfigPath" ]; then
+        rebuildXhttpConfigs --silent || true
+    fi
+
     configCert
 
     systemctl restart nginx xray
+    systemctl is-active --quiet xray-xhttp && systemctl restart xray-xhttp || true
 }
 
 CONNECT_HOST_FILE="/usr/local/etc/xray/connect_host"
