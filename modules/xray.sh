@@ -595,6 +595,7 @@ modifyDomain() {
     jq ".inbounds[0].streamSettings.wsSettings.host = \"$new_domain\"" \
         "$configPath" > "${configPath}.tmp" && mv "${configPath}.tmp" "$configPath"
     userDomain="$new_domain"
+    vwn_conf_set DOMAIN "$new_domain"
     configCert
 
     systemctl restart nginx xray
