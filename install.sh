@@ -1016,6 +1016,10 @@ _auto_install_ws() {
     mkdir -p /usr/local/etc/xray
     echo "$OPT_DOMAIN" > /usr/local/etc/xray/connect_host
 
+    # Инициализируем users.conf сразу после writeXrayConfig — чтобы UUID был
+    # единым для всех компонентов (Reality, XHTTP) с самого начала установки
+    _initUsersFile || true
+
     # writeNginxConfigBase — из modules/nginx.sh
     step "Nginx конфиг (base)"   writeNginxConfigBase "$OPT_PORT" "$OPT_DOMAIN" "$OPT_STUB" "$ws_path"
     soft_step "Nginx enable"     systemctl enable nginx
@@ -1326,8 +1330,8 @@ _print_summary() {
     unset -f _sum
 
     # Генерируем QR и subscription — из modules/xray.sh, modules/users.sh
+    # _initUsersFile уже вызвана в начале установки (после writeXrayConfig)
     set +e
-    _initUsersFile   || true
     rebuildAllSubFiles || true
     getQrCode          || true
     set -e
