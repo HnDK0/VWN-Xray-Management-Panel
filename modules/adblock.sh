@@ -53,14 +53,18 @@ _adblockApplyToConfig() {
     already=$(_adblockCount "$cfg")
     [ "${already:-0}" -gt 0 ] && return 0
 
-    # Вставляем отдельное правило: все block-правила → наше правило → остальные.
+    # Вставляем правило перед первым block-правилом, сохраняя исходный порядок.
     # Не используем += / //= — несовместимо с jq < 1.6.
     jq --argjson r "$_ADBLOCK_RULE" '
-        .routing.rules = (
-            [ .routing.rules[] | select(.outboundTag == "block") ] +
-            [ $r ] +
-            [ .routing.rules[] | select(.outboundTag != "block") ]
-        )' "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
+        .routing.rules as $rules |
+        ([ $rules[] | select(.outboundTag == "block") ] | first | . as $first_block |
+            [ $rules | to_entries[] | select(.value == $first_block) | .key ] | first
+        ) as $idx |
+        if $idx == null then
+            .routing.rules = $rules + [$r]
+        else
+            .routing.rules = $rules[:$idx] + [$r] + $rules[$idx:]
+        end' "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
 }
 
 # ── Удаление ──────────────────────────────────────────────────────
