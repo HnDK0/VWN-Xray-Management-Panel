@@ -347,6 +347,9 @@ rebuildXhttpConfigs() {
     systemctl restart xray-xhttp || true
 
     echo "${green}XHTTP конфиги пересозданы${reset}"
+
+    # Перегенерируем подписки только если вызвано напрямую, а не из rebuildAllConfigs
+    [ -z "$silent" ] && rebuildAllSubFiles || true
 }
 
 # ── Меню ──────────────────────────────────────────────────────────
