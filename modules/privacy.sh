@@ -108,7 +108,7 @@ EOF
     systemctl daemon-reload
     systemctl enable --now var-log-xray.mount || true
     # Пересоздаём пустые лог-файлы в tmpfs
-    touch /var/log/xray/error.log /var/log/xray/reality-error.log || true
+    touch /var/log/xray/error.log /var/log/xray/reality-error.log /var/log/xray/xhttp-error.log || true
     chown -R xray:xray /var/log/xray || true
 }
 
@@ -118,7 +118,7 @@ _disableXrayLogTmpfs() {
     systemctl daemon-reload
     # Воссоздаём постоянную директорию
     mkdir -p /var/log/xray
-    touch /var/log/xray/error.log /var/log/xray/reality-error.log || true
+    touch /var/log/xray/error.log /var/log/xray/reality-error.log /var/log/xray/xhttp-error.log || true
     chown -R xray:xray /var/log/xray || true
 }
 
