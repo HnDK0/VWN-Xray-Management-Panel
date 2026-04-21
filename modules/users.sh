@@ -208,6 +208,23 @@ try:
         print(f'    path: {path}')
         print(f'    headers:')
         print(f'      Host: {ws_host}')
+    elif net == 'xhttp':
+        path = urllib.parse.unquote(params.get('path', '/'))
+        sni = params.get('sni', host)
+        xhttp_host = params.get('host', sni)
+        print(f'- name: \"{name}\"')
+        print(f'  type: vless')
+        print(f'  server: {host}')
+        print(f'  port: {port}')
+        print(f'  uuid: {uuid}')
+        print(f'  tls: true')
+        print(f'  servername: {sni}')
+        print(f'  client-fingerprint: chrome')
+        print(f'  network: xhttp')
+        print(f'  xhttp-opts:')
+        print(f'    path: {path}')
+        print(f'    headers:')
+        print(f'      Host: {xhttp_host}')
     elif security == 'reality':
         sni = params.get('sni', '')
         pbk = params.get('pbk', '')
@@ -260,7 +277,7 @@ buildUserHtmlPage() {
         [ -n "$line" ] && configs+=("$line")
     done <<< "$lines"
 
-    # Clash YAML — собираем из всех конфигов
+    # Clash YAML
     local clash_yaml=""
     for cfg in "${configs[@]}"; do
         local block
@@ -276,120 +293,267 @@ buildUserHtmlPage() {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
+<title>VPN Config</title>
 <style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:monospace;background:#0f0f0f;color:#d0d0d0;padding:16px;max-width:700px;margin:0 auto}
-h2{color:#6c7086;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin:20px 0 8px}
-.card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:12px;margin-bottom:10px}
-.proto{display:inline-block;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:700;margin-bottom:8px}
-.ws{background:#253025;color:#a6e3a1}
-.reality{background:#302520;color:#fab387}
-.sub{background:#252540;color:#89dceb}
-.clash{background:#2a2040;color:#cba6f7}
-.vision{background:#252535;color:#b4befe}
-.url{font-size:11px;word-break:break-all;color:#cdd6f4;line-height:1.5;margin-bottom:8px;padding:6px;background:#111;border-radius:4px;white-space:pre-wrap}
-.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.btn{background:#313244;color:#cdd6f4;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:11px}
-.btn:hover{background:#45475a}
-.qr-btn{background:#1e3a5f;color:#89b4fa}
-.qr-btn:hover{background:#264a6f}
-.qr-wrap{display:none;margin-top:10px;text-align:center}
-.qr-wrap.open{display:block}
-.qr-inner{display:inline-block;background:#fff;padding:8px;border-radius:6px}
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap');
+  :root {
+    --bg: #0c0c10; --surface: #13131a; --border: #1e1e2e; --text: #cdd6f4;
+    --muted: #6c7086; --green: #a6e3a1; --blue: #89b4fa; --sky: #89dceb;
+    --peach: #fab387; --mauve: #cba6f7; --yellow: #f9e2af;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'JetBrains Mono', monospace; background: var(--bg); color: var(--text); min-height: 100vh; padding: 0 0 60px; }
+  .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 18px 20px 14px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
+  .header-icon { font-size: 22px; line-height: 1; }
+  .header-label { font-size: 15px; font-weight: 700; color: var(--blue); letter-spacing: .04em; }
+  .header-badge { margin-left: auto; font-size: 10px; background: var(--border); color: var(--muted); padding: 3px 8px; border-radius: 20px; letter-spacing: .05em; }
+  .tabs { display: flex; gap: 2px; padding: 12px 16px 0; border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { padding: 8px 14px; font-size: 11px; font-weight: 600; font-family: inherit; color: var(--muted); background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; white-space: nowrap; letter-spacing: .04em; transition: color .15s, border-color .15s; text-transform: uppercase; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+  .panel { display: none; padding: 16px; }
+  .panel.active { display: block; }
+  .section-title { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; margin: 20px 0 8px; }
+  .section-title:first-child { margin-top: 0; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+  .card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .badge { display: inline-block; padding: 3px 9px; border-radius: 5px; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; flex-shrink: 0; }
+  .badge-ws      { background: #1a2e1a; color: var(--green); }
+  .badge-reality { background: #2e1f14; color: var(--peach); }
+  .badge-xhttp   { background: #1a1f3a; color: var(--blue); }
+  .badge-clash   { background: #221a38; color: var(--mauve); }
+  .badge-all     { background: #252025; color: var(--yellow); }
+  .badge-sub     { background: #14253a; color: var(--sky); }
+  .card-name { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .url-box { font-size: 10.5px; line-height: 1.6; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 9px 10px; word-break: break-all; white-space: pre-wrap; margin-bottom: 10px; max-height: 120px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; cursor: text; user-select: all; }
+  .url-box.tall { max-height: 220px; }
+  .url-box::-webkit-scrollbar { width: 4px; }
+  .url-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .btn { background: var(--border); color: var(--text); border: none; padding: 7px 13px; border-radius: 6px; cursor: pointer; font-size: 11px; font-family: inherit; font-weight: 600; transition: background .15s, transform .1s; letter-spacing: .03em; }
+  .btn:hover { background: #2a2a3e; }
+  .btn:active { transform: scale(.97); }
+  .btn.success { background: #1a2e1a; color: var(--green); }
+  .btn-qr { background: #1a253a; color: var(--blue); }
+  .btn-qr:hover { background: #1f2d47; }
+  .qr-wrap { display: none; margin-top: 12px; text-align: center; }
+  .qr-wrap.open { display: block; }
+  .qr-inner { display: inline-block; background: #fff; padding: 10px; border-radius: 8px; }
+  .sub-hero { background: linear-gradient(135deg, #13131a 0%, #1a1a2e 100%); border: 1px solid #2a2a4a; border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+  .sub-hero .url-box { font-size: 11px; max-height: none; margin-bottom: 12px; border-color: #2a2a4a; color: var(--sky); }
+  .app-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 6px; }
+  @media (max-width: 420px) { .app-grid { grid-template-columns: 1fr; } }
+  .app-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+  .app-name { font-size: 12px; font-weight: 700; color: var(--blue); margin-bottom: 4px; }
+  .app-platform { font-size: 10px; color: var(--muted); margin-bottom: 8px; }
+  .app-note { font-size: 10px; color: var(--yellow); background: #2a2510; border: 1px solid #3a3010; border-radius: 5px; padding: 5px 8px; margin-bottom: 8px; line-height: 1.5; }
+  .app-steps { font-size: 10.5px; color: var(--text); line-height: 1.7; list-style: none; padding: 0; }
+  .app-steps li::before { content: attr(data-n) ". "; color: var(--mauve); font-weight: 700; }
 </style>
 </head>
 <body>
 HTMLEOF
 
-    # Заголовок с именем пользователя
-    echo "<h1 style='color:#89b4fa;font-size:15px;margin-bottom:16px;padding-bottom:8px;border-bottom:1px solid #2a2a2a'>📡 ${label}</h1>" >> "$htmlfile"
+    # ── Dynamic content ──────────────────────────────────────────
 
-    local i=0
-    local all_vless=""
-    local vless_count=0
+    local cards_html="" all_lines_text="" vless_count=0 card_idx=0
+
     for cfg in "${configs[@]}"; do
-        local proto_label="VLESS" proto_class=""
-        echo "$cfg" | grep -q "type=ws"            && proto_label="WS+TLS"  && proto_class="ws"
-        echo "$cfg" | grep -q "security=reality"   && proto_label="Reality" && proto_class="reality"
-        echo "$cfg" | grep -q "type=xhttp"         && proto_label="XHTTP" && proto_class="xhttp"
-        if [[ "$cfg" == vless://* ]]; then
-            all_vless="${all_vless}${cfg}"$'\n'
-            vless_count=$((vless_count+1))
+        local proto_label="VLESS" badge_cls="" disp_name=""
+
+        if echo "$cfg" | grep -q "type=ws"; then
+            proto_label="WS+TLS"; badge_cls="ws"
+        elif echo "$cfg" | grep -q "security=reality"; then
+            proto_label="Reality"; badge_cls="reality"
+        elif echo "$cfg" | grep -q "type=xhttp"; then
+            proto_label="XHTTP"; badge_cls="xhttp"
         fi
-        cat >> "$htmlfile" << CARDEOF
-<div class="card">
-  <span class="proto ${proto_class}">${proto_label}</span>
-  <div class="url" id="u${i}">${cfg}</div>
-  <div class="actions">
-    <button class="btn" onclick="cp('u${i}',this)">📋 ${btn_copy_text}</button>
-    <button class="btn qr-btn" onclick="tqr(${i})">${btn_qr_text}</button>
-  </div>
-  <div class="qr-wrap" id="qr${i}"><div class="qr-inner" id="qrc${i}"></div></div>
-</div>
-CARDEOF
-        i=$((i+1))
+
+        # Имя конфига из фрагмента URL
+        disp_name=$(python3 -c "
+import sys, urllib.parse
+url = sys.argv[1]
+h = url.find('#')
+print(urllib.parse.unquote(url[h+1:]) if h >= 0 else '')
+" "$cfg" || echo "")
+
+        cards_html+="<div class=\"card\">"
+        cards_html+="<div class=\"card-header\">"
+        cards_html+="<span class=\"badge badge-${badge_cls}\">${proto_label}</span>"
+        [ -n "$disp_name" ] && cards_html+="<span class=\"card-name\">${disp_name}</span>"
+        cards_html+="</div>"
+        cards_html+="<div class=\"url-box\" id=\"cfg${card_idx}\">${cfg}</div>"
+        cards_html+="<div class=\"actions\">"
+        cards_html+="<button class=\"btn\" onclick=\"cp('cfg${card_idx}',this)\">📋 ${btn_copy_text}</button>"
+        cards_html+="<button class=\"btn btn-qr\" onclick=\"tqr(${card_idx})\">⬛ ${btn_qr_text}</button>"
+        cards_html+="</div>"
+        cards_html+="<div class=\"qr-wrap\" id=\"qr${card_idx}\"><div class=\"qr-inner\" id=\"qrc${card_idx}\"></div></div>"
+        cards_html+="</div>"
+
+        all_lines_text="${all_lines_text}${cfg}"$'\n'
+        vless_count=$((vless_count + 1))
+        card_idx=$((card_idx + 1))
     done
 
+    # Блок «Все конфиги»
+    local copy_all_card=""
     if [ "$vless_count" -gt 1 ]; then
-        all_vless="${all_vless%$'\n'}"
-        cat >> "$htmlfile" << ALLVLESSEOF
-<div class="card">
-  <span class="proto sub">XHTTP</span>
-  <div class="actions">
-    <button class="btn" onclick="cp('uallvless',this)">${btn_copy_all_text}</button>
-  </div>
-  <div class="url" id="uallvless" style="display:none">${all_vless}</div>
-</div>
-ALLVLESSEOF
+        local all_escaped
+        all_escaped=$(printf '%s' "${all_lines_text}" | sed 's/</\&lt;/g; s/>/\&gt;/g')
+        copy_all_card="<div class=\"section-title\">Все конфиги</div>"
+        copy_all_card+="<div class=\"card\">"
+        copy_all_card+="<div class=\"card-header\"><span class=\"badge badge-all\">ALL · ${vless_count}</span></div>"
+        copy_all_card+="<div class=\"url-box tall\" id=\"cfgall\">${all_escaped}</div>"
+        copy_all_card+="<div class=\"actions\">"
+        copy_all_card+="<button class=\"btn\" onclick=\"cp('cfgall',this)\">📋 ${btn_copy_all_text}</button>"
+        copy_all_card+="</div></div>"
     fi
 
-    # Clash блок
+    # Блок Clash
+    local clash_card=""
     if [ -n "$clash_yaml" ]; then
-        cat >> "$htmlfile" << CLASHEOF
-<h2>Clash Meta / Mihomo</h2>
-<div class="card">
-  <span class="proto clash">Clash</span>
-  <div class="url" id="uclash">${clash_yaml}</div>
-  <div class="actions">
-    <button class="btn" onclick="cp('uclash',this)">📋 ${btn_copy_text}</button>
-  </div>
-</div>
-CLASHEOF
+        local clash_escaped
+        clash_escaped=$(printf '%s' "$clash_yaml" | sed 's/</\&lt;/g; s/>/\&gt;/g')
+        clash_card="<div class=\"section-title\">Clash Meta / Mihomo</div>"
+        clash_card+="<div class=\"card\">"
+        clash_card+="<div class=\"card-header\"><span class=\"badge badge-clash\">Clash</span></div>"
+        clash_card+="<div class=\"url-box tall\" id=\"cfgclash\">${clash_escaped}</div>"
+        clash_card+="<div class=\"actions\">"
+        clash_card+="<button class=\"btn\" onclick=\"cp('cfgclash',this)\">📋 ${btn_copy_text}</button>"
+        clash_card+="</div></div>"
     fi
 
-    # Subscription
-    cat >> "$htmlfile" << SUBEOF
-<h2>Subscription URL</h2>
-<div class="card">
-  <span class="proto sub">SUB</span>
-  <div class="url" id="usub">${sub_url}</div>
-  <div class="actions">
-    <button class="btn" onclick="cp('usub',this)">📋 ${btn_copy_text}</button>
-    <button class="btn qr-btn" onclick="tqr('sub')">${btn_qr_text}</button>
-  </div>
-  <div class="qr-wrap" id="qrsub"><div class="qr-inner" id="qrcsub"></div></div>
+    local sub_escaped
+    sub_escaped=$(printf '%s' "$sub_url" | sed 's/</\&lt;/g; s/>/\&gt;/g')
+
+    cat >> "$htmlfile" << DYNEOF
+<div class="header">
+  <span class="header-icon">📡</span>
+  <span class="header-label">${label}</span>
+  <span class="header-badge">VPN CONFIG</span>
 </div>
-<p style="margin-top:16px;font-size:10px;color:#45475a;text-align:center">v2rayNG / Hiddify: + → Subscription group → URL</p>
+
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('configs',this)">Конфиги</button>
+  <button class="tab" onclick="switchTab('subscription',this)">Подписка</button>
+  <button class="tab" onclick="switchTab('apps',this)">Приложения</button>
+</div>
+
+<div id="tab-configs" class="panel active">
+  <div class="section-title">Протоколы</div>
+  ${cards_html}
+  ${copy_all_card}
+  ${clash_card}
+</div>
+
+<div id="tab-subscription" class="panel">
+  <div class="section-title">Ссылка на подписку</div>
+  <div class="sub-hero">
+    <div class="url-box" id="cfgsub" style="max-height:none">${sub_escaped}</div>
+    <div class="actions">
+      <button class="btn" onclick="cp('cfgsub',this)">📋 ${btn_copy_text}</button>
+      <button class="btn btn-qr" onclick="tqr('sub')">⬛ ${btn_qr_text}</button>
+    </div>
+    <div class="qr-wrap" id="qrsub"><div class="qr-inner" id="qrcsub"></div></div>
+  </div>
+  <p style="font-size:10px;color:var(--muted);margin-top:8px">
+    Ссылка обновляется автоматически. Добавьте её в приложение один раз — конфиги будут обновляться сами.
+  </p>
+</div>
+
+<div id="tab-apps" class="panel">
+  <div class="section-title">Как подключиться</div>
+  <div class="app-grid">
+
+    <div class="app-card">
+      <div class="app-name">v2rayNG</div>
+      <div class="app-platform">Android</div>
+      <ul class="app-steps">
+        <li data-n="1">Открыть v2rayNG</li>
+        <li data-n="2">Нажать «+» → «Подписка»</li>
+        <li data-n="3">Вставить Subscription URL</li>
+        <li data-n="4">Обновить группу</li>
+        <li data-n="5">Выбрать сервер → Подключиться</li>
+      </ul>
+    </div>
+
+    <div class="app-card">
+      <div class="app-name">Hiddify</div>
+      <div class="app-platform">Android / iOS / Desktop</div>
+      <ul class="app-steps">
+        <li data-n="1">Открыть Hiddify</li>
+        <li data-n="2">«+» → «Добавить по ссылке»</li>
+        <li data-n="3">Вставить Subscription URL</li>
+        <li data-n="4">Нажать «Подключиться»</li>
+      </ul>
+    </div>
+
+    <div class="app-card">
+      <div class="app-name">Streisand</div>
+      <div class="app-platform">iOS</div>
+      <ul class="app-steps">
+        <li data-n="1">Открыть Streisand</li>
+        <li data-n="2">«+» → «URL»</li>
+        <li data-n="3">Вставить Subscription URL</li>
+        <li data-n="4">Импортировать и подключиться</li>
+      </ul>
+    </div>
+
+    <div class="app-card">
+      <div class="app-name">Clash Meta / Mihomo</div>
+      <div class="app-platform">Windows / macOS / Linux / Android</div>
+      <div class="app-note">⚠ XHTTP: требуется версия ≥ v1.19.23 (апрель 2026). Обновите ядро если версия старше.</div>
+      <ul class="app-steps">
+        <li data-n="1">Открыть вкладку «Конфиги»</li>
+        <li data-n="2">Скопировать блок Clash</li>
+        <li data-n="3">Вставить в config.yaml в раздел proxies:</li>
+        <li data-n="4">Перезапустить Clash</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script>
-var Q={};
-function cp(id,btn){
-  navigator.clipboard.writeText(document.getElementById(id).textContent.trim()).then(function(){
-    var o=btn.textContent;btn.textContent='✓ ${btn_copied_text}';
-    setTimeout(function(){btn.textContent=o;},1500);
+var Q = {};
+function switchTab(name, btn) {
+  document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('active'); });
+  document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
+  document.getElementById('tab-' + name).classList.add('active');
+  btn.classList.add('active');
+}
+function cp(id, btn) {
+  var el = document.getElementById(id);
+  var text = el.innerText.trim();
+  navigator.clipboard.writeText(text).then(function() {
+    var orig = btn.textContent;
+    btn.textContent = '✓ ${btn_copied_text}';
+    btn.classList.add('success');
+    setTimeout(function() { btn.textContent = orig; btn.classList.remove('success'); }, 1500);
+  }).catch(function() {
+    var range = document.createRange();
+    range.selectNodeContents(el);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
   });
 }
-function tqr(id){
-  var w=document.getElementById('qr'+id);
-  var open=w.classList.toggle('open');
-  if(open&&!Q[id]){
-    var el=document.getElementById(id==='sub'?'usub':'u'+id);
-    new QRCode(document.getElementById('qrc'+id),{text:el.textContent.trim(),width:200,height:200,correctLevel:QRCode.CorrectLevel.M});
-    Q[id]=true;
+function tqr(id) {
+  var w = document.getElementById('qr' + id);
+  var open = w.classList.toggle('open');
+  if (open && !Q[id]) {
+    var srcId = (id === 'sub') ? 'cfgsub' : 'cfg' + id;
+    var text = document.getElementById(srcId).innerText.trim();
+    new QRCode(document.getElementById('qrc' + id), { text: text, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
+    Q[id] = true;
   }
 }
-</script></body></html>
-SUBEOF
+</script>
+</body>
+</html>
+DYNEOF
     chmod 644 "$htmlfile"
 }
 
