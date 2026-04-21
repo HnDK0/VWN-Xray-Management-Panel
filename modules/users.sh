@@ -211,7 +211,7 @@ try:
     elif net == 'xhttp':
         path = urllib.parse.unquote(params.get('path', '/'))
         sni = params.get('sni', host)
-        xhttp_host = params.get('host', sni)
+        mode = params.get('mode', 'packet-up')
         print(f'- name: \"{name}\"')
         print(f'  type: vless')
         print(f'  server: {host}')
@@ -223,8 +223,7 @@ try:
         print(f'  network: xhttp')
         print(f'  xhttp-opts:')
         print(f'    path: {path}')
-        print(f'    headers:')
-        print(f'      Host: {xhttp_host}')
+        print(f'    mode: {mode}')
     elif security == 'reality':
         sni = params.get('sni', '')
         pbk = params.get('pbk', '')
