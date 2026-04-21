@@ -20,7 +20,7 @@
             "security": "none",
             "xhttpSettings": {
                 "path": "__PATH__",
-                "mode": "auto"
+                "mode": "packet-up"
             },
             "sockopt": {
                 "tcpFastOpen": true,
