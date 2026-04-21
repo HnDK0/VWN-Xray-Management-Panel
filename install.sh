@@ -1023,6 +1023,14 @@ _auto_install_ws() {
     # writeNginxConfigBase — из modules/nginx.sh
     step "Nginx конфиг (base)"   writeNginxConfigBase "$OPT_PORT" "$OPT_DOMAIN" "$OPT_STUB" "$ws_path"
     soft_step "Nginx enable"     systemctl enable nginx
+    soft_step "Nginx resilience" bash -c '
+        mkdir -p /etc/systemd/system/nginx.service.d
+        cat > /etc/systemd/system/nginx.service.d/resilience.conf << EOF
+[Service]
+Restart=on-failure
+RestartSec=3
+EOF
+        systemctl daemon-reload'
 
     if ! $OPT_NO_WARP; then
         # configWarp — из modules/warp.sh
