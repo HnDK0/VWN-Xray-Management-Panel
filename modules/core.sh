@@ -79,7 +79,7 @@ rebuildAllConfigs() {
     echo "${green}All configs rebuilt successfully.${reset}"
 }
 
-VWN_VERSION="3.1"
+VWN_VERSION="2.1"
 VWN_LIB="/usr/local/lib/vwn"
 
 # Цвета
@@ -529,10 +529,14 @@ getF2BStatus() {
 
 getWebJailStatus() {
     if [ -f /etc/fail2ban/filter.d/nginx-probe.conf ]; then
-        fail2ban-client status nginx-probe \
-            && echo "${green}PROTECTED${reset}" || echo "${yellow}OFF${reset}"
+        # Перенаправляем вывод команды в /dev/null
+        if fail2ban-client status nginx-probe >/dev/null 2>&1; then
+            echo -e "${green}PROTECTED${reset}"
+        else
+            echo -e "${yellow}OFF${reset}"
+        fi
     else
-        echo "${red}NO${reset}"
+        echo -e "${red}NO${reset}"
     fi
 }
 

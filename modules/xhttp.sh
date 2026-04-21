@@ -24,16 +24,17 @@ _ensureXhttpLogAccess() {
 
 getXhttpStatus() {
     if [ ! -f "$xhttpConfigPath" ]; then
-        echo "${red}NOT INSTALLED${reset}"
+        echo -e "${red}NOT INSTALLED${reset}"
         return
     fi
     if systemctl is-active --quiet xray-xhttp; then
         local domain path
         domain=$(vwn_conf_get DOMAIN || true)
         path=$(vwn_conf_get XHTTP_PATH || echo "/xhttp")
-        echo "${green}RUNNING${reset} | ${domain:-?}:443${path} (CDN mode)"
+        # Красим всю информационную строку в зеленый
+        echo -e "${green}RUNNING | ${domain:-?}:443${path} (CDN mode)${reset}"
     else
-        echo "${red}STOPPED${reset}"
+        echo -e "${red}STOPPED${reset}"
     fi
 }
 
