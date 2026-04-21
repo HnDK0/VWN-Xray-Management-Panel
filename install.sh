@@ -982,6 +982,7 @@ _auto_ssl() {
         ~/.acme.sh/acme.sh --install-cert -d "$domain" \
             --key-file       /etc/nginx/cert/cert.key \
             --fullchain-file /etc/nginx/cert/cert.pem \
+            --ca-file        /etc/nginx/cert/chain.pem \
             --reloadcmd      "systemctl restart nginx || true"
 
     # Даём пользователю xray доступ к cert.key
