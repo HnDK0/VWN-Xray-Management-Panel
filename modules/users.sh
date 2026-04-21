@@ -311,7 +311,7 @@ HTMLEOF
         local proto_label="VLESS" proto_class=""
         echo "$cfg" | grep -q "type=ws"            && proto_label="WS+TLS"  && proto_class="ws"
         echo "$cfg" | grep -q "security=reality"   && proto_label="Reality" && proto_class="reality"
-        echo "$cfg" | grep -q "flow=xtls-rprx-vision" && echo "$cfg" | grep -q "security=tls" && proto_label="Vision+TLS" && proto_class="vision"
+        echo "$cfg" | grep -q "type=xhttp"         && proto_label="XHTTP" && proto_class="xhttp"
         if [[ "$cfg" == vless://* ]]; then
             all_vless="${all_vless}${cfg}"$'\n'
             vless_count=$((vless_count+1))
@@ -334,7 +334,7 @@ CARDEOF
         all_vless="${all_vless%$'\n'}"
         cat >> "$htmlfile" << ALLVLESSEOF
 <div class="card">
-  <span class="proto sub">VLESS</span>
+  <span class="proto sub">XHTTP</span>
   <div class="actions">
     <button class="btn" onclick="cp('uallvless',this)">${btn_copy_all_text}</button>
   </div>
