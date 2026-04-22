@@ -23,7 +23,6 @@
                 "host": "__DOMAIN__",
                 "mode": "auto",
                 "extra": {
-                    "noSSEHeader": true,
                     "scMaxEachPostBytes": "100000-1000000",
                     "xPaddingBytes": "100-1000"
                 }

@@ -81,7 +81,7 @@ _injectXhttpLocation() {
         return 0
     fi
 
-    sed -i "/    location \/ {/i\\    # xray-xhttp-location\n    location ${xhttp_path} {\n        proxy_pass http:\/\/127.0.0.1:${xhttp_lport};\n        proxy_http_version 2;\n        proxy_set_header Host \$host;\n        proxy_set_header X-Real-IP \$remote_addr;\n        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto \$scheme;\n        proxy_set_header Upgrade \"\";\n        proxy_set_header Connection \"\";\n        proxy_buffering off;\n        proxy_cache off;\n        proxy_request_buffering off;\n        proxy_socket_keepalive on;\n        proxy_read_timeout 1h;\n        proxy_send_timeout 1h;\n        client_max_body_size 0;\n        client_body_timeout 1h;\n        access_log off;\n        error_log \/dev\/null crit;\n    }\n" "$nginxPath" || return 1
+    sed -i "/    location \/ {/i\\    # xray-xhttp-location\n    location ${xhttp_path} {\n        grpc_pass grpc:\/\/127.0.0.1:${xhttp_lport};\n        grpc_set_header Host \$host;\n        grpc_set_header X-Real-IP \$remote_addr;\n        grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;\n        grpc_read_timeout 600s;\n        grpc_send_timeout 600s;\n        client_max_body_size 0;\n        client_body_timeout 600s;\n        client_header_timeout 600s;\n        access_log off;\n        error_log \/dev\/null crit;\n    }\n" "$nginxPath" || return 1
 }
 
 # Удаляет location для XHTTP из текущего nginxPath
@@ -493,7 +493,8 @@ YUMEOF
             --with-stream_realip_module \
             --with-stream_geoip_module=dynamic \
             --with-stream_ssl_preread_module \
-            --with-pcre-jit
+            --with-pcre-jit \
+            --with-http_grpc_module
         make -j"$(nproc)"
         make install
     )
