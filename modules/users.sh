@@ -225,6 +225,7 @@ try:
         print(f'    network: xhttp')
         print(f'    alpn:')
         print(f'      - h2')
+        print(f'      - http/1.1')        
         print(f'    xhttp-opts:')
         print(f'      path: {path}')
         print(f'      mode: {mode}')
