@@ -101,7 +101,7 @@ _xhttpApplyActiveFeatures() {
         local warp_raw warp_rule
         warp_raw=$(getWarpStatusRaw || echo "OFF")
         if [ "$warp_raw" = "ACTIVE" ] && [ -f "$configPath" ]; then
-            warp_rule=$(jq -r '.routing.rules[] | select(.outboundTag=="warp") | if .port == "0-65535" then "Global" elif (.domain | length) > 0 then "Split" else "" end' "$configPath" | head -1)
+            warp_rule=$(_getTunnelMode "warp")
             case "$warp_rule" in
                 Global)
                     jq '(.routing.rules[] | select(.outboundTag == "warp")) |= (.port = "0-65535" | del(.domain))' \
@@ -110,6 +110,36 @@ _xhttpApplyActiveFeatures() {
                 Split) applyWarpDomains || true ;;
             esac
         fi
+    fi
+
+    # Tor
+    if systemctl is-active --quiet tor 2>/dev/null; then
+        local tor_rule
+        tor_rule=$(_getTunnelMode "tor")
+        case "$tor_rule" in
+            Global) toggleTorGlobal  || true ;;
+            Split)  applyTorDomains  || true ;;
+        esac
+    fi
+
+    # Psiphon
+    if systemctl is-active --quiet psiphon 2>/dev/null; then
+        local psiphon_rule
+        psiphon_rule=$(_getTunnelMode "psiphon")
+        case "$psiphon_rule" in
+            Global) togglePsiphonGlobal || true ;;
+            Split)  applyPsiphonDomains || true ;;
+        esac
+    fi
+
+    # Relay
+    if [ -f "$relayConfigFile" ] && [ -f "$configPath" ]; then
+        local relay_rule
+        relay_rule=$(_getTunnelMode "relay")
+        case "$relay_rule" in
+            Global) toggleRelayGlobal || true ;;
+            Split)  applyRelayDomains || true ;;
+        esac
     fi
 
     # Adblock
