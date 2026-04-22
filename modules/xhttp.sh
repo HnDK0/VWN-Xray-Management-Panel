@@ -370,6 +370,7 @@ removeXhttp() {
 
 rebuildXhttpConfigs() {
     local silent="${1:-}"
+    local skip_restart="${2:-false}"
     if [ ! -f "$xhttpConfigPath" ]; then
         [ "$silent" != "--silent" ] && echo "${red}XHTTP не установлен${reset}"
         return 1
@@ -404,7 +405,7 @@ rebuildXhttpConfigs() {
         nginx -t && systemctl reload nginx || true
     fi
 
-    systemctl restart xray-xhttp || true
+    [ "$skip_restart" != "true" ] && systemctl restart xray-xhttp || true
 
     echo "${green}XHTTP конфиги пересозданы${reset}"
 

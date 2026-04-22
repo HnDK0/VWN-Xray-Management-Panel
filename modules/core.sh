@@ -59,17 +59,17 @@ rebuildAllConfigs() {
     echo ""
 
     [ -f "$configPath" ] && {
-        rebuildXrayConfigs true true
+        rebuildXrayConfigs true true true
         echo ""
     }
 
     [ -f "$realityConfigPath" ] && {
-        rebuildRealityConfigs true
+        rebuildRealityConfigs true true
         echo ""
     }
 
     [ -f "$xhttpConfigPath" ] && {
-        rebuildXhttpConfigs --silent || true
+        rebuildXhttpConfigs --silent true || true
         echo ""
     }
 
@@ -89,7 +89,11 @@ rebuildAllConfigs() {
     echo ""
 
     echo -e "${cyan}Rebuilding subscription files...${reset}"
-    rebuildAllSubFiles || true
+    rebuildAllSubFiles true || true
+
+    # Финальный рестарт всех сервисов — один раз после того как все конфиги готовы
+    echo -e "${cyan}Restarting services...${reset}"
+    systemctl restart xray xray-reality xray-xhttp 2>/dev/null || true
 
     echo "${green}All configs rebuilt successfully.${reset}"
 }

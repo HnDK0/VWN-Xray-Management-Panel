@@ -383,6 +383,7 @@ removeReality() {
 
 rebuildRealityConfigs() {
     local skip_sub="${1:-false}"
+    local skip_restart="${2:-false}"
     if [ ! -f "$realityConfigPath" ]; then
         echo "${red}$(msg reality_not_installed)${reset}"; return 1;
     fi
@@ -411,7 +412,7 @@ rebuildRealityConfigs() {
     _adblockIsEnabled && _adblockApplyToConfig "$realityConfigPath" || true
     _privacyIsEnabled && _xrayDisableLog "$realityConfigPath" || true
 
-    systemctl restart xray-reality || true
+    [ "$skip_restart" != "true" ] && systemctl restart xray-reality || true
 
     $skip_sub || rebuildAllSubFiles || true
 

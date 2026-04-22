@@ -566,6 +566,7 @@ DYNEOF
 
 
 rebuildAllSubFiles() {
+    local skip_restart="${1:-false}"
     [ ! -f "$USERS_FILE" ] && return 0
     applyNginxSub || true
     local count=0
@@ -575,7 +576,7 @@ rebuildAllSubFiles() {
     done < "$USERS_FILE"
 
     # Перезапускаем сервисы ОДИН раз в самом конце а не на каждого пользователя
-    systemctl try-restart xray xray-reality xray-xhttp || true
+    [ "$skip_restart" != "true" ] && systemctl try-restart xray xray-reality xray-xhttp || true
 
     echo "${green}$(msg done) ($count)${reset}"
 }

@@ -657,6 +657,7 @@ updateXrayCore() {
 rebuildXrayConfigs() {
     local skip_sub="${1:-false}"
     local skip_nginx_reload="${2:-false}"
+    local skip_restart="${3:-false}"
     if [ ! -f "$configPath" ]; then
         echo "${red}$(msg xray_not_installed)${reset}"; return 1;
     fi
@@ -695,7 +696,7 @@ rebuildXrayConfigs() {
             echo "${red}$(msg nginx_syntax_err)${reset}"; return 1;
         }
     fi
-    systemctl restart xray || true
+    [ "$skip_restart" != "true" ] && systemctl restart xray || true
 
     $skip_sub || rebuildAllSubFiles || true
 
