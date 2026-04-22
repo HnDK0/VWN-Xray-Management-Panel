@@ -81,7 +81,7 @@ _injectXhttpLocation() {
         return 0
     fi
 
-    sed -i "/    location \/ {/i\\    # xray-xhttp-location\n    location ${xhttp_path} {\n        proxy_pass http:\/\/127.0.0.1:${xhttp_lport};\n        proxy_http_version 1.1;\n        proxy_set_header Host \$host;\n        proxy_set_header X-Real-IP \$remote_addr;\n        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto \$scheme;\n        proxy_set_header Upgrade \"\";\n        proxy_set_header Connection \"\";\n        proxy_buffering off;\n        proxy_cache off;\n        proxy_request_buffering off;\n        proxy_socket_keepalive on;\n        proxy_read_timeout 1h;\n        proxy_send_timeout 1h;\n        client_max_body_size 0;\n        client_body_timeout 1h;\n        access_log off;\n        error_log \/dev\/null crit;\n    }\n" "$nginxPath" || return 1
+    sed -i "/    location \/ {/i\\    # xray-xhttp-location\n    location ${xhttp_path} {\n        proxy_pass http:\/\/127.0.0.1:${xhttp_lport};\n        proxy_http_version 2;\n        proxy_set_header Host \$host;\n        proxy_set_header X-Real-IP \$remote_addr;\n        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto \$scheme;\n        proxy_set_header Upgrade \"\";\n        proxy_set_header Connection \"\";\n        proxy_buffering off;\n        proxy_cache off;\n        proxy_request_buffering off;\n        proxy_socket_keepalive on;\n        proxy_read_timeout 1h;\n        proxy_send_timeout 1h;\n        client_max_body_size 0;\n        client_body_timeout 1h;\n        access_log off;\n        error_log \/dev\/null crit;\n    }\n" "$nginxPath" || return 1
 }
 
 # Удаляет location для XHTTP из текущего nginxPath
@@ -357,3 +357,48 @@ applyNginxSub() {
 
 # Public alias for _manageSubAuth — called from menu.sh
 manageSubAuth() { _manageSubAuth "$@"; }
+# Установка nginx stable 1.30+ с nginx.org
+_installNginxStable() {
+    local cur_ver cur_minor cur_patch
+    cur_ver=$(nginx -v 2>&1 | grep -oP '\d+\.\d+\.\d+' | head -1)
+    cur_minor=$(echo "$cur_ver" | cut -d. -f2)
+    cur_patch=$(echo "$cur_ver" | cut -d. -f3)
+    # Требуем nginx >= 1.30.0 (stable, HTTP/2 upstream, keepalive по умолчанию)
+    if [ -n "$cur_ver" ]; then
+        if [ "${cur_minor:-0}" -gt 30 ] || \
+           { [ "${cur_minor:-0}" -eq 30 ] && [ "${cur_patch:-0}" -ge 0 ]; }; then
+            echo "info: nginx $cur_ver already sufficient (>= 1.30.0), skipping."
+            return 0
+        fi
+    fi
+    echo -e "${cyan}nginx ${cur_ver:-not installed} — installing stable 1.30+ from nginx.org...${reset}"
+    if command -v apt; then
+        installPackage gnupg2 || true
+        curl -fsSL https://nginx.org/keys/nginx_signing.key \
+            | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg
+        local codename
+        codename=$(lsb_release -cs 2>/dev/null || (. /etc/os-release && echo "${VERSION_CODENAME:-}"))
+        echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/stable/ubuntu ${codename} nginx" \
+            > /etc/apt/sources.list.d/nginx-stable.list
+        printf 'Package: *\nPin: origin nginx.org\nPin-Priority: 900\n' \
+            > /etc/apt/preferences.d/99nginx
+        apt-get update -qq
+        apt-get remove -y nginx nginx-common nginx-core || true
+        apt-get install -y nginx
+    elif command -v dnf || command -v yum; then
+        cat > /etc/yum.repos.d/nginx-stable.repo << 'YUMEOF'
+[nginx-stable]
+name=nginx stable repo
+baseurl=http://nginx.org/packages/stable/centos/$releasever/$basearch/
+gpgcheck=1
+enabled=1
+gpgkey=https://nginx.org/keys/nginx_signing.key
+module_hotfixes=true
+YUMEOF
+        ${PACKAGE_MANAGEMENT_INSTALL} nginx
+    fi
+    local new_ver
+    new_ver=$(nginx -v 2>&1 | grep -oP '\d+\.\d+\.\d+' | head -1)
+    echo "${green}nginx installed: $new_ver${reset}"
+}
+

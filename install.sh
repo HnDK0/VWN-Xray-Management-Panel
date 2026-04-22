@@ -1205,8 +1205,8 @@ _run_auto() {
     fi
 
     if ! $OPT_SKIP_WS; then
-        # _installNginxMainline из modules/menu.sh
-        soft_step "Nginx mainline" _installNginxMainline \
+        # _installNginxStable из modules/menu.sh
+        soft_step "Nginx stable 1.30+" _installNginxStable \
             || soft_step "Nginx (fallback)" installPackage nginx
     fi
 

@@ -18,54 +18,9 @@ prepareSoftware() {
     run_task "Установка Cloudflare WARP" installWarp
 }
 
-_installNginxMainline() {
-    local cur_ver cur_minor cur_patch
-    cur_ver=$(nginx -v 2>&1 | grep -oP '\d+\.\d+\.\d+' | head -1)
-    cur_minor=$(echo "$cur_ver" | cut -d. -f2)
-    cur_patch=$(echo "$cur_ver" | cut -d. -f3)
-    # Требуем nginx >= 1.25.1 (http2 on с ALPN появился в 1.25.1)
-    if [ -n "$cur_ver" ]; then
-        if [ "${cur_minor:-0}" -gt 25 ] || \
-           { [ "${cur_minor:-0}" -eq 25 ] && [ "${cur_patch:-0}" -ge 1 ]; } || \
-           [ "${cur_minor:-0}" -ge 26 ]; then
-            echo "info: nginx $cur_ver already sufficient (>= 1.25.1), skipping."
-            return 0
-        fi
-    fi
-    echo -e "${cyan}nginx ${cur_ver:-not installed} — installing mainline from nginx.org...${reset}"
-    if command -v apt; then
-        installPackage gnupg2 || true
-        curl -fsSL https://nginx.org/keys/nginx_signing.key \
-            | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg
-        local codename
-        codename=$(lsb_release -cs 2>/dev/null || (. /etc/os-release && echo "${VERSION_CODENAME:-}"))
-        echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/mainline/ubuntu ${codename} nginx" \
-            > /etc/apt/sources.list.d/nginx-mainline.list
-        printf 'Package: *\nPin: origin nginx.org\nPin-Priority: 900\n' \
-            > /etc/apt/preferences.d/99nginx
-        apt-get update -qq
-        apt-get remove -y nginx nginx-common nginx-core || true
-        apt-get install -y nginx
-    elif command -v dnf || command -v yum; then
-        cat > /etc/yum.repos.d/nginx-mainline.repo << 'YUMEOF'
-[nginx-mainline]
-name=nginx mainline repo
-baseurl=http://nginx.org/packages/mainline/centos/$releasever/$basearch/
-gpgcheck=1
-enabled=1
-gpgkey=https://nginx.org/keys/nginx_signing.key
-module_hotfixes=true
-YUMEOF
-        ${PACKAGE_MANAGEMENT_INSTALL} nginx
-    fi
-    local new_ver
-    new_ver=$(nginx -v 2>&1 | grep -oP '\d+\.\d+\.\d+' | head -1)
-    echo "${green}nginx installed: $new_ver${reset}"
-}
-
 prepareSoftwareWs() {
     prepareSoftware
-    run_task "Установка Nginx (mainline)" _installNginxMainline
+    run_task "Установка Nginx (stable 1.30+)" _installNginxStable
 
     echo "--- [3/3] $(msg menu_sep_sec) ---"
     run_task "Настройка UFW" "ufw allow 22/tcp && ufw allow 443/tcp && ufw allow 443/udp && echo 'y' | ufw enable"
