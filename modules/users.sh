@@ -229,7 +229,7 @@ try:
         print(f'      path: {path}')
         print(f'      mode: {mode}')
         print(f'      host: \"{xhost}\"')
-        print(f'      x-padding-bytes: \"0-0\"')
+        print(f'      x-padding-bytes: \"100-1000\"')
         print(f'      sc-max-each-post-bytes: \"1000000\"')
         print(f'      sc-min-posts-interval-ms: \"30\"')
     elif security == 'reality':

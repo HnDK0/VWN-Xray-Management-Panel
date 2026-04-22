@@ -23,7 +23,7 @@
                 "mode": "auto",
                 "extra": {
                     "noSSEHeader": false,
-                    "xPaddingBytes": "0-0",
+                    "xPaddingBytes": "100-1000",
                     "scMaxEachPostBytes": "1000000",
                     "scStreamUpServerSecs": "20-80"
                 }
