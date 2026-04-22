@@ -656,6 +656,7 @@ updateXrayCore() {
 
 rebuildXrayConfigs() {
     local skip_sub="${1:-false}"
+    local skip_nginx_reload="${2:-false}"
     if [ ! -f "$configPath" ]; then
         echo "${red}$(msg xray_not_installed)${reset}"; return 1;
     fi
@@ -682,10 +683,18 @@ rebuildXrayConfigs() {
     _adblockIsEnabled && _adblockApplyToConfig "$configPath" || true
     _privacyIsEnabled && _xrayDisableLog "$configPath" || true
 
-    echo -e "  ${cyan}[3/3] Restarting services...${reset}"
-    nginx -t && systemctl reload nginx || {
+    echo -e "  ${cyan}[3/3] Rebuilding nginx config and restarting services...${reset}"
+    local proxy_url
+    proxy_url=$(vwn_conf_get STUB_URL || true)
+    writeNginxConfigBase "$xrayPort" "$domain" "$proxy_url" "$wsPath" || {
         echo "${red}$(msg nginx_syntax_err)${reset}"; return 1;
     }
+
+    if [ "$skip_nginx_reload" != "true" ]; then
+        nginx -t && systemctl reload nginx || {
+            echo "${red}$(msg nginx_syntax_err)${reset}"; return 1;
+        }
+    fi
     systemctl restart xray || true
 
     $skip_sub || rebuildAllSubFiles || true

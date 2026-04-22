@@ -59,7 +59,7 @@ rebuildAllConfigs() {
     echo ""
 
     [ -f "$configPath" ] && {
-        rebuildXrayConfigs true
+        rebuildXrayConfigs true true
         echo ""
     }
 
@@ -72,6 +72,21 @@ rebuildAllConfigs() {
         rebuildXhttpConfigs --silent || true
         echo ""
     }
+
+    # Финальная пересборка nginx — один раз, с актуальными данными всех транспортов
+    echo -e "${cyan}Final nginx config rebuild...${reset}"
+    local _xray_port _ws_path _domain _proxy_url
+    _domain=$(vwn_conf_get DOMAIN || true)
+    _proxy_url=$(vwn_conf_get STUB_URL || true)
+    if [ -f "$configPath" ] && [ -n "$_domain" ]; then
+        _xray_port=$(jq -r '.inbounds[0].port // ""' "$configPath")
+        _ws_path=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // ""' "$configPath")
+        if [ -n "$_xray_port" ] && [ -n "$_ws_path" ]; then
+            writeNginxConfigBase "$_xray_port" "$_domain" "$_proxy_url" "$_ws_path" || true
+            nginx -t && systemctl reload nginx || echo "${red}$(msg nginx_syntax_err)${reset}"
+        fi
+    fi
+    echo ""
 
     echo -e "${cyan}Rebuilding subscription files...${reset}"
     rebuildAllSubFiles || true
