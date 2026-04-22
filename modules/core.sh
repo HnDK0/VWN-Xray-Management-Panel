@@ -69,7 +69,7 @@ rebuildAllConfigs() {
     }
 
     [ -f "$xhttpConfigPath" ] && {
-        rebuildXhttpConfigs true
+        rebuildXhttpConfigs --silent || true
         echo ""
     }
 

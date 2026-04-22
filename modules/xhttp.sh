@@ -49,7 +49,6 @@ writeXhttpConfig() {
     render_config "$VWN_CONFIG_DIR/xray_xhttp.json" "$xhttpConfigPath" \
         UUID   "$uuid"   \
         PATH   "$path"   \
-        DOMAIN "$domain" \
         PORT   "$lport"
 
     chown xray:xray "$xhttpConfigPath" || true
@@ -182,24 +181,36 @@ installXhttp() {
     echo -e "${cyan}Запись XHTTP конфигурации...${reset}"
     writeXhttpConfig "$xhttp_uuid" "$xhttp_path" "$xhttp_domain" "$xhttp_lport"
 
-    # Инжектируем location в nginx
-    echo -e "${cyan}Обновление nginx конфига...${reset}"
-    _injectXhttpLocation "$xhttp_path" "$xhttp_lport" || {
-        echo "${red}Ошибка обновления nginx конфига.${reset}"
-        return 1
-    }
-    nginx -t && systemctl reload nginx || {
-        echo "${red}nginx не принял конфиг. Откат...${reset}"
-        _removeXhttpLocation || true
-        nginx -t && systemctl reload nginx || true
-        return 1
-    }
-
-    # Сохраняем мета-данные до запуска сервиса — чтобы данные были даже при частичной ошибке
+    # Сохраняем мета-данные до обновления nginx — чтобы writeNginxConfigBase видел XHTTP_PATH/LPORT
     vwn_conf_set XHTTP_ENABLED "true"
     vwn_conf_set XHTTP_UUID    "$xhttp_uuid"
     vwn_conf_set XHTTP_PATH    "$xhttp_path"
     vwn_conf_set XHTTP_LPORT   "$xhttp_lport"
+
+    # Пересобираем nginx конфиг — writeNginxConfigBase сам подставит XHTTP location через плейсхолдер
+    echo -e "${cyan}Обновление nginx конфига...${reset}"
+    local xray_port ws_path proxy_url
+    xray_port=$(jq -r '.inbounds[0].port' "$configPath" 2>/dev/null || true)
+    ws_path=$(jq -r '.inbounds[0].streamSettings.wsSettings.path' "$configPath" 2>/dev/null || true)
+    proxy_url=$(vwn_conf_get STUB_URL || true)
+    writeNginxConfigBase "$xray_port" "$xhttp_domain" "$proxy_url" "$ws_path" || {
+        echo "${red}Ошибка обновления nginx конфига. Откат...${reset}"
+        vwn_conf_del XHTTP_ENABLED
+        vwn_conf_del XHTTP_UUID
+        vwn_conf_del XHTTP_PATH
+        vwn_conf_del XHTTP_LPORT
+        return 1
+    }
+    nginx -t && systemctl reload nginx || {
+        echo "${red}nginx не принял конфиг. Откат...${reset}"
+        vwn_conf_del XHTTP_ENABLED
+        vwn_conf_del XHTTP_UUID
+        vwn_conf_del XHTTP_PATH
+        vwn_conf_del XHTTP_LPORT
+        writeNginxConfigBase "$xray_port" "$xhttp_domain" "$proxy_url" "$ws_path" || true
+        nginx -t && systemctl reload nginx || true
+        return 1
+    }
 
     # Сервис
     setupXhttpService || return 1
@@ -273,7 +284,7 @@ showXhttpQR() {
     path_encoded=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe='/'))" "$path" || echo "$path")
 
     local link
-    link="vless://${uuid}@${domain}:443?security=tls&type=xhttp&path=${path_encoded}&mode=auto&alpn=h2&host=${domain}&sni=${domain}&fp=chrome&allowInsecure=0#${v_encoded_name}"
+    link="vless://${uuid}@${domain}:443?security=tls&type=xhttp&path=${path_encoded}&mode=stream-up&alpn=h2&host=${domain}&sni=${domain}&fp=chrome&allowInsecure=0#${v_encoded_name}"
 
     echo -e "${cyan}XHTTP ссылка:${reset}"
     echo ""
@@ -301,14 +312,23 @@ removeXhttp() {
 
     rm -f "$xhttpConfigPath"
 
-    # Убираем location из nginx
-    _removeXhttpLocation || true
-    nginx -t && systemctl reload nginx || true
-
+    # Сначала удаляем данные XHTTP из vwn.conf — тогда writeNginxConfigBase
+    # подставит пустую строку вместо __XHTTP_LOCATION__ и location исчезнет
     vwn_conf_del XHTTP_ENABLED
     vwn_conf_del XHTTP_UUID
     vwn_conf_del XHTTP_PATH
     vwn_conf_del XHTTP_LPORT
+
+    # Пересобираем nginx конфиг без XHTTP location
+    local xray_port ws_path domain proxy_url
+    xray_port=$(jq -r '.inbounds[0].port' "$configPath" 2>/dev/null || true)
+    ws_path=$(jq -r '.inbounds[0].streamSettings.wsSettings.path' "$configPath" 2>/dev/null || true)
+    domain=$(vwn_conf_get DOMAIN   || true)
+    proxy_url=$(vwn_conf_get STUB_URL || true)
+    if [ -n "$xray_port" ] && [ -n "$domain" ]; then
+        writeNginxConfigBase "$xray_port" "$domain" "$proxy_url" "$ws_path" || true
+    fi
+    nginx -t && systemctl reload nginx || true
 
     # Перегенерируем подписки
     rebuildAllSubFiles || true
@@ -321,7 +341,7 @@ removeXhttp() {
 rebuildXhttpConfigs() {
     local silent="${1:-}"
     if [ ! -f "$xhttpConfigPath" ]; then
-        [ -z "$silent" ] && echo "${red}XHTTP не установлен${reset}"
+        [ "$silent" != "--silent" ] && echo "${red}XHTTP не установлен${reset}"
         return 1
     fi
 
@@ -344,12 +364,22 @@ rebuildXhttpConfigs() {
     writeXhttpConfig "$xhttp_uuid" "$xhttp_path" "$xhttp_domain" "$xhttp_lport"
     _xhttpApplyActiveFeatures
 
+    # Пересобираем nginx чтобы обновить location с актуальным path/port
+    local xray_port ws_path proxy_url
+    xray_port=$(jq -r '.inbounds[0].port' "$configPath" 2>/dev/null || true)
+    ws_path=$(jq -r '.inbounds[0].streamSettings.wsSettings.path' "$configPath" 2>/dev/null || true)
+    proxy_url=$(vwn_conf_get STUB_URL || true)
+    if [ -n "$xray_port" ] && [ -n "$xhttp_domain" ]; then
+        writeNginxConfigBase "$xray_port" "$xhttp_domain" "$proxy_url" "$ws_path" || true
+        nginx -t && systemctl reload nginx || true
+    fi
+
     systemctl restart xray-xhttp || true
 
     echo "${green}XHTTP конфиги пересозданы${reset}"
 
     # Перегенерируем подписки только если вызвано напрямую, а не из rebuildAllConfigs
-    [ -z "$silent" ] && rebuildAllSubFiles || true
+    [ "$silent" != "--silent" ] && rebuildAllSubFiles || true
 }
 
 # ── Меню ──────────────────────────────────────────────────────────

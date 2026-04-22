@@ -45,22 +45,27 @@ writeNginxConfigBase() {
     # default.conf
     cp "$VWN_CONFIG_DIR/nginx_default.conf" /etc/nginx/conf.d/default.conf
 
-    # xray.conf — WS server block
-    render_config "$VWN_CONFIG_DIR/nginx_base.conf" "$nginxPath" \
-        DOMAIN "$domain" XRAY_PORT "$xrayPort" WS_PATH "$wsPath" \
-        PROXY_URL "$proxyUrl" PROXY_HOST "$proxy_host"
-
-    # Если XHTTP установлен — восстанавливаем его location
+    # Собираем XHTTP location-блок если XHTTP установлен
+    local xhttp_location=""
     local xhttp_path xhttp_lport
-    xhttp_path=$(vwn_conf_get XHTTP_PATH || true)
+    xhttp_path=$(vwn_conf_get XHTTP_PATH  || true)
     xhttp_lport=$(vwn_conf_get XHTTP_LPORT || true)
     if [ -n "$xhttp_path" ] && [ -n "$xhttp_lport" ] && [ -f "$xhttpConfigPath" ]; then
-        _injectXhttpLocation "$xhttp_path" "$xhttp_lport" || true
+        xhttp_location=$(_buildXhttpLocationBlock "$xhttp_path" "$xhttp_lport")
     fi
 
-    vwn_conf_set STUB_URL "$proxyUrl"
+    # xray.conf — WS server block
+    render_config "$VWN_CONFIG_DIR/nginx_base.conf" "$nginxPath" \
+        DOMAIN         "$domain"         \
+        XRAY_PORT      "$xrayPort"       \
+        WS_PATH        "$wsPath"         \
+        PROXY_URL      "$proxyUrl"       \
+        PROXY_HOST     "$proxy_host"     \
+        XHTTP_LOCATION "$xhttp_location"
+
+    vwn_conf_set STUB_URL   "$proxyUrl"
     vwn_conf_set NGINX_MODE "base"
-    vwn_conf_set DOMAIN    "$domain"
+    vwn_conf_set DOMAIN     "$domain"
 
     setupRealIpRestore
     _writeSubMapConf
@@ -69,24 +74,13 @@ writeNginxConfigBase() {
     _privacyIsEnabled && _nginxDisableAccessLog || true
 }
 
-# ── XHTTP: инжекция и удаление location в nginx конфиге ─────────────────────
-
-# Добавляет location для XHTTP в текущий nginxPath
-# Использование: _injectXhttpLocation "/path" "local_port"
-_injectXhttpLocation() {
+# ── XHTTP: генератор location-блока ──────────────────────────────
+# Использование: _buildXhttpLocationBlock "/path" "local_port"
+# Выводит готовый nginx location-блок для подстановки в шаблон
+_buildXhttpLocationBlock() {
     local xhttp_path="$1" xhttp_lport="$2"
-
-    # Не добавляем дважды
-    if grep -q "xray-xhttp-location" "$nginxPath" 2>/dev/null; then
-        return 0
-    fi
-
-    sed -i "/    location \/ {/i\\    # xray-xhttp-location\n    location ${xhttp_path} {\n        grpc_pass grpc:\/\/127.0.0.1:${xhttp_lport};\n        grpc_set_header Host \$host;\n        grpc_set_header X-Real-IP \$remote_addr;\n        grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;\n        grpc_read_timeout 600s;\n        grpc_send_timeout 600s;\n        client_max_body_size 0;\n        client_body_timeout 600s;\n        access_log off;\n        error_log \/dev\/null crit;\n    }\n" "$nginxPath" || return 1
-}
-
-# Удаляет location для XHTTP из текущего nginxPath
-_removeXhttpLocation() {
-    sed -i '/# xray-xhttp-location/{N;:loop;N;/\n    }$/!b loop;d}' "$nginxPath" || true
+    printf '    # xray-xhttp\n    location %s {\n        client_max_body_size 0;\n        grpc_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        client_body_timeout 5m;\n        grpc_read_timeout 315;\n        grpc_send_timeout 5m;\n        grpc_pass grpc://127.0.0.1:%s;\n        access_log off;\n        error_log /dev/null crit;\n    }\n' \
+        "$xhttp_path" "$xhttp_lport"
 }
 
 # ── Утилиты ──────────────────────────────────────────────────────────────────

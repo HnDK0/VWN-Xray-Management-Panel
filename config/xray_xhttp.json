@@ -20,19 +20,13 @@
             "security": "none",
             "xhttpSettings": {
                 "path": "__PATH__",
-                "host": "__DOMAIN__",
                 "mode": "auto",
                 "extra": {
-                    "scMaxEachPostBytes": "100000-1000000",
-                    "xPaddingBytes": "100-1000"
+                    "noSSEHeader": false,
+                    "xPaddingBytes": "0-0",
+                    "scMaxEachPostBytes": "1000000",
+                    "scStreamUpServerSecs": "20-80"
                 }
-            },
-            "sockopt": {
-                "tcpFastOpen": true,
-                "tcpNoDelay": true,
-                "tcpKeepAliveIdle": 60,
-                "tcpKeepAliveInterval": 10,
-                "tcpKeepAliveRetry": 3
             }
         },
         "sniffing": {
