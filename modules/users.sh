@@ -148,15 +148,16 @@ buildUserSubFile() {
     fi
 
     if [ -f "$xhttpConfigPath" ]; then
-        local x_domain x_uuid x_path x_enc_path x_name x_encoded_name
+        local x_domain x_path x_enc_path x_name x_encoded_name
         x_domain=$(vwn_conf_get DOMAIN || true)
-        x_uuid=$(vwn_conf_get XHTTP_UUID || true)
         x_path=$(vwn_conf_get XHTTP_PATH || true)
-        if [ -n "$x_domain" ] && [ -n "$x_uuid" ] && [ -n "$x_path" ]; then
+        # UUID пользователя одинаков для всех транспортов (WS, XHTTP, Reality)
+        # connect_host — CDN-адрес подключения (может отличаться от домена)
+        if [ -n "$x_domain" ] && [ -n "$uuid" ] && [ -n "$x_path" ]; then
             x_enc_path=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$x_path" || echo "$x_path")
             x_name=$(_getConfigName "XHTTP" "$label" "$server_ip")
             x_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$x_name" || echo "$x_name")
-            lines+="vless://${x_uuid}@${connect_host}:443?security=tls&type=xhttp&path=${x_enc_path}&mode=packet-up&alpn=h2%2Chttp%2F1.1&host=${x_domain}&sni=${x_domain}&fp=chrome&allowInsecure=0#${x_encoded_name}"$'\n'
+            lines+="vless://${uuid}@${connect_host}:443?security=tls&type=xhttp&path=${x_enc_path}&mode=auto&alpn=h2&host=${x_domain}&sni=${x_domain}&fp=chrome&allowInsecure=0#${x_encoded_name}"$'\n'
         fi
     fi
 
@@ -211,7 +212,8 @@ try:
     elif net == 'xhttp':
         path = urllib.parse.unquote(params.get('path', '/'))
         sni = params.get('sni', host)
-        mode = params.get('mode', 'packet-up')
+        xhost = params.get('host', sni)
+        mode = params.get('mode', 'auto')
         print(f'  - name: \"{name}\"')
         print(f'    type: vless')
         print(f'    server: {host}')
@@ -226,6 +228,10 @@ try:
         print(f'    xhttp-opts:')
         print(f'      path: {path}')
         print(f'      mode: {mode}')
+        print(f'      host: \"{xhost}\"')
+        print(f'      reuse-settings:')
+        print(f'        max-concurrency: 0')
+        print(f'        max-connections: 1')
     elif security == 'reality':
         sni = params.get('sni', '')
         pbk = params.get('pbk', '')

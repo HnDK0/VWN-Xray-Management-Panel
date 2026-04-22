@@ -21,7 +21,12 @@
             "xhttpSettings": {
                 "path": "__PATH__",
                 "host": "__DOMAIN__",
-                "mode": "packet-up"
+                "mode": "auto",
+                "extra": {
+                    "noSSEHeader": true,
+                    "scMaxEachPostBytes": "100000-1000000",
+                    "xPaddingBytes": "100-1000"
+                }
             },
             "sockopt": {
                 "tcpFastOpen": true,
