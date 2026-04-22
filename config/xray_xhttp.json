@@ -1,6 +1,6 @@
 {
     "log": {
-        "loglevel": "error",
+        "loglevel": "warning",
         "error": "/var/log/xray/xhttp-error.log"
     },
     "dns": {

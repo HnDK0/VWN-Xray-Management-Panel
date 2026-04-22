@@ -71,11 +71,9 @@ _systemdDisableOutput() {
     local svc="$1"
     local override="/etc/systemd/system/${svc}.service.d/no-journal.conf"
     mkdir -p "$(dirname "$override")"
-    cat > "$override" << 'EOF'
-[Service]
-StandardOutput=null
-StandardError=null
-EOF
+    # printf вместо heredoc: гарантирует LF-окончания в файле override
+    # (heredoc с CRLF-скрипта пишет \r\n, systemd игнорирует такой override)
+    printf '[Service]\nStandardOutput=null\nStandardError=null\n' > "$override"
 }
 
 _systemdRestoreOutput() {

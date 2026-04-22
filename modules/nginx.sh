@@ -64,6 +64,9 @@ writeNginxConfigBase() {
 
     setupRealIpRestore
     _writeSubMapConf
+
+    # Восстанавливаем privacy после перезаписи nginx-конфига
+    _privacyIsEnabled && _nginxDisableAccessLog || true
 }
 
 # ── XHTTP: инжекция и удаление location в nginx конфиге ─────────────────────
