@@ -358,12 +358,17 @@ applyNginxSub() {
 # Public alias for _manageSubAuth — called from menu.sh
 manageSubAuth() { _manageSubAuth "$@"; }
 # Установка nginx stable 1.30+ с nginx.org
+# Стратегия: сначала пробуем apt (nginx.org repo), если там < 1.30 — собираем из исходников.
+# Системный nginx из Ubuntu-репо никогда не используется.
 _installNginxStable() {
+    local NGINX_TARGET_VER="1.30.0"
+    local NGINX_SRC_URL="https://nginx.org/download/nginx-${NGINX_TARGET_VER}.tar.gz"
+
     local cur_ver cur_minor cur_patch
     cur_ver=$(nginx -v 2>&1 | grep -oP '\d+\.\d+\.\d+' | head -1)
     cur_minor=$(echo "$cur_ver" | cut -d. -f2)
     cur_patch=$(echo "$cur_ver" | cut -d. -f3)
-    # Требуем nginx >= 1.30.0 (stable, HTTP/2 upstream, keepalive по умолчанию)
+    # Проверяем: уже установлен >= 1.30.0?
     if [ -n "$cur_ver" ]; then
         if [ "${cur_minor:-0}" -gt 30 ] || \
            { [ "${cur_minor:-0}" -eq 30 ] && [ "${cur_patch:-0}" -ge 0 ]; }; then
@@ -371,34 +376,151 @@ _installNginxStable() {
             return 0
         fi
     fi
+
     echo -e "${cyan}nginx ${cur_ver:-not installed} — installing stable 1.30+ from nginx.org...${reset}"
-    if command -v apt; then
+
+    # ── Шаг 1: пробуем apt из официального репо nginx.org ────────────────────
+    if command -v apt-get > /dev/null 2>&1; then
         installPackage gnupg2 || true
+        rm -f /usr/share/keyrings/nginx-archive-keyring.gpg
         curl -fsSL https://nginx.org/keys/nginx_signing.key \
             | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg
         local codename
         codename=$(lsb_release -cs 2>/dev/null || (. /etc/os-release && echo "${VERSION_CODENAME:-}"))
-        echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/stable/ubuntu ${codename} nginx" \
+        echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] https://nginx.org/packages/ubuntu ${codename} nginx" \
             > /etc/apt/sources.list.d/nginx-stable.list
-        printf 'Package: *\nPin: origin nginx.org\nPin-Priority: 900\n' \
+        printf 'Package: *\nPin: origin nginx.org\nPin: release o=nginx\nPin-Priority: 900\n' \
             > /etc/apt/preferences.d/99nginx
-        apt-get update -qq
-        apt-get remove -y nginx nginx-common nginx-core || true
-        apt-get install -y nginx
-    elif command -v dnf || command -v yum; then
+        local _update_out
+        _update_out=$(apt-get update 2>&1)
+        if echo "$_update_out" | grep -q "nginx.org.*Release.*does not have"; then
+            echo -e "${yellow}nginx.org repo недоступен для ${codename}, переходим к сборке из исходников...${reset}"
+        else
+            apt-get remove -y nginx nginx-common nginx-core 2>/dev/null || true
+            local _apt_rc=0
+            apt-get install -y nginx || _apt_rc=$?
+            if [ "$_apt_rc" -eq 0 ]; then
+                local apt_ver apt_minor
+                apt_ver=$(nginx -v 2>&1 | grep -oP '\d+\.\d+\.\d+' | head -1)
+                apt_minor=$(echo "$apt_ver" | cut -d. -f2)
+                if [ "${apt_minor:-0}" -ge 30 ]; then
+                    echo -e "${green}nginx $apt_ver установлен через apt из nginx.org.${reset}"
+                    return 0
+                fi
+                echo -e "${yellow}apt дал nginx $apt_ver (< 1.30.0) — собираем из исходников...${reset}"
+                apt-get remove -y nginx nginx-common nginx-core 2>/dev/null || true
+            else
+                echo -e "${yellow}apt install завершился с ошибкой (rc=${_apt_rc}) — собираем из исходников...${reset}"
+                apt-get remove -y nginx nginx-common nginx-core 2>/dev/null || true
+            fi
+        fi
+    elif command -v dnf > /dev/null 2>&1 || command -v yum > /dev/null 2>&1; then
         cat > /etc/yum.repos.d/nginx-stable.repo << 'YUMEOF'
 [nginx-stable]
 name=nginx stable repo
-baseurl=http://nginx.org/packages/stable/centos/$releasever/$basearch/
+baseurl=https://nginx.org/packages/centos/$releasever/$basearch/
 gpgcheck=1
 enabled=1
 gpgkey=https://nginx.org/keys/nginx_signing.key
 module_hotfixes=true
 YUMEOF
-        ${PACKAGE_MANAGEMENT_INSTALL} nginx
+        local _yum_rc=0
+        ${PACKAGE_MANAGEMENT_INSTALL} nginx || _yum_rc=$?
+        if [ "$_yum_rc" -eq 0 ]; then
+            local apt_ver apt_minor
+            apt_ver=$(nginx -v 2>&1 | grep -oP '\d+\.\d+\.\d+' | head -1)
+            apt_minor=$(echo "$apt_ver" | cut -d. -f2)
+            if [ "${apt_minor:-0}" -ge 30 ]; then
+                echo -e "${green}nginx $apt_ver установлен через пакетный менеджер.${reset}"
+                return 0
+            fi
+        fi
     fi
-    local new_ver
+
+    # ── Шаг 2: сборка из исходников nginx-1.30.0 ─────────────────────────────
+    echo -e "${cyan}Сборка nginx ${NGINX_TARGET_VER} из исходников...${reset}"
+
+    # Зависимости для сборки
+    apt-get install -y --no-install-recommends \
+        build-essential libpcre2-dev zlib1g-dev libssl-dev libgd-dev \
+        libxslt1-dev libgeoip-dev libperl-dev || true
+
+    local build_dir
+    build_dir=$(mktemp -d)
+    curl -fsSL "$NGINX_SRC_URL" | tar -xz -C "$build_dir" --strip-components=1
+
+    (
+        cd "$build_dir"
+        ./configure \
+            --prefix=/etc/nginx \
+            --sbin-path=/usr/sbin/nginx \
+            --modules-path=/usr/lib/nginx/modules \
+            --conf-path=/etc/nginx/nginx.conf \
+            --error-log-path=/var/log/nginx/error.log \
+            --http-log-path=/var/log/nginx/access.log \
+            --pid-path=/run/nginx.pid \
+            --lock-path=/run/nginx.lock \
+            --http-client-body-temp-path=/var/cache/nginx/client_temp \
+            --http-proxy-temp-path=/var/cache/nginx/proxy_temp \
+            --http-fastcgi-temp-path=/var/cache/nginx/fastcgi_temp \
+            --http-uwsgi-temp-path=/var/cache/nginx/uwsgi_temp \
+            --http-scgi-temp-path=/var/cache/nginx/scgi_temp \
+            --user=www-data \
+            --group=www-data \
+            --with-compat \
+            --with-threads \
+            --with-http_ssl_module \
+            --with-http_v2_module \
+            --with-http_realip_module \
+            --with-http_addition_module \
+            --with-http_xslt_module=dynamic \
+            --with-http_image_filter_module=dynamic \
+            --with-http_geoip_module=dynamic \
+            --with-http_sub_module \
+            --with-http_dav_module \
+            --with-http_gunzip_module \
+            --with-http_gzip_static_module \
+            --with-http_auth_request_module \
+            --with-http_random_index_module \
+            --with-http_secure_link_module \
+            --with-http_slice_module \
+            --with-http_stub_status_module \
+            --with-http_perl_module=dynamic \
+            --with-mail=dynamic \
+            --with-mail_ssl_module \
+            --with-stream \
+            --with-stream_ssl_module \
+            --with-stream_realip_module \
+            --with-stream_geoip_module=dynamic \
+            --with-stream_ssl_preread_module \
+            --with-pcre-jit
+        make -j"$(nproc)"
+        make install
+    )
+
+    rm -rf "$build_dir"
+
+    # Создаём нужные директории
+    mkdir -p /var/cache/nginx/client_temp \
+             /var/cache/nginx/proxy_temp \
+             /var/cache/nginx/fastcgi_temp \
+             /var/cache/nginx/uwsgi_temp \
+             /var/cache/nginx/scgi_temp
+    chown -R www-data:www-data /var/cache/nginx || true
+
+    # Финальная проверка
+    local new_ver new_minor
     new_ver=$(nginx -v 2>&1 | grep -oP '\d+\.\d+\.\d+' | head -1)
-    echo "${green}nginx installed: $new_ver${reset}"
+    new_minor=$(echo "$new_ver" | cut -d. -f2)
+    if [ -z "$new_ver" ]; then
+        echo -e "${red}ОШИБКА: nginx не найден после сборки.${reset}" >&2
+        return 1
+    fi
+    if [ "${new_minor:-0}" -lt 30 ]; then
+        echo -e "${red}ОШИБКА: собрана версия $new_ver (< 1.30.0).${reset}" >&2
+        return 1
+    fi
+    echo -e "${green}nginx $new_ver собран и установлен из исходников.${reset}"
+    return 0
 }
 

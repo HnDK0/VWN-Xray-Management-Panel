@@ -1198,16 +1198,17 @@ _run_auto() {
         -o Dpkg::Options::="--force-confold" \
         install "${base_pkgs[@]}" || true
 
+    # Nginx stable 1.30+ устанавливается здесь — до xray — вместе с остальными пакетами.
+    # Системный nginx (Ubuntu apt) НЕ является fallback: если nginx.org недоступен
+    # или ставится версия < 1.30, установка прерывается с ошибкой.
+    if ! $OPT_SKIP_WS; then
+        step "Nginx stable 1.30+" _installNginxStable
+    fi
+
     step "Xray-core" installXray
 
     if ! $OPT_NO_WARP; then
         soft_step "Cloudflare WARP" installWarp
-    fi
-
-    if ! $OPT_SKIP_WS; then
-        # _installNginxStable из modules/menu.sh
-        soft_step "Nginx stable 1.30+" _installNginxStable \
-            || soft_step "Nginx (fallback)" installPackage nginx
     fi
 
     # ── WS ────────────────────────────────────────────────────────
