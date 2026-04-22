@@ -35,8 +35,10 @@ _xrayRestoreLog() {
     local cfg="$1"
     local errlog="$2"
     [ -f "$cfg" ] || return 0
+    # Примечание: access=none — в xray это норма (используйте отдельный файл если нужен access-лог).
+    # loglevel → warning (соответствует шаблону xray_ws.json, а не error)
     jq --arg e "$errlog" \
-        '.log.access = "none" | .log.loglevel = "error" | .log.error = $e' \
+        '.log.access = "none" | .log.loglevel = "warning" | .log.error = $e' \
         "$cfg" > "${cfg}.tmp" && mv "${cfg}.tmp" "$cfg"
 }
 
@@ -51,14 +53,16 @@ _xrayRestoreLog() {
 
 _nginxDisableAccessLog() {
     [ -f "$nginxPath" ] || return 0
-    # Меняем access_log /var/log/nginx/access.log → access_log off
-    sed -i 's|access_log\s\+/var/log/nginx/access\.log.*|access_log off;|g' "$nginxPath"
-    # Для location-блоков — уже стоит access_log off (в wsSettings location)
+    # Меняем access_log /var/log/nginx/access.log → access_log off; # privacy_mode
+    # Маркер # privacy_mode нужен чтобы при восстановлении не тронуть
+    # уже существующие "access_log off;" в location-блоках (WS, XHTTP)
+    sed -i 's|access_log\s\+/var/log/nginx/access\.log.*|access_log off; # privacy_mode|g' "$nginxPath"
 }
 
 _nginxRestoreAccessLog() {
     [ -f "$nginxPath" ] || return 0
-    sed -i 's|access_log\s\+off;|access_log /var/log/nginx/access.log;|g' "$nginxPath"
+    # Восстанавливаем только строку с маркером # privacy_mode, не трогая location-блоки
+    sed -i 's|access_log off; # privacy_mode|access_log /var/log/nginx/access.log;|g' "$nginxPath"
 }
 
 # ── journald: подавление stdout сервисов ──────────────────────────
