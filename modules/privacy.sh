@@ -9,9 +9,47 @@ _PRIVACY_FLAG="$VWN_CONF"   # хранится в vwn.conf как privacy_mode=1
 
 # ── Вспомогательные функции ──────────────────────────────────────
 
-# Текущий статус: 1 = приватный режим включён
+# Проверяет реальное состояние компонентов (не только флаг)
+_privacyIsReallyEnabled() {
+    # Считаем режим включённым если хотя бы 3 из 4 компонентов активны:
+    # 1. Xray WS loglevel=none
+    # 2. Nginx access_log off
+    # 3. journald override присутствует
+    # 4. tmpfs активен
+    local score=0
+
+    if [ -f "$configPath" ]; then
+        local lvl; lvl=$(jq -r '.log.loglevel // ""' "$configPath" 2>/dev/null)
+        [ "$lvl" = "none" ] && (( score++ ))
+    fi
+
+    if [ -f "$nginxPath" ]; then
+        grep -qE '^\s*access_log\s+off' "$nginxPath" && (( score++ ))
+    fi
+
+    [ -f "/etc/systemd/system/xray.service.d/no-journal.conf" ] && (( score++ ))
+
+    systemctl is-active --quiet var-log-xray.mount 2>/dev/null && (( score++ ))
+
+    [ "$score" -ge 3 ]
+}
+
+# Текущий статус: читает флаг, но синхронизирует его с реальным состоянием
 _privacyIsEnabled() {
-    [ "$(vwn_conf_get privacy_mode)" = "1" ]
+    local flag; flag="$(vwn_conf_get privacy_mode)"
+
+    # Автокоррекция: если компоненты включены, а флаг = 0 — исправляем
+    if _privacyIsReallyEnabled; then
+        if [ "$flag" != "1" ]; then
+            vwn_conf_set privacy_mode 1
+        fi
+        return 0
+    else
+        if [ "$flag" = "1" ]; then
+            vwn_conf_set privacy_mode 0
+        fi
+        return 1
+    fi
 }
 
 getPrivacyStatus() {
