@@ -220,7 +220,7 @@ enablePrivacyMode() {
 disablePrivacyMode() {
     echo -e "${yellow}$(msg privacy_disabling)${reset}"
 
-    # 1. Xray конфиги — возвращаем error-логи
+    # 1. Xray конфиги — возвращаем warning-логи
     _xrayRestoreLog "$configPath" "/var/log/xray/error.log"
     _xrayRestoreLog "$realityConfigPath" "/var/log/xray/reality-error.log"
     _xrayRestoreLog "$xhttpConfigPath" "/var/log/xray/xhttp-error.log"
@@ -234,14 +234,20 @@ disablePrivacyMode() {
         _systemdRestoreOutput "$svc"
     done
     systemctl daemon-reload
-    systemctl restart xray || true
-    systemctl restart xray-reality || true
-    systemctl restart xray-xhttp || true
 
-    # 4. Убираем tmpfs
+    # 4. Останавливаем xray перед размонтированием tmpfs
+    # (если убрать tmpfs под работающим xray — xray падает и рвёт SSH-сессию)
+    systemctl stop xray xray-reality xray-xhttp 2>/dev/null || true
+
+    # 5. Убираем tmpfs когда xray не держит файлы
     _disableXrayLogTmpfs
 
-    # 5. Снимаем флаг
+    # 6. Запускаем снова
+    systemctl start xray || true
+    systemctl start xray-reality || true
+    systemctl start xray-xhttp || true
+
+    # 7. Снимаем флаг
     vwn_conf_set privacy_mode 0
 
     echo "${green}$(msg privacy_disabled)${reset}"
@@ -333,7 +339,13 @@ managePrivacy() {
         case $choice in
             1)
                 if _privacyIsEnabled; then
-                    echo -e "${yellow}$(msg privacy_already_on)${reset}"
+                    echo -e "${yellow}$(msg privacy_already_on) Переприменить? (y/n)${reset}"
+                    read -r confirm
+                    if [[ "$confirm" == "y" ]]; then
+                        # Снимаем флаг чтобы обойти блокировку и переприменить
+                        vwn_conf_set privacy_mode 0
+                        enablePrivacyMode
+                    fi
                 else
                     echo -e "${yellow}$(msg privacy_enable_confirm) $(msg yes_no)${reset}"
                     read -r confirm
