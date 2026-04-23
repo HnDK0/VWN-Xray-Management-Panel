@@ -20,7 +20,13 @@
             "security": "none",
             "xhttpSettings": {
                 "path": "__PATH__",
-                "mode": "auto"
+                "mode": "packet-up"
+            },
+            "sockopt": {
+                "tcpFastOpen":         true,
+                "tcpKeepAliveIdle":    60,
+                "tcpKeepAliveInterval": 10,
+                "tcpCongestion":       "bbr"
             }
         },
         "sniffing": {

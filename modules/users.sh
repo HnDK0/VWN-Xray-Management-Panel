@@ -157,7 +157,7 @@ buildUserSubFile() {
             x_enc_path=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$x_path" || echo "$x_path")
             x_name=$(_getConfigName "XHTTP" "$label" "$server_ip")
             x_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$x_name" || echo "$x_name")
-            lines+="vless://${uuid}@${connect_host}:443?security=tls&type=xhttp&path=${x_enc_path}&mode=stream-up&alpn=h2&host=${x_domain}&sni=${x_domain}&fp=chrome&allowInsecure=0#${x_encoded_name}"$'\n'
+            lines+="vless://${uuid}@${connect_host}:443?security=tls&type=xhttp&path=${x_enc_path}&mode=packet-up&alpn=h2&host=${x_domain}&sni=${x_domain}&fp=chrome&allowInsecure=0#${x_encoded_name}"$'\n'
         fi
     fi
 
@@ -213,7 +213,7 @@ try:
         path = urllib.parse.unquote(params.get('path', '/'))
         sni = params.get('sni', host)
         xhost = params.get('host', sni)
-        mode = params.get('mode', 'stream-up')
+        mode = params.get('mode', 'packet-up')
         print(f'  - name: \"{name}\"')
         print(f'    type: vless')
         print(f'    server: {host}')

@@ -29,11 +29,10 @@
                 "shortIds": ["__SHORTID__"]
             },
             "sockopt": {
-                "tcpFastOpen": true,
-                "tcpNoDelay": true,
-                "tcpKeepAliveIdle": 60,
+                "tcpFastOpen":          true,
+                "tcpKeepAliveIdle":     60,
                 "tcpKeepAliveInterval": 10,
-                "tcpKeepAliveRetry": 3
+                "tcpCongestion":        "bbr"
             }
         },
         "sniffing": {

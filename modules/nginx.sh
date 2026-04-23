@@ -76,11 +76,41 @@ writeNginxConfigBase() {
 
 # ── XHTTP: генератор location-блока ──────────────────────────────
 # Использование: _buildXhttpLocationBlock "/path" "local_port"
-# Выводит готовый nginx location-блок для подстановки в шаблон
+# Выводит готовый nginx location-блок для подстановки в шаблон.
+# Использует proxy_pass (HTTP/1.1 chunked) — не grpc_pass,
+# Оптимизировано под режим packet-up: буферизация полностью отключена.
 _buildXhttpLocationBlock() {
     local xhttp_path="$1" xhttp_lport="$2"
-    printf '    # xray-xhttp\n    location %s {\n        client_max_body_size 0;\n        grpc_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        client_body_timeout 5m;\n        grpc_read_timeout 315;\n        grpc_send_timeout 5m;\n        grpc_pass grpc://127.0.0.1:%s;\n        access_log off;\n        error_log /dev/null crit;\n    }\n' \
-        "$xhttp_path" "$xhttp_lport"
+    cat << NGINX_EOF
+    # xray-xhttp (packet-up)
+    location ${xhttp_path} {
+        proxy_pass              http://127.0.0.1:${xhttp_lport};
+        proxy_http_version      1.1;
+
+        proxy_set_header        Host \$host;
+        proxy_set_header        X-Real-IP \$remote_addr;
+        proxy_set_header        X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header        X-Forwarded-Proto \$scheme;
+
+        # Отключаем буферизацию — критично для packet-up:
+        # каждый пакет должен уходить немедленно, без накопления.
+        proxy_buffering         off;
+        proxy_request_buffering off;
+        proxy_cache             off;
+
+        # Без ограничения размера тела — XHTTP гоняет поток данных,
+        # client_max_body_size обрежет соединение на больших объёмах.
+        client_max_body_size    0;
+
+        proxy_connect_timeout   10s;
+        proxy_read_timeout      300s;
+        proxy_send_timeout      300s;
+        proxy_socket_keepalive  on;
+
+        access_log  off;
+        error_log   /dev/null crit;
+    }
+NGINX_EOF
 }
 
 # ── Утилиты ──────────────────────────────────────────────────────────────────
