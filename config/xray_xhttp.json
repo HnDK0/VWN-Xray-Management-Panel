@@ -20,7 +20,7 @@
             "security": "none",
             "xhttpSettings": {
                 "path": "__PATH__",
-                "mode": "stream-one"
+                "mode": "auto"
             },
             "sockopt": {
                 "tcpFastOpen":         true,

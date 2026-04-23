@@ -157,7 +157,7 @@ buildUserSubFile() {
             x_enc_path=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe='/'))" "$x_path" || echo "$x_path")
             x_name=$(_getConfigName "XHTTP" "$label" "$server_ip")
             x_encoded_name=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$x_name" || echo "$x_name")
-            lines+="vless://${uuid}@${connect_host}:443?security=tls&type=xhttp&path=${x_enc_path}&mode=stream-one&alpn=http%2F1.1&host=${x_domain}&sni=${x_domain}&fp=chrome&allowInsecure=0#${x_encoded_name}"$'\n'
+            lines+="vless://${uuid}@${connect_host}:443?security=tls&type=xhttp&path=${x_enc_path}&mode=auto&alpn=h2&host=${x_domain}&sni=${x_domain}&fp=chrome&allowInsecure=0#${x_encoded_name}"$'\n'
         fi
     fi
 
@@ -205,6 +205,8 @@ try:
         print(f'    servername: {sni}')
         print(f'    client-fingerprint: chrome')
         print(f'    network: ws')
+        print(f'    alpn:')
+        print(f'      - http/1.1')
         print(f'    ws-opts:')
         print(f'      path: {path}')
         print(f'      headers:')
@@ -213,7 +215,7 @@ try:
         path = urllib.parse.unquote(params.get('path', '/'))
         sni = params.get('sni', host)
         xhost = params.get('host', sni)
-        mode = params.get('mode', 'stream-one')
+        mode = params.get('mode', 'auto')
         print(f'  - name: \"{name}\"')
         print(f'    type: vless')
         print(f'    server: {host}')
@@ -224,7 +226,7 @@ try:
         print(f'    client-fingerprint: chrome')
         print(f'    network: xhttp')
         print(f'    alpn:')
-        print(f'      - http/1.1')
+        print(f'      - h2')
         print(f'    xhttp-opts:')
         print(f'      path: {path}')
         print(f'      mode: {mode}')
