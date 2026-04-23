@@ -20,18 +20,7 @@
             "security": "none",
             "xhttpSettings": {
                 "path": "__PATH__",
-                "mode": "auto",
-                "xPaddingObfsMode": true,
-                "xPaddingMethod": "tokenish",
-                "xPaddingPlacement": "queryInHeader",
-                "xPaddingHeader": "X-Cache",
-                "xPaddingKey": "_dc",
-                "extra": {
-                    "noSSEHeader": false,
-                    "xPaddingBytes": "100-1000",
-                    "scMaxEachPostBytes": "1000000",
-                    "scStreamUpServerSecs": "20-80"
-                }
+                "mode": "auto"
             }
         },
         "sniffing": {
