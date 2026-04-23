@@ -621,6 +621,25 @@ getConnectHost() {
     fi
 }
 
+_validateIp() {
+    local ip="$1"
+    # IPv4
+    if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        local IFS='.'
+        local -a octets=($ip)
+        local o
+        for o in "${octets[@]}"; do
+            [ "$o" -le 255 ] || return 1
+        done
+        return 0
+    fi
+    # IPv6 — базовая проверка формата (содержит двоеточия, допустимые символы)
+    if [[ "$ip" =~ ^[0-9a-fA-F:]+$ && "$ip" == *:* ]]; then
+        return 0
+    fi
+    return 1
+}
+
 modifyConnectHost() {
     local current
     current=$(cat "$CONNECT_HOST_FILE" | tr -d '[:space:]')
@@ -631,15 +650,21 @@ modifyConnectHost() {
         echo "Текущий адрес подключения: ${green}${xray_userDomain}${reset} (основной домен)"
     fi
     echo ""
-    echo "Введите CDN домен для подключения (Enter = сбросить на основной домен):"
+    echo "Введите CDN домен или IP для подключения (Enter = сбросить на основной домен):"
     read -rp "> " new_host
     if [ -z "$new_host" ]; then
         rm -f "$CONNECT_HOST_FILE"
         echo "${green}Адрес подключения сброшен на основной домен${reset}"
     else
         local validated
-        if ! validated=$(_validateDomain "$new_host"); then
-            echo "${red}$(msg invalid): '$new_host'${reset}"; return 1
+        # Сначала пробуем как домен, потом как IP
+        if validated=$(_validateDomain "$new_host" 2>/dev/null); then
+            : # домен валиден
+        elif _validateIp "$new_host" 2>/dev/null; then
+            validated="$new_host"
+        else
+            echo "${red}$(msg invalid): '$new_host' — укажите корректный домен или IP-адрес${reset}"
+            return 1
         fi
         echo "$validated" > "$CONNECT_HOST_FILE"
         echo "${green}Адрес подключения: $validated${reset}"
