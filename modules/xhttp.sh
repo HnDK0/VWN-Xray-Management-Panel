@@ -314,7 +314,7 @@ showXhttpQR() {
     path_encoded=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe='/'))" "$path" || echo "$path")
 
     local link
-    link="vless://${uuid}@${domain}:443?security=tls&type=xhttp&path=${path_encoded}&mode=packet-up&alpn=http%2F1.1&host=${domain}&sni=${domain}&fp=chrome&allowInsecure=0#${v_encoded_name}"
+    link="vless://${uuid}@${domain}:443?security=tls&type=xhttp&path=${path_encoded}&mode=stream-one&alpn=http%2F1.1&host=${domain}&sni=${domain}&fp=chrome&allowInsecure=0#${v_encoded_name}"
 
     echo -e "${cyan}XHTTP ссылка:${reset}"
     echo ""

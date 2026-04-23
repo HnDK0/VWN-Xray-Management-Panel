@@ -78,11 +78,11 @@ writeNginxConfigBase() {
 # Использование: _buildXhttpLocationBlock "/path" "local_port"
 # Выводит готовый nginx location-блок для подстановки в шаблон.
 # Использует proxy_pass (HTTP/1.1 chunked) — не grpc_pass,
-# Оптимизировано под режим packet-up: буферизация полностью отключена.
+# Оптимизировано под режим stream-one: буферизация полностью отключена.
 _buildXhttpLocationBlock() {
     local xhttp_path="$1" xhttp_lport="$2"
     cat << NGINX_EOF
-    # xray-xhttp (packet-up)
+    # xray-xhttp (stream-one)
     location ${xhttp_path} {
         proxy_pass              http://127.0.0.1:${xhttp_lport};
         proxy_http_version      1.1;
@@ -92,7 +92,7 @@ _buildXhttpLocationBlock() {
         proxy_set_header        X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header        X-Forwarded-Proto \$scheme;
 
-        # Отключаем буферизацию — критично для packet-up:
+        # Отключаем буферизацию — критично для stream-one:
         # каждый пакет должен уходить немедленно, без накопления.
         proxy_buffering         off;
         proxy_request_buffering off;
